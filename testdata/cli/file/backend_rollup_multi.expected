@@ -1,2 +1,10 @@
-{"_bucket":"1970-01-01T00:00:00Z","_resolution":"1h","count":26}
-{"_bucket":"1970-01-01T00:00:00Z","_resolution":"15m","count":26}
+{"_bucket":"2026-02-10T08:00:00Z","_resolution":"1h","count":11}
+{"_bucket":"2026-02-10T09:00:00Z","_resolution":"1h","count":10}
+{"_bucket":"2026-02-10T10:00:00Z","_resolution":"1h","count":5}
+{"_bucket":"2026-02-10T08:00:00Z","_resolution":"15m","count":1}
+{"_bucket":"2026-02-10T08:15:00Z","_resolution":"15m","count":4}
+{"_bucket":"2026-02-10T08:30:00Z","_resolution":"15m","count":2}
+{"_bucket":"2026-02-10T08:45:00Z","_resolution":"15m","count":4}
+{"_bucket":"2026-02-10T09:00:00Z","_resolution":"15m","count":7}
+{"_bucket":"2026-02-10T09:15:00Z","_resolution":"15m","count":1}
+{"_bucket":"2026-02-10T09:30:00Z","_resolution":"15m","count":1}

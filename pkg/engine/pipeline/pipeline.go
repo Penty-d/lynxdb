@@ -1074,8 +1074,14 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 
 	case *spl2.TransactionCommand:
 		dur := parseDuration(c.MaxSpan)
+		// TRANSACTION needs ascending _time order: the streaming maxspan path
+		// uses a watermark to evict expired groups, and even the buffered path
+		// computes duration from first/last event in input order. Segment scan
+		// reads newest-first by default, so inject a sort to normalize input.
+		sortAcct := qc.newCoordinatedAccount("transaction-sort", reservationSort)
+		sorted := NewSortIteratorWithSpill(child, []SortField{{Name: "_time"}}, qc.batchSize, sortAcct, qc.spillMgr)
 
-		return NewTransactionIteratorWithSpill(child, c.Field, dur, c.StartsWith, c.EndsWith, qc.batchSize, qc.newCoordinatedAccount("transaction", reservationEventStats), qc.spillMgr), nil
+		return NewTransactionIteratorWithSpill(sorted, c.Field, dur, c.StartsWith, c.EndsWith, qc.batchSize, qc.newCoordinatedAccount("transaction", reservationEventStats), qc.spillMgr), nil
 
 	case *spl2.TopCommand:
 		return NewTopIteratorWithSpill(child, c.Field, c.ByField, c.N, false, qc.batchSize, qc.newCoordinatedAccount("top", reservationAggregate), qc.spillMgr), nil
