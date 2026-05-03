@@ -9,9 +9,9 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
-// CorrelateIterator is a blocking operator that computes correlation between
-// two numeric fields. It drains all child data, computes the correlation
-// coefficient, and emits a single result row.
+// CorrelateIterator computes correlation between two numeric fields and emits
+// a single result row. Pearson correlation is streaming; Spearman still needs
+// rank materialization.
 type CorrelateIterator struct {
 	child  Iterator
 	field1 string
@@ -56,6 +56,14 @@ func (c *CorrelateIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (c *CorrelateIterator) materialize(ctx context.Context) error {
+	method := c.method
+	if method == "" {
+		method = "pearson"
+	}
+	if method != "spearman" {
+		return c.materializePearson(ctx, method)
+	}
+
 	var x, y []float64
 	for {
 		batch, err := c.child.Next(ctx)
@@ -79,7 +87,7 @@ func (c *CorrelateIterator) materialize(ctx context.Context) error {
 	corrValue := event.NullValue()
 	if n >= 2 {
 		var r float64
-		if c.method == "spearman" {
+		if method == "spearman" {
 			r = spearmanCorrelation(x, y)
 		} else {
 			r = pearsonCorrelation(x, y)
@@ -92,7 +100,7 @@ func (c *CorrelateIterator) materialize(ctx context.Context) error {
 	c.output = BatchFromRows([]map[string]event.Value{
 		{
 			"_correlation": corrValue,
-			"_method":      event.StringValue(c.method),
+			"_method":      event.StringValue(method),
 			"_n":           event.IntValue(int64(n)),
 			"_field1":      event.StringValue(c.field1),
 			"_field2":      event.StringValue(c.field2),
@@ -101,8 +109,55 @@ func (c *CorrelateIterator) materialize(ctx context.Context) error {
 	return nil
 }
 
+func (c *CorrelateIterator) materializePearson(ctx context.Context, method string) error {
+	var n int64
+	var sumX, sumY, sumXY, sumX2, sumY2 float64
+	for {
+		batch, err := c.child.Next(ctx)
+		if err != nil {
+			return err
+		}
+		if batch == nil {
+			break
+		}
+		for i := 0; i < batch.Len; i++ {
+			x, ok1 := getNumeric(batch.Columns[c.field1], i)
+			y, ok2 := getNumeric(batch.Columns[c.field2], i)
+			if !ok1 || !ok2 {
+				continue
+			}
+			n++
+			sumX += x
+			sumY += y
+			sumXY += x * y
+			sumX2 += x * x
+			sumY2 += y * y
+		}
+	}
+
+	corrValue := event.NullValue()
+	if n >= 2 {
+		r := pearsonFromSums(n, sumX, sumY, sumXY, sumX2, sumY2)
+		if !math.IsNaN(r) && !math.IsInf(r, 0) {
+			corrValue = event.FloatValue(r)
+		}
+	}
+
+	c.output = BatchFromRows([]map[string]event.Value{
+		{
+			"_correlation": corrValue,
+			"_method":      event.StringValue(method),
+			"_n":           event.IntValue(n),
+			"_field1":      event.StringValue(c.field1),
+			"_field2":      event.StringValue(c.field2),
+		},
+	})
+
+	return nil
+}
+
 func pearsonCorrelation(x, y []float64) float64 {
-	n := float64(len(x))
+	n := int64(len(x))
 	if n == 0 {
 		return 0
 	}
@@ -116,8 +171,13 @@ func pearsonCorrelation(x, y []float64) float64 {
 		sumY2 += y[i] * y[i]
 	}
 
-	num := n*sumXY - sumX*sumY
-	den := math.Sqrt((n*sumX2 - sumX*sumX) * (n*sumY2 - sumY*sumY))
+	return pearsonFromSums(n, sumX, sumY, sumXY, sumX2, sumY2)
+}
+
+func pearsonFromSums(n int64, sumX, sumY, sumXY, sumX2, sumY2 float64) float64 {
+	nf := float64(n)
+	num := nf*sumXY - sumX*sumY
+	den := math.Sqrt((nf*sumX2 - sumX*sumX) * (nf*sumY2 - sumY*sumY))
 	if den == 0 {
 		return 0
 	}

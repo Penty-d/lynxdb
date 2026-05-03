@@ -22,14 +22,15 @@ const estimatedRingBufferSlotBytes int64 = 8
 
 // StreamStatsIterator implements rolling window aggregation with O(N) incremental updates.
 type StreamStatsIterator struct {
-	child    Iterator
-	aggs     []AggFunc
-	groupBy  []string
-	window   int
-	current  bool
-	ringBufs map[string]*ringBuffer
-	acct     memgov.MemoryAccount          // per-operator memory tracking
-	running  map[string][]*runningAggState // per-group, per-aggregate running state
+	child     Iterator
+	aggs      []AggFunc
+	groupBy   []string
+	window    int
+	current   bool
+	ringBufs  map[string]*ringBuffer
+	acct      memgov.MemoryAccount          // per-operator memory tracking
+	running   map[string][]*runningAggState // per-group, per-aggregate running state
+	storeRows bool                          // true when window rows are needed for eviction/values()
 }
 
 // runningAggState maintains incremental aggregate state for O(1) per-row updates.
@@ -104,14 +105,15 @@ func NewStreamStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, wi
 	}
 
 	return &StreamStatsIterator{
-		child:    child,
-		aggs:     aggs,
-		groupBy:  groupBy,
-		window:   window,
-		current:  current,
-		ringBufs: make(map[string]*ringBuffer),
-		acct:     memgov.NopAccount(),
-		running:  make(map[string][]*runningAggState),
+		child:     child,
+		aggs:      aggs,
+		groupBy:   groupBy,
+		window:    window,
+		current:   current,
+		ringBufs:  make(map[string]*ringBuffer),
+		acct:      memgov.NopAccount(),
+		running:   make(map[string][]*runningAggState),
+		storeRows: streamStatsNeedsRows(aggs, window),
 	}
 }
 
@@ -162,24 +164,29 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 		states := s.running[key]
 
-		rowBytes := EstimateRowBytes(row)
+		rowBytes := int64(0)
+		if s.storeRows {
+			rowBytes = EstimateRowBytes(row)
+		}
 
 		// Determine which row is being evicted (if window is full).
 		var evictedRow map[string]event.Value
 		var evictedBytes int64
 		if s.current {
-			if rb.capacity > 0 && rb.count >= rb.capacity {
+			if s.storeRows && rb.capacity > 0 && rb.count >= rb.capacity {
 				// Window is full: the oldest entry will be overwritten.
 				evictedRow = rb.oldest()
 				evictedBytes = rb.nextEvictedBytes()
 			}
-			if rowBytes > evictedBytes {
+			if s.storeRows && rowBytes > evictedBytes {
 				if err := s.acct.Grow(rowBytes - evictedBytes); err != nil {
 					return nil, fmt.Errorf("streamstats: memory budget exceeded (current window grow): %w", err)
 				}
 			}
-			rb.add(row, rowBytes)
-			if evictedBytes > rowBytes {
+			if s.storeRows {
+				rb.add(row, rowBytes)
+			}
+			if s.storeRows && evictedBytes > rowBytes {
 				s.acct.Shrink(evictedBytes - rowBytes)
 			}
 		}
@@ -208,17 +215,19 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 			// Trailing window: add after computing.
 			var willEvict map[string]event.Value
 			var willEvictBytes int64
-			if rb.capacity > 0 && rb.count >= rb.capacity {
+			if s.storeRows && rb.capacity > 0 && rb.count >= rb.capacity {
 				willEvict = rb.oldest()
 				willEvictBytes = rb.nextEvictedBytes()
 			}
-			if rowBytes > willEvictBytes {
+			if s.storeRows && rowBytes > willEvictBytes {
 				if err := s.acct.Grow(rowBytes - willEvictBytes); err != nil {
 					return nil, fmt.Errorf("streamstats: memory budget exceeded (trailing window grow): %w", err)
 				}
 			}
-			rb.add(row, rowBytes)
-			if willEvictBytes > rowBytes {
+			if s.storeRows {
+				rb.add(row, rowBytes)
+			}
+			if s.storeRows && willEvictBytes > rowBytes {
 				s.acct.Shrink(willEvictBytes - rowBytes)
 			}
 			for j, agg := range s.aggs {
@@ -231,6 +240,19 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 	}
 
 	return batch, nil
+}
+
+func streamStatsNeedsRows(aggs []AggFunc, window int) bool {
+	if window < math.MaxInt32/2 {
+		return true
+	}
+	for _, agg := range aggs {
+		if strings.EqualFold(agg.Name, aggValues) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (s *StreamStatsIterator) Close() error {

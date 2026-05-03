@@ -110,10 +110,15 @@ func (qc *queryContext) newAccount(label string) memgov.MemoryAccount {
 // newCoordinatedAccount creates a MemoryAccount for a spillable operator.
 // When a coordinator is active, the returned account has a coordinator-managed
 // sub-limit that enables budget redistribution after spill. When no coordinator
-// is active (single spillable operator, no budget, no spill support), the
-// returned account is a plain account — zero overhead.
+// is active (no budget or no spill support), the returned account is a plain
+// account with no coordinator overhead.
 func (qc *queryContext) newCoordinatedAccount(label string, reservation int64) memgov.MemoryAccount {
-	inner := qc.newAccount(label)
+	var inner memgov.MemoryAccount
+	if qc.govBudget != nil {
+		inner = qc.govBudget.NewSpillableAccount(label)
+	} else {
+		inner = memgov.NopAccount()
+	}
 	if qc.coordinator != nil {
 		return qc.coordinator.RegisterOperator(label, inner, reservation)
 	}
@@ -247,8 +252,9 @@ func BuildProgramWithGovernor(ctx context.Context, prog *spl2.Program, store Ind
 		opt(qc)
 	}
 
-	// Create coordinator when 2+ spillable operators share a budget.
-	if countSpillableOps(prog) >= 2 && budgetLimit > 0 && spillMgr != nil {
+	// Create coordinator for any spillable operator so governor pressure can
+	// revoke memory even when a query has only one spillable stage.
+	if countSpillableOps(prog) >= 1 && budgetLimit > 0 && spillMgr != nil {
 		qc.coordinator = NewMemoryCoordinator(budgetLimit, 0.10)
 	}
 
@@ -1039,7 +1045,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 	case *spl2.TransactionCommand:
 		dur := parseDuration(c.MaxSpan)
 
-		return NewTransactionIteratorWithBudget(child, c.Field, dur, c.StartsWith, c.EndsWith, qc.batchSize, qc.newAccount("transaction")), nil
+		return NewTransactionIteratorWithSpill(child, c.Field, dur, c.StartsWith, c.EndsWith, qc.batchSize, qc.newCoordinatedAccount("transaction", reservationEventStats), qc.spillMgr), nil
 
 	case *spl2.TopCommand:
 		return NewTopIteratorWithBudget(child, c.Field, c.ByField, c.N, false, qc.batchSize, qc.newAccount("top")), nil
@@ -1057,28 +1063,36 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return nil, fmt.Errorf("unresolved use command %q — fragment expansion failed", c.Name)
 
 	case *spl2.OutliersCommand:
-		return NewOutliersIterator(child, c.Field, c.Method, c.Threshold), nil
+		return NewOutliersIteratorWithBudget(child, c.Field, c.Method, c.Threshold, qc.newCoordinatedAccount("outliers", reservationEventStats), qc.spillMgr), nil
 
 	case *spl2.CompareCommand:
 		return nil, fmt.Errorf("build pipeline: compare must be intercepted at query level")
 
 	case *spl2.PatternsCommand:
-		return NewPatternsIterator(child, c.Field, c.MaxTemplates, c.Similarity), nil
+		return NewPatternsIteratorWithBudget(child, c.Field, c.MaxTemplates, c.Similarity, qc.newAccount("patterns")), nil
 
 	case *spl2.TraceCommand:
-		return NewTraceIterator(child, c.TraceIDField, c.SpanIDField, c.ParentIDField), nil
+		return NewTraceIteratorWithBudget(child, c.TraceIDField, c.SpanIDField, c.ParentIDField, qc.newAccount("trace")), nil
 
 	case *spl2.RollupCommand:
-		return NewRollupIterator(child, c.Spans, c.GroupBy, qc.batchSize), nil
+		return NewRollupIteratorWithBudget(child, c.Spans, c.GroupBy, qc.batchSize, qc.newAccount("rollup")), nil
 
 	case *spl2.CorrelateCommand:
 		return NewCorrelateIterator(child, c.Field1, c.Field2, c.Method), nil
 
 	case *spl2.SessionizeCommand:
-		return NewSessionizeIterator(child, c.MaxPause, c.GroupBy, qc.batchSize), nil
+		return NewSessionizeIteratorWithBudget(
+			child,
+			c.MaxPause,
+			c.GroupBy,
+			qc.batchSize,
+			qc.newCoordinatedAccount("sessionize-sort", reservationSort),
+			qc.newAccount("sessionize"),
+			qc.spillMgr,
+		), nil
 
 	case *spl2.TopologyCommand:
-		return NewTopologyIterator(child, c.SourceField, c.DestField, c.WeightField, c.MaxNodes, qc.batchSize), nil
+		return NewTopologyIteratorWithBudget(child, c.SourceField, c.DestField, c.WeightField, c.MaxNodes, qc.batchSize, qc.newAccount("topology")), nil
 
 	case *spl2.FillnullCommand:
 		return NewFillnullIteratorWithBudget(child, c.Value, c.Fields, qc.newAccount("fillnull")), nil

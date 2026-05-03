@@ -138,7 +138,7 @@ func (t *TopIterator) materialize(ctx context.Context) error {
 			ck := counterKey{fv, bv}
 			if counts[ck] == 0 {
 				// New counter key — track memory.
-				if err := t.acct.Grow(estimatedDedupExactKeyBytes); err != nil {
+				if err := t.acct.Grow(estimateTopCounterBytes(fv, bv)); err != nil {
 					return fmt.Errorf("top.materialize: %w", err)
 				}
 			}
@@ -194,4 +194,8 @@ func (t *TopIterator) materialize(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func estimateTopCounterBytes(fieldVal, byVal string) int64 {
+	return 96 + int64(len(fieldVal)+len(byVal))
 }

@@ -7,17 +7,19 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
+const estimatedRollupGroupBytes int64 = 128
+
 // RollupIterator provides multi-resolution time bucketing.
-// It accumulates all rows from the child, then for each span resolution,
-// computes time-bucketed aggregations with count, adds _resolution and
-// _bucket columns, and unions the results.
+// It aggregates all configured span resolutions in one pass over the child.
 type RollupIterator struct {
 	child     Iterator
 	spans     []string
 	groupBy   []string
 	batchSize int
+	acct      memgov.MemoryAccount
 
 	// Blocking state
 	done   bool
@@ -25,13 +27,32 @@ type RollupIterator struct {
 	offset int
 }
 
+type rollupBucketInfo struct {
+	groupFields map[string]event.Value
+	count       int64
+	bucketTime  time.Time
+}
+
+type rollupSpanState struct {
+	name   string
+	dur    time.Duration
+	groups map[string]*rollupBucketInfo
+}
+
 // NewRollupIterator creates a rollup operator.
 func NewRollupIterator(child Iterator, spans []string, groupBy []string, batchSize int) *RollupIterator {
+	return NewRollupIteratorWithBudget(child, spans, groupBy, batchSize, memgov.NopAccount())
+}
+
+// NewRollupIteratorWithBudget creates a rollup operator with group-state
+// accounting.
+func NewRollupIteratorWithBudget(child Iterator, spans []string, groupBy []string, batchSize int, acct memgov.MemoryAccount) *RollupIterator {
 	return &RollupIterator{
 		child:     child,
 		spans:     spans,
 		groupBy:   groupBy,
 		batchSize: batchSize,
+		acct:      memgov.EnsureAccount(acct),
 	}
 }
 
@@ -60,8 +81,22 @@ func (r *RollupIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (r *RollupIterator) materialize(ctx context.Context) error {
-	// Drain child.
-	var rows []map[string]event.Value
+	states := make([]rollupSpanState, 0, len(r.spans))
+	for _, span := range r.spans {
+		dur := parseDuration(span)
+		if dur == 0 {
+			continue
+		}
+		states = append(states, rollupSpanState{
+			name:   span,
+			dur:    dur,
+			groups: make(map[string]*rollupBucketInfo),
+		})
+	}
+	if len(states) == 0 {
+		return nil
+	}
+
 	for {
 		batch, err := r.child.Next(ctx)
 		if err != nil {
@@ -71,71 +106,58 @@ func (r *RollupIterator) materialize(ctx context.Context) error {
 			break
 		}
 		for i := 0; i < batch.Len; i++ {
-			rows = append(rows, batch.Row(i))
+			row := batch.Row(i)
+			for si := range states {
+				if err := r.addToRollupState(&states[si], row); err != nil {
+					return err
+				}
+			}
 		}
 	}
 
-	if len(rows) == 0 {
-		return nil
+	for _, state := range states {
+		r.output = append(r.output, r.rollupRows(state.name, state.groups)...)
 	}
-
-	// For each span, bucket and aggregate.
-	var allRows []map[string]event.Value
-	for _, span := range r.spans {
-		spanRows := r.computeRollup(span, rows)
-		allRows = append(allRows, spanRows...)
-	}
-
-	r.output = allRows
 
 	return nil
 }
 
-func (r *RollupIterator) computeRollup(span string, rows []map[string]event.Value) []map[string]event.Value {
-	dur := parseDuration(span)
-	if dur == 0 {
-		return nil
+func (r *RollupIterator) addToRollupState(state *rollupSpanState, row map[string]event.Value) error {
+	ts := rollupEventTime(row)
+	bucket := ts.Truncate(state.dur)
+
+	key := state.name + "|" + fmt.Sprintf("%d", bucket.UnixNano())
+	var keyBytes int64 = int64(len(key))
+	for _, f := range r.groupBy {
+		key += "|"
+		if v, ok := row[f]; ok {
+			vk := rollupValueKey(v)
+			key += vk
+			keyBytes += int64(len(vk))
+		}
 	}
 
-	type bucketInfo struct {
-		groupFields map[string]event.Value // copy of group-by field values
-		count       int64
-		bucketTime  time.Time
-	}
-
-	// groupKey → accumulated info
-	groups := make(map[string]*bucketInfo)
-
-	for _, row := range rows {
-		ts := rollupEventTime(row)
-		bucket := ts.Truncate(dur)
-
-		// Build composite key: span|bucketTime|groupField1|groupField2|...
-		key := span + "|" + bucket.Format(time.RFC3339)
+	info, ok := state.groups[key]
+	if !ok {
+		if err := r.acct.Grow(estimatedRollupGroupBytes + keyBytes); err != nil {
+			return fmt.Errorf("rollup: memory budget exceeded for group state: %w", err)
+		}
+		info = &rollupBucketInfo{
+			groupFields: make(map[string]event.Value, len(r.groupBy)),
+			bucketTime:  bucket,
+		}
 		for _, f := range r.groupBy {
 			if v, ok := row[f]; ok {
-				key += "|" + rollupValueKey(v)
-			} else {
-				key += "|"
+				info.groupFields[f] = v
 			}
 		}
-
-		info, ok := groups[key]
-		if !ok {
-			info = &bucketInfo{
-				groupFields: make(map[string]event.Value, len(r.groupBy)),
-				bucketTime:  bucket,
-			}
-			for _, f := range r.groupBy {
-				if v, ok := row[f]; ok {
-					info.groupFields[f] = v
-				}
-			}
-			groups[key] = info
-		}
-		info.count++
+		state.groups[key] = info
 	}
+	info.count++
+	return nil
+}
 
+func (r *RollupIterator) rollupRows(span string, groups map[string]*rollupBucketInfo) []map[string]event.Value {
 	result := make([]map[string]event.Value, 0, len(groups))
 	for _, info := range groups {
 		out := make(map[string]event.Value, 2+len(r.groupBy))
@@ -152,10 +174,10 @@ func (r *RollupIterator) computeRollup(span string, rows []map[string]event.Valu
 
 	// Sort by bucket then by group fields for deterministic output.
 	sort.Slice(result, func(i, j int) bool {
-		ti := result[i]["_bucket"]
-		tj := result[j]["_bucket"]
-		if ti.AsInt() != tj.AsInt() {
-			return ti.AsInt() < tj.AsInt()
+		ti := rollupTimestampValue(result[i]["_bucket"])
+		tj := rollupTimestampValue(result[j]["_bucket"])
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
 		}
 		// Tiebreak on group fields.
 		for _, f := range r.groupBy {
@@ -172,8 +194,13 @@ func (r *RollupIterator) computeRollup(span string, rows []map[string]event.Valu
 }
 
 func (r *RollupIterator) Close() error {
+	r.acct.Close()
+
 	return r.child.Close()
 }
+
+// MemoryUsed returns the current tracked memory for this operator.
+func (r *RollupIterator) MemoryUsed() int64 { return r.acct.Used() }
 
 func (r *RollupIterator) Schema() []FieldInfo {
 	schema := []FieldInfo{
@@ -193,7 +220,9 @@ func rollupEventTime(row map[string]event.Value) time.Time {
 	for _, field := range []string{"_time", "timestamp", "@timestamp", "time"} {
 		if v, ok := row[field]; ok {
 			if v.Type() == event.FieldTypeTimestamp {
-				return time.Unix(0, v.AsInt())
+				if ts, ok := v.TryAsTimestamp(); ok {
+					return ts
+				}
 			}
 			// Try parsing string values.
 			if v.Type() == event.FieldTypeString {
@@ -205,6 +234,14 @@ func rollupEventTime(row map[string]event.Value) time.Time {
 				}
 			}
 		}
+	}
+
+	return time.Time{}
+}
+
+func rollupTimestampValue(v event.Value) time.Time {
+	if ts, ok := v.TryAsTimestamp(); ok {
+		return ts
 	}
 
 	return time.Time{}

@@ -6,6 +6,14 @@ import (
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
+)
+
+const (
+	estimatedTraceGroupBytes     int64 = 96
+	estimatedTraceSpanIndexBytes int64 = 80
+	estimatedTraceChildRefBytes  int64 = 24
+	estimatedTraceNodeBytes      int64 = 96
 )
 
 // TraceIterator is a blocking operator that groups events by trace_id,
@@ -16,6 +24,7 @@ type TraceIterator struct {
 	traceField  string
 	spanField   string
 	parentField string
+	acct        memgov.MemoryAccount
 
 	// Accumulation.
 	done bool
@@ -27,6 +36,12 @@ type TraceIterator struct {
 
 // NewTraceIterator creates a new trace iterator.
 func NewTraceIterator(child Iterator, traceField, spanField, parentField string) *TraceIterator {
+	return NewTraceIteratorWithBudget(child, traceField, spanField, parentField, memgov.NopAccount())
+}
+
+// NewTraceIteratorWithBudget creates a trace iterator with memory accounting
+// for buffered rows and span tree state.
+func NewTraceIteratorWithBudget(child Iterator, traceField, spanField, parentField string, acct memgov.MemoryAccount) *TraceIterator {
 	if traceField == "" {
 		traceField = "trace_id"
 	}
@@ -42,6 +57,7 @@ func NewTraceIterator(child Iterator, traceField, spanField, parentField string)
 		traceField:  traceField,
 		spanField:   spanField,
 		parentField: parentField,
+		acct:        memgov.EnsureAccount(acct),
 	}
 }
 
@@ -63,11 +79,19 @@ func (t *TraceIterator) Next(ctx context.Context) (*Batch, error) {
 				break
 			}
 			for i := 0; i < batch.Len; i++ {
-				rows = append(rows, batch.Row(i))
+				row := batch.Row(i)
+				if err := t.acct.Grow(EstimateRowBytes(row)); err != nil {
+					return nil, fmt.Errorf("trace: memory budget exceeded for row buffer: %w", err)
+				}
+				rows = append(rows, row)
 			}
 		}
 
-		t.output = t.buildSpanTree(rows)
+		output, err := t.buildSpanTree(rows)
+		if err != nil {
+			return nil, err
+		}
+		t.output = output
 	}
 
 	if t.output == nil || t.offset >= t.output.Len {
@@ -86,8 +110,13 @@ func (t *TraceIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (t *TraceIterator) Close() error {
+	t.acct.Close()
+
 	return t.child.Close()
 }
+
+// MemoryUsed returns the current tracked memory for this operator.
+func (t *TraceIterator) MemoryUsed() int64 { return t.acct.Used() }
 
 func (t *TraceIterator) Schema() []FieldInfo {
 	return []FieldInfo{
@@ -110,9 +139,9 @@ type spanNode struct {
 }
 
 // buildSpanTree groups rows by trace_id, builds DFS tree, emits in tree order.
-func (t *TraceIterator) buildSpanTree(rows []map[string]event.Value) *Batch {
+func (t *TraceIterator) buildSpanTree(rows []map[string]event.Value) (*Batch, error) {
 	if len(rows) == 0 {
-		return NewBatch(0)
+		return NewBatch(0), nil
 	}
 
 	// Sort rows by _time ascending for deterministic output.
@@ -140,6 +169,9 @@ func (t *TraceIterator) buildSpanTree(rows []map[string]event.Value) *Batch {
 		}
 		g, ok := traces[traceID]
 		if !ok {
+			if err := t.acct.Grow(estimatedTraceGroupBytes + int64(len(traceID))); err != nil {
+				return nil, fmt.Errorf("trace: memory budget exceeded for trace groups: %w", err)
+			}
 			g = &traceGroup{}
 			traces[traceID] = g
 			traceOrder = append(traceOrder, traceID)
@@ -150,7 +182,10 @@ func (t *TraceIterator) buildSpanTree(rows []map[string]event.Value) *Batch {
 	b := NewBatch(len(rows))
 	for _, traceID := range traceOrder {
 		g := traces[traceID]
-		nodes := t.buildTreeForTrace(g.rows)
+		nodes, err := t.buildTreeForTrace(g.rows)
+		if err != nil {
+			return nil, err
+		}
 		for _, node := range nodes {
 			service := fieldString(node.row, "service", "service_name", "component")
 			operation := fieldString(node.row, "operation", "operation_name", "name", "handler")
@@ -168,16 +203,19 @@ func (t *TraceIterator) buildSpanTree(rows []map[string]event.Value) *Batch {
 		}
 	}
 
-	return b
+	return b, nil
 }
 
 // buildTreeForTrace builds the DFS tree for a single trace's spans.
-func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) []*spanNode {
+func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) ([]*spanNode, error) {
 	// Index spans by span_id.
 	spanIndex := make(map[string]int) // span_id → row index
 	for i, row := range rows {
 		spanID := row[t.spanField].AsString()
 		if spanID != "" {
+			if err := t.acct.Grow(estimatedTraceSpanIndexBytes + int64(len(spanID))); err != nil {
+				return nil, fmt.Errorf("trace: memory budget exceeded for span index: %w", err)
+			}
 			spanIndex[spanID] = i
 		}
 	}
@@ -193,6 +231,9 @@ func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) []*span
 			continue
 		}
 		if _, parentExists := spanIndex[parentID]; parentExists {
+			if err := t.acct.Grow(estimatedTraceChildRefBytes + int64(len(parentID))); err != nil {
+				return nil, fmt.Errorf("trace: memory budget exceeded for child refs: %w", err)
+			}
 			children[parentID] = append(children[parentID], i)
 		} else {
 			// Parent not found — treat as root.
@@ -250,12 +291,16 @@ func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) []*span
 
 	// DFS traversal.
 	var result []*spanNode
+	var dfsErr error
 	spanIDForRow := func(row map[string]event.Value) string {
 		return row[t.spanField].AsString()
 	}
 
 	var dfs func(rowIndex int, depth int, prefix string, isLast bool)
 	dfs = func(rowIndex int, depth int, prefix string, isLast bool) {
+		if dfsErr != nil {
+			return
+		}
 		row := rows[rowIndex]
 
 		connector := "├── "
@@ -279,6 +324,10 @@ func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) []*span
 			}
 		}
 
+		if err := t.acct.Grow(estimatedTraceNodeBytes + int64(len(treeStr))); err != nil {
+			dfsErr = fmt.Errorf("trace: memory budget exceeded for span nodes: %w", err)
+			return
+		}
 		result = append(result, &spanNode{
 			row:     row,
 			spanID:  spanIDForRow(row),
@@ -309,9 +358,12 @@ func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) []*span
 
 	for _, rootIdx := range roots {
 		dfs(rootIdx, 0, "", true)
+		if dfsErr != nil {
+			return nil, dfsErr
+		}
 	}
 
-	return result
+	return result, nil
 }
 
 // fieldString returns the first non-empty string value from the given field names.

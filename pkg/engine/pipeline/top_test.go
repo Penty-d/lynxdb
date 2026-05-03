@@ -2,9 +2,11 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func TestTopIterator_SortStability(t *testing.T) {
@@ -154,5 +156,17 @@ func TestTopIterator_DifferentCounts(t *testing.T) {
 		if got != expected[i] {
 			t.Errorf("row %d: expected %q, got %q", i, expected[i], got)
 		}
+	}
+}
+
+func TestTopIterator_AccountsLargeCounterKeys(t *testing.T) {
+	rows := []map[string]event.Value{
+		{"method": event.StringValue(strings.Repeat("x", 4096))},
+	}
+	acct := memgov.NewTestBudget("top", 2048).NewAccount("top")
+	top := NewTopIteratorWithBudget(NewRowScanIterator(rows, 1), "method", "", 10, false, 10, acct)
+
+	if _, err := CollectAll(context.Background(), top); err == nil {
+		t.Fatal("expected large top counter key to exceed budget")
 	}
 }

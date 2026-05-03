@@ -207,6 +207,60 @@ func TestBackfiller_WithBudget(t *testing.T) {
 	}
 }
 
+func TestBackfiller_RunWithBudgetedDispatchPassesAdapter(t *testing.T) {
+	dir := t.TempDir()
+	viewsDir := filepath.Join(dir, "views")
+	os.MkdirAll(viewsDir, 0o755)
+
+	reg, _ := Open(viewsDir)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	def := ViewDefinition{
+		Name:    "mv_budgeted_dispatch",
+		Version: 1,
+		Type:    ViewTypeProjection,
+		Filter:  "",
+		Columns: []ColumnDef{{Name: "_time", Type: event.FieldTypeTimestamp}},
+		Status:  ViewStatusBackfill,
+	}
+	reg.Create(def)
+
+	source := &mockSource{
+		events: []*event.Event{makeTestEvent("nginx", "/a", "200")},
+	}
+
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: 1 << 20})
+	cfg := BackfillConfig{
+		MaxMemoryBytes:   4096,
+		BackpressureWait: time.Millisecond,
+		MaxRetries:       1,
+	}
+	backfiller := NewBackfillerWithBudget(reg, gov, cfg, logger)
+
+	var sawBudget bool
+	err := backfiller.RunWithBudgetedDispatch(context.Background(), "mv_budgeted_dispatch", source,
+		func(events []*event.Event, adapter *memgov.BudgetAdapter) error {
+			if len(events) != 1 {
+				t.Fatalf("events: got %d, want 1", len(events))
+			}
+			if adapter == nil {
+				t.Fatal("expected budget adapter")
+			}
+			if adapter.Limit() != 4096 {
+				t.Fatalf("adapter limit: got %d, want 4096", adapter.Limit())
+			}
+			sawBudget = true
+
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("RunWithBudgetedDispatch: %v", err)
+	}
+	if !sawBudget {
+		t.Fatal("budgeted dispatch was not called")
+	}
+}
+
 // poolExhaustedSource returns PoolExhaustedError on the first N calls,
 // then delegates to the inner source.
 type poolExhaustedSource struct {

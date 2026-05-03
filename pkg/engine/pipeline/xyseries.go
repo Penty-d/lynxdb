@@ -8,8 +8,10 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
-// estimatedCellBytes is the estimated memory per pivot cell in xyseries.
-const estimatedCellBytes int64 = 64
+const (
+	estimatedXYSeriesRowBytes  int64 = 96
+	estimatedXYSeriesCellBytes int64 = 64
+)
 
 // XYSeriesIterator implements pivot/crosstab transformation.
 type XYSeriesIterator struct {
@@ -85,15 +87,9 @@ func (x *XYSeriesIterator) MemoryUsed() int64 {
 func (x *XYSeriesIterator) Schema() []FieldInfo { return nil }
 
 func (x *XYSeriesIterator) materialize(ctx context.Context) error {
-	// Collect all rows.
-	type cell struct {
-		xVal string
-		yVal string
-		val  event.Value
-	}
-	var cells []cell
 	xOrder := make([]string, 0)
 	xSeen := make(map[string]bool)
+	pivot := make(map[string]map[string]event.Value) // xVal -> {yVal -> value}
 
 	for {
 		batch, err := x.child.Next(ctx)
@@ -115,27 +111,24 @@ func (x *XYSeriesIterator) materialize(ctx context.Context) error {
 			if v, ok := row[x.valueField]; ok {
 				vv = v
 			}
-			// Track memory per cell.
-			if err := x.acct.Grow(estimatedCellBytes); err != nil {
-				return fmt.Errorf("xyseries.materialize: %w", err)
-			}
-			cells = append(cells, cell{xVal: xv, yVal: yv, val: vv})
 			if !xSeen[xv] {
+				if err := x.acct.Grow(estimatedXYSeriesRowBytes + int64(len(xv))); err != nil {
+					return fmt.Errorf("xyseries.materialize: row state: %w", err)
+				}
 				xSeen[xv] = true
 				xOrder = append(xOrder, xv)
+				pivot[xv] = make(map[string]event.Value)
 			}
+			if _, ok := pivot[xv][yv]; !ok {
+				if err := x.acct.Grow(estimateXYSeriesCellBytes(yv, vv)); err != nil {
+					return fmt.Errorf("xyseries.materialize: cell state: %w", err)
+				}
+			}
+			pivot[xv][yv] = vv
 		}
 	}
 
 	// Pivot: group by xField, spread yField values as columns.
-	pivot := make(map[string]map[string]event.Value) // xVal -> {yVal -> value}
-	for _, c := range cells {
-		if _, ok := pivot[c.xVal]; !ok {
-			pivot[c.xVal] = make(map[string]event.Value)
-		}
-		pivot[c.xVal][c.yVal] = c.val
-	}
-
 	for _, xv := range xOrder {
 		row := make(map[string]event.Value)
 		row[x.xField] = event.StringValue(xv)
@@ -147,4 +140,13 @@ func (x *XYSeriesIterator) materialize(ctx context.Context) error {
 	x.emitted = true
 
 	return nil
+}
+
+func estimateXYSeriesCellBytes(yVal string, val event.Value) int64 {
+	size := estimatedXYSeriesCellBytes + int64(len(yVal))
+	if val.Type() == event.FieldTypeString {
+		size += int64(len(val.String()))
+	}
+
+	return size
 }

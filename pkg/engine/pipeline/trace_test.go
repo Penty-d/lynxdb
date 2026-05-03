@@ -2,9 +2,11 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func TestTraceIterator_BasicTrace(t *testing.T) {
@@ -150,5 +152,38 @@ func TestTraceIterator_EmptyInput(t *testing.T) {
 	}
 	if batch != nil && batch.Len > 0 {
 		t.Errorf("expected empty batch, got %d rows", batch.Len)
+	}
+}
+
+func TestTraceIterator_AccountsTreeState(t *testing.T) {
+	rows := []map[string]event.Value{
+		{"_time": event.IntValue(1), "trace_id": event.StringValue("t1"), "span_id": event.StringValue("s1"), "parent_span_id": event.StringValue(""), "service": event.StringValue("api")},
+	}
+	acct := memgov.NewTestBudget("trace", 0).NewAccount("trace")
+	iter := NewTraceIteratorWithBudget(NewRowScanIterator(rows, 1), "trace_id", "span_id", "parent_span_id", acct)
+
+	if _, err := CollectAll(context.Background(), iter); err != nil {
+		t.Fatal(err)
+	}
+	if acct.MaxUsed() == 0 {
+		t.Fatal("expected trace account to track row/tree state")
+	}
+}
+
+func TestTraceIterator_BudgetExceededOnLargeTraceRows(t *testing.T) {
+	rows := []map[string]event.Value{
+		{
+			"_time":          event.IntValue(1),
+			"trace_id":       event.StringValue(strings.Repeat("t", 4096)),
+			"span_id":        event.StringValue("s1"),
+			"parent_span_id": event.StringValue(""),
+			"service":        event.StringValue("api"),
+		},
+	}
+	acct := memgov.NewTestBudget("trace", 2048).NewAccount("trace")
+	iter := NewTraceIteratorWithBudget(NewRowScanIterator(rows, 1), "trace_id", "span_id", "parent_span_id", acct)
+
+	if _, err := CollectAll(context.Background(), iter); err == nil {
+		t.Fatal("expected large trace row to exceed budget")
 	}
 }

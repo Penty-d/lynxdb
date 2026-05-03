@@ -21,6 +21,8 @@ var ErrQueryBudgetExceeded = errors.New("query memory budget exceeded")
 type AccountAdapter struct {
 	opMem   OperatorMemory
 	tracker *BudgetAdapter // optional, for per-query aggregate tracking
+	gov     Governor
+	class   MemoryClass
 	used    int64
 	maxUsed int64
 }
@@ -38,6 +40,14 @@ func newTrackedAccountAdapter(opMem OperatorMemory, tracker *BudgetAdapter) *Acc
 	return &AccountAdapter{opMem: opMem, tracker: tracker}
 }
 
+// newTrackedClassAccountAdapter creates an account that reserves directly
+// against a governor memory class. It is used for spillable operator working
+// sets so process-wide pressure sees them as ClassSpillable, while legacy
+// NewAccount remains pinned/non-revocable.
+func newTrackedClassAccountAdapter(gov Governor, class MemoryClass, tracker *BudgetAdapter) *AccountAdapter {
+	return &AccountAdapter{gov: gov, class: class, tracker: tracker}
+}
+
 // Grow requests n bytes via the underlying OperatorMemory.
 func (a *AccountAdapter) Grow(n int64) error {
 	if n <= 0 {
@@ -51,8 +61,14 @@ func (a *AccountAdapter) Grow(n int64) error {
 			return ErrQueryBudgetExceeded
 		}
 	}
-	if err := a.opMem.Reserve(n); err != nil {
-		return err
+	if a.gov != nil {
+		if err := a.gov.Reserve(a.class, n); err != nil {
+			return err
+		}
+	} else {
+		if err := a.opMem.Reserve(n); err != nil {
+			return err
+		}
 	}
 	a.used += n
 	if a.used > a.maxUsed {
@@ -73,7 +89,11 @@ func (a *AccountAdapter) Shrink(n int64) {
 		n = a.used
 	}
 	a.used -= n
-	a.opMem.Release(n)
+	if a.gov != nil {
+		a.gov.Release(a.class, n)
+	} else {
+		a.opMem.Release(n)
+	}
 	if a.tracker != nil {
 		a.tracker.trackShrink(n)
 	}
@@ -82,7 +102,11 @@ func (a *AccountAdapter) Shrink(n int64) {
 // Close releases all remaining bytes via OperatorMemory.Close.
 func (a *AccountAdapter) Close() {
 	remaining := a.used
-	a.opMem.Close()
+	if a.gov != nil {
+		a.gov.Release(a.class, remaining)
+	} else {
+		a.opMem.Close()
+	}
 	a.used = 0
 	if a.tracker != nil && remaining > 0 {
 		a.tracker.trackShrink(remaining)

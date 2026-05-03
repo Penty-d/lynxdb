@@ -6,10 +6,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/storage"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
@@ -510,6 +512,34 @@ func TestDispatcher_AggregationView_CountByHost(t *testing.T) {
 	}
 	if byHost["web2"] != 1 {
 		t.Errorf("web2 count: got %d, want 1", byHost["web2"])
+	}
+}
+
+func TestDispatcher_AggregationInsertBudgetRejectsLargeGroupKey(t *testing.T) {
+	dir := t.TempDir()
+	viewsDir := filepath.Join(dir, "views")
+	os.MkdirAll(viewsDir, 0o755)
+
+	reg, err := Open(viewsDir)
+	if err != nil {
+		t.Fatalf("Open registry: %v", err)
+	}
+	layout := storage.NewLayout(dir)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: 64 << 20})
+	d := NewDispatcherWithBudget(reg, layout, logger, 0, 0, gov, 2048)
+
+	def := createAggView(t, reg, "mv_budgeted", `FROM main | stats count by _raw`)
+	d.ActivateView(def)
+
+	ev := event.NewEvent(time.Now(), strings.Repeat("x", 4096))
+	ev.Index = "main"
+	if err := d.Dispatch([]*event.Event{ev}); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if got := d.ViewBufferedEvents("mv_budgeted"); len(got) != 0 {
+		t.Fatalf("expected budgeted insert pipeline to reject batch, buffered %d events", len(got))
 	}
 }
 

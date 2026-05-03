@@ -48,7 +48,7 @@ type JoinIterator struct {
 	rightPartPaths   []string                            // paths to right partition spill files
 	currentPartition int                                 // current partition being probed
 	partHashMap      map[string][]map[string]event.Value // temp hash table for current partition
-	partLeftReader   *SpillReader                        // reader for current left partition
+	partLeftReader   *ColumnarSpillReader                // reader for current left partition
 	partBuffer       []map[string]event.Value            // buffered output rows for current partition
 	partBufferOffset int                                 // offset into partBuffer
 	spilledRows      int64                               // total rows spilled (for ResourceReporter)
@@ -372,9 +372,9 @@ func hashPartition(key string, numPartitions int) int {
 func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) error {
 	numParts := defaultGracePartitions
 
-	rightWriters := make([]*SpillWriter, numParts)
+	rightWriters := make([]*ColumnarSpillWriter, numParts)
 	for i := range rightWriters {
-		sw, err := NewManagedSpillWriter(j.spillMgr, fmt.Sprintf("join-R-%02d", i))
+		sw, err := NewColumnarSpillWriter(j.spillMgr, fmt.Sprintf("join-R-%02d", i))
 		if err != nil {
 			return fmt.Errorf("join.graceHashJoin: create right partition: %w", err)
 		}
@@ -451,9 +451,9 @@ func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) 
 		}
 	}
 
-	leftWriters := make([]*SpillWriter, numParts)
+	leftWriters := make([]*ColumnarSpillWriter, numParts)
 	for i := range leftWriters {
-		sw, err := NewManagedSpillWriter(j.spillMgr, fmt.Sprintf("join-L-%02d", i))
+		sw, err := NewColumnarSpillWriter(j.spillMgr, fmt.Sprintf("join-L-%02d", i))
 		if err != nil {
 			return fmt.Errorf("join.graceHashJoin: create left partition: %w", err)
 		}
@@ -488,7 +488,7 @@ func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) 
 // rows are drained from j.prefetchCh instead of calling j.left.Next() directly.
 // This prevents a data race between two goroutines calling Next() on the
 // same non-thread-safe iterator.
-func (j *JoinIterator) partitionLeftSide(ctx context.Context, writers []*SpillWriter, numParts int) error {
+func (j *JoinIterator) partitionLeftSide(ctx context.Context, writers []*ColumnarSpillWriter, numParts int) error {
 	if j.prefetchCh != nil {
 		// Prefetch goroutine owns j.left — drain from the channel.
 		for res := range j.prefetchCh {
@@ -523,7 +523,7 @@ func (j *JoinIterator) partitionLeftSide(ctx context.Context, writers []*SpillWr
 
 // partitionBatchLeft writes a batch of left-side rows to the appropriate
 // partition writers based on the join key hash.
-func (j *JoinIterator) partitionBatchLeft(batch *Batch, writers []*SpillWriter, numParts int) error {
+func (j *JoinIterator) partitionBatchLeft(batch *Batch, writers []*ColumnarSpillWriter, numParts int) error {
 	for i := 0; i < batch.Len; i++ {
 		row := batch.Row(i)
 		key := ""
@@ -600,7 +600,7 @@ func (j *JoinIterator) nextGrace(ctx context.Context) (*Batch, error) {
 // and opens the left-side partition reader.
 func (j *JoinIterator) loadPartition(idx int) error {
 	// Load right partition into hash table.
-	rightReader, err := NewSpillReader(j.rightPartPaths[idx])
+	rightReader, err := NewColumnarSpillReader(j.rightPartPaths[idx])
 	if err != nil {
 		return fmt.Errorf("join.loadPartition: open right %d: %w", idx, err)
 	}
@@ -636,7 +636,7 @@ func (j *JoinIterator) loadPartition(idx int) error {
 	j.partHashMap = hashMap
 
 	// Open left partition reader.
-	leftReader, err := NewSpillReader(j.leftPartPaths[idx])
+	leftReader, err := NewColumnarSpillReader(j.leftPartPaths[idx])
 	if err != nil {
 		return fmt.Errorf("join.loadPartition: open left %d: %w", idx, err)
 	}

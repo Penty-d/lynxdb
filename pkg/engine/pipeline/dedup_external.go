@@ -460,6 +460,7 @@ func computeDedupHash(batch *Batch, row int, fields []string, singleField bool) 
 func newDedupIteratorWithSpill(child Iterator, fields []string, limit int, acct memgov.MemoryAccount, mgr *SpillManager) *DedupIterator {
 	d := NewDedupIteratorWithBudget(child, fields, limit, acct)
 	d.spillMgr = mgr
+	d.setRevocationCallback()
 
 	return d
 }
@@ -469,8 +470,31 @@ func newDedupIteratorWithSpill(child Iterator, fields []string, limit int, acct 
 func newDedupIteratorExactWithSpill(child Iterator, fields []string, limit int, acct memgov.MemoryAccount, mgr *SpillManager) *DedupIterator {
 	d := NewDedupIteratorExact(child, fields, limit, acct)
 	d.spillMgr = mgr
+	d.setRevocationCallback()
 
 	return d
+}
+
+func (d *DedupIterator) setRevocationCallback() {
+	ca, ok := d.acct.(*CoordinatedAccount)
+	if !ok || d.spillMgr == nil {
+		return
+	}
+	ca.SetOnRevoke(func(target int64) int64 {
+		if d.externalSet != nil || (len(d.seenHash) == 0 && len(d.seenExact) == 0) {
+			return 0
+		}
+		before := d.acct.Used()
+		if err := d.spill(); err != nil {
+			return 0
+		}
+		freed := before - d.acct.Used()
+		if freed < 0 {
+			return 0
+		}
+
+		return freed
+	})
 }
 
 // spill transitions the dedup iterator from in-memory to external (disk-backed) mode.

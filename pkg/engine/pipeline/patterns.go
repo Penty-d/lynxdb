@@ -7,12 +7,15 @@ import (
 	"unicode"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 const (
-	defaultDrainDepth     = 4
-	defaultMaxTemplates   = 50
-	defaultDrainBatchSize = 1024
+	defaultDrainDepth                 = 4
+	defaultMaxTemplates               = 50
+	defaultDrainBatchSize             = 1024
+	estimatedDrainNodeBytes     int64 = 128
+	estimatedDrainTemplateBytes int64 = 160
 )
 
 // PatternsIterator is a blocking operator that extracts log templates using
@@ -23,6 +26,7 @@ type PatternsIterator struct {
 	field        string
 	maxTemplates int
 	similarity   float64
+	acct         memgov.MemoryAccount
 
 	// Accumulation.
 	totalCount int
@@ -38,6 +42,12 @@ type PatternsIterator struct {
 
 // NewPatternsIterator creates a new patterns iterator.
 func NewPatternsIterator(child Iterator, field string, maxTemplates int, similarity float64) *PatternsIterator {
+	return NewPatternsIteratorWithBudget(child, field, maxTemplates, similarity, memgov.NopAccount())
+}
+
+// NewPatternsIteratorWithBudget creates a patterns iterator with accounting
+// for Drain tree nodes and templates.
+func NewPatternsIteratorWithBudget(child Iterator, field string, maxTemplates int, similarity float64, acct memgov.MemoryAccount) *PatternsIterator {
 	if field == "" {
 		field = "_raw"
 	}
@@ -53,6 +63,7 @@ func NewPatternsIterator(child Iterator, field string, maxTemplates int, similar
 		field:        field,
 		maxTemplates: maxTemplates,
 		similarity:   similarity,
+		acct:         memgov.EnsureAccount(acct),
 		tree:         newDrainTree(defaultDrainDepth, similarity),
 	}
 }
@@ -78,7 +89,11 @@ func (p *PatternsIterator) Next(ctx context.Context) (*Batch, error) {
 				val := batch.Value(p.field, i)
 				line := val.AsString()
 				if line != "" {
-					p.tree.insert(line)
+					if growBytes := p.tree.insert(line); growBytes > 0 {
+						if err := p.acct.Grow(growBytes); err != nil {
+							return nil, err
+						}
+					}
 					p.totalCount++
 				}
 			}
@@ -105,8 +120,13 @@ func (p *PatternsIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (p *PatternsIterator) Close() error {
+	p.acct.Close()
+
 	return p.child.Close()
 }
+
+// MemoryUsed returns the current tracked memory for this operator.
+func (p *PatternsIterator) MemoryUsed() int64 { return p.acct.Used() }
 
 func (p *PatternsIterator) Schema() []FieldInfo {
 	return []FieldInfo{
@@ -184,12 +204,15 @@ func (t *drainTree) allTemplates() []*logTemplate {
 	return t.templates
 }
 
-// insert tokenizes a log line and inserts it into the Drain tree.
-func (t *drainTree) insert(line string) {
+// insert tokenizes a log line and inserts it into the Drain tree. It returns
+// estimated bytes added to the tree.
+func (t *drainTree) insert(line string) int64 {
 	tokens := drainTokenize(line)
 	if len(tokens) == 0 {
-		return
+		return 0
 	}
+
+	var added int64
 
 	// Walk the tree depth-first.
 	node := t.root
@@ -205,6 +228,7 @@ func (t *drainTree) insert(line string) {
 			if !ok {
 				child = &drainNode{children: make(map[string]*drainNode)}
 				node.children[token] = child
+				added += estimatedDrainNodeBytes + int64(len(token))
 			}
 		}
 		node = child
@@ -216,7 +240,7 @@ func (t *drainTree) insert(line string) {
 		tmpl := t.templates[tmplID]
 		if templateMatches(tmpl.Tokens, tokens) {
 			tmpl.Count++
-			return
+			return added
 		}
 	}
 
@@ -236,7 +260,7 @@ func (t *drainTree) insert(line string) {
 		tmpl.Tokens = mergeTokens(tmpl.Tokens, tokens)
 		tmpl.Pattern = buildPattern(tmpl.Tokens)
 		tmpl.Count++
-		return
+		return added
 	}
 
 	// No match — create new template.
@@ -249,6 +273,13 @@ func (t *drainTree) insert(line string) {
 	}
 	t.templates = append(t.templates, newTmpl)
 	node.templateIDs = append(node.templateIDs, newTmpl.ID)
+
+	added += estimatedDrainTemplateBytes + int64(len(line)+len(newTmpl.Pattern))
+	for _, token := range tokens {
+		added += int64(len(token)) + 16
+	}
+
+	return added
 }
 
 // drainTokenize splits a log line into tokens, classifying variable tokens as <*>.

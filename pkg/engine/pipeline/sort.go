@@ -92,6 +92,23 @@ func NewSortIteratorWithBudget(child Iterator, fields []SortField, batchSize int
 func NewSortIteratorWithSpill(child Iterator, fields []SortField, batchSize int, acct memgov.MemoryAccount, mgr *SpillManager) *SortIterator {
 	s := NewSortIteratorWithBudget(child, fields, batchSize, acct)
 	s.spillMgr = mgr
+	if ca, ok := s.acct.(*CoordinatedAccount); ok && mgr != nil {
+		ca.SetOnRevoke(func(target int64) int64 {
+			if len(s.rows) == 0 {
+				return 0
+			}
+			before := s.acct.Used()
+			if err := s.spillCurrentRun(); err != nil {
+				return 0
+			}
+			freed := before - s.acct.Used()
+			if freed < 0 {
+				return 0
+			}
+
+			return freed
+		})
+	}
 
 	return s
 }

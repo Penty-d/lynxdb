@@ -394,6 +394,46 @@ func TestUnit_BudgetAdapter_MultipleNewAccount_DistinctOperatorMemories(t *testi
 	}
 }
 
+func TestUnit_BudgetAdapter_NewSpillableAccount_ChargesClassSpillable(t *testing.T) {
+	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
+	budget := NewQueryBudget(gov, "query-spillable")
+	adapter := NewBudgetAdapter(budget, gov)
+	defer adapter.Close()
+
+	acct := adapter.NewSpillableAccount("sort")
+	if acct == nil {
+		t.Fatal("NewSpillableAccount returned nil")
+	}
+	if err := acct.Grow(4096); err != nil {
+		t.Fatalf("acct.Grow failed: %v", err)
+	}
+	if got := gov.ClassUsage(ClassSpillable).Allocated; got != 4096 {
+		t.Fatalf("ClassSpillable allocated = %d, want 4096", got)
+	}
+	if got := gov.ClassUsage(ClassNonRevocable).Allocated; got != 0 {
+		t.Fatalf("ClassNonRevocable allocated = %d, want 0", got)
+	}
+	if got := adapter.CurAllocated(); got != 4096 {
+		t.Fatalf("adapter.CurAllocated = %d, want 4096", got)
+	}
+
+	acct.Shrink(1024)
+	if got := gov.ClassUsage(ClassSpillable).Allocated; got != 3072 {
+		t.Fatalf("ClassSpillable after Shrink = %d, want 3072", got)
+	}
+	if got := adapter.CurAllocated(); got != 3072 {
+		t.Fatalf("adapter.CurAllocated after Shrink = %d, want 3072", got)
+	}
+
+	acct.Close()
+	if got := gov.ClassUsage(ClassSpillable).Allocated; got != 0 {
+		t.Fatalf("ClassSpillable after Close = %d, want 0", got)
+	}
+	if got := adapter.CurAllocated(); got != 0 {
+		t.Fatalf("adapter.CurAllocated after Close = %d, want 0", got)
+	}
+}
+
 func TestUnit_BudgetAdapter_Close_ReleasesQueryBudget(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	budget := NewQueryBudget(gov, "query-4")
