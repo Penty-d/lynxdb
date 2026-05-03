@@ -568,6 +568,18 @@ func TestCountSpillableOps(t *testing.T) {
 			expected: 1,
 		},
 		{
+			name: "top and rare",
+			prog: &spl2.Program{
+				Main: &spl2.Query{
+					Commands: []spl2.Command{
+						&spl2.TopCommand{Field: "status"},
+						&spl2.RareCommand{Field: "uri"},
+					},
+				},
+			},
+			expected: 2,
+		},
+		{
 			name: "CTE with stats + main with sort",
 			prog: &spl2.Program{
 				Datasets: []spl2.DatasetDef{

@@ -1048,10 +1048,10 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return NewTransactionIteratorWithSpill(child, c.Field, dur, c.StartsWith, c.EndsWith, qc.batchSize, qc.newCoordinatedAccount("transaction", reservationEventStats), qc.spillMgr), nil
 
 	case *spl2.TopCommand:
-		return NewTopIteratorWithBudget(child, c.Field, c.ByField, c.N, false, qc.batchSize, qc.newAccount("top")), nil
+		return NewTopIteratorWithSpill(child, c.Field, c.ByField, c.N, false, qc.batchSize, qc.newCoordinatedAccount("top", reservationAggregate), qc.spillMgr), nil
 
 	case *spl2.RareCommand:
-		return NewTopIteratorWithBudget(child, c.Field, c.ByField, c.N, true, qc.batchSize, qc.newAccount("rare")), nil
+		return NewTopIteratorWithSpill(child, c.Field, c.ByField, c.N, true, qc.batchSize, qc.newCoordinatedAccount("rare", reservationAggregate), qc.spillMgr), nil
 
 	case *spl2.GlimpseCommand:
 		return NewGlimpseIterator(child, c.SampleSize), nil

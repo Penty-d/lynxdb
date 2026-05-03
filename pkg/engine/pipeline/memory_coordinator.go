@@ -508,6 +508,10 @@ func countSpillableInQuery(query *spl2.Query) int {
 			count++
 		case *spl2.TransactionCommand:
 			count++
+		case *spl2.TopCommand:
+			count++
+		case *spl2.RareCommand:
+			count++
 		case *spl2.SessionizeCommand:
 			count++
 		case *spl2.OutliersCommand:
