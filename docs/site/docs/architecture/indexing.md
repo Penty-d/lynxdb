@@ -49,7 +49,7 @@ Query: search "connection refused"
 
 ## Bloom Filters
 
-Every V2 segment contains a bloom filter that records all unique terms present in the segment. Bloom filters are probabilistic: they can tell you "definitely not present" (no false negatives) or "possibly present" (with a configurable false positive rate).
+Every v1 segment contains per-row-group bloom regions that record searchable terms. Bloom filters are probabilistic: they can tell you "definitely not present" (no false negatives) or "possibly present" (with a configurable false positive rate).
 
 ### Construction
 

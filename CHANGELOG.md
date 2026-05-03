@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Storage engine**: Columnar segment format (`.lsg` V2) with delta-varint timestamps, LZ4 compression, dictionary-encoded strings, Gorilla-encoded floats.
+- **Storage engine**: Columnar segment format (`.lsg` format-major v1 with `LSG1` magic) with delta-varint timestamps, LZ4/ZSTD compression, dictionary-encoded strings, Gorilla-encoded floats, region magics, and a `FORMAT` marker. Existing pre-v1 `.lsg` files are not readable and must be deleted before upgrade.
 - **Full-text search**: FST-based inverted index with roaring bitmap posting lists and bloom filters for segment skipping.
 - **Direct-to-part ingest**: `AsyncBatcher` buffers events in memory and flushes immutable `.lsg` parts via atomic rename; configurable `fsync` policy per part write.
 - **Compaction**: Size-tiered compaction (L0 -> L1 -> L2) with rate limiting.
