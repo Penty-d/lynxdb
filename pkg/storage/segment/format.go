@@ -2,21 +2,17 @@ package segment
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
+	"math/bits"
 	"sync"
 )
 
-// .lsg file format constants.
-const (
-	MagicBytes  = "LSEG"    // 4-byte magic at file start
-	FooterMagic = "LSGF"    // 4-byte magic at footer start
-	FormatV4    = uint16(4) // format version 4 (per-column blooms, const columns, presence bitmap)
-	HeaderSize  = 16        // magic (4) + version (2) + flags (2) + rowGroupSize (4) + rowGroupCount (4)
-)
-
-// Footer holds the segment file footer data for V4.
+// Footer holds the segment file footer data for LSG major v1.
 type Footer struct {
 	EventCount         int64
+	RequiredCaps       uint64
+	OptionalCaps       uint64
 	RowGroups          []RowGroupMeta
 	InvertedOffset     int64
 	InvertedLength     int64
@@ -115,47 +111,19 @@ func (f *Footer) computeStats() []ColumnStats {
 	return result
 }
 
-// encodeFooter serializes a V4 footer to binary.
-//
-// V4 footer layout:
-//
-//	"LSGF" magic (4B)
-//	uint64 eventCount
-//	uint32 rgCount
-//	For each RG:
-//	  uint32 rowCount
-//	  uint64 columnPresenceBits
-//	  uint16 constColumnCount
-//	  For each const column:
-//	    uint16 nameLen + name bytes
-//	    uint8  encodingType
-//	    uint16 valueLen + value bytes
-//	  uint32 columnCount
-//	  For each column chunk:
-//	    (name, encoding, compression, offset, length, rawSize, CRC32, min, max, count, nullCount)
-//	  uint64 perColumnBloomOffset
-//	  uint64 perColumnBloomLength
-//	uint32 catalogCount
-//	For each catalog entry:
-//	  uint16 nameLen + name bytes
-//	  uint8  dominantType
-//	uint64 invertedOffset
-//	uint64 invertedLength
-//	uint64 primaryIndexOffset
-//	uint64 primaryIndexLength
 func encodeFooter(f *Footer) []byte {
 	buf := make([]byte, 0, 4096)
 
-	// Footer magic.
-	buf = append(buf, FooterMagic...)
+	buf = append(buf, LSG_FOOTER_MAGIC...)
+	buf = append(buf, 0, 0, 0, 0)
 
-	// Event count.
 	buf = binary.LittleEndian.AppendUint64(buf, uint64(f.EventCount))
+	buf = binary.LittleEndian.AppendUint64(buf, f.RequiredCaps)
+	buf = binary.LittleEndian.AppendUint64(buf, f.OptionalCaps)
 
-	// Row group count.
 	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(f.RowGroups)))
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(f.Catalog)))
 
-	// Row group metadata.
 	for _, rg := range f.RowGroups {
 		buf = binary.LittleEndian.AppendUint32(buf, uint32(rg.RowCount))
 
@@ -200,10 +168,9 @@ func encodeFooter(f *Footer) []byte {
 		// Per-column bloom section location.
 		buf = binary.LittleEndian.AppendUint64(buf, uint64(rg.PerColumnBloomOffset))
 		buf = binary.LittleEndian.AppendUint64(buf, uint64(rg.PerColumnBloomLength))
+		buf = binary.LittleEndian.AppendUint64(buf, rg.RequiredCapabilities)
 	}
 
-	// Column catalog.
-	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(f.Catalog)))
 	for _, cat := range f.Catalog {
 		nameBytes := []byte(cat.Name)
 		buf = binary.LittleEndian.AppendUint16(buf, uint16(len(nameBytes)))
@@ -219,11 +186,10 @@ func encodeFooter(f *Footer) []byte {
 	buf = binary.LittleEndian.AppendUint64(buf, uint64(f.PrimaryIndexOffset))
 	buf = binary.LittleEndian.AppendUint64(buf, uint64(f.PrimaryIndexLength))
 
-	// Footer size (so reader can locate footer start).
 	footerPayloadLen := uint32(len(buf))
 	buf = binary.LittleEndian.AppendUint32(buf, footerPayloadLen)
+	buf = binary.LittleEndian.AppendUint32(buf, footerCapsSummary(f.RequiredCaps, f.OptionalCaps))
 
-	// CRC32 of everything above.
 	crc := crc32.ChecksumIEEE(buf)
 	buf = binary.LittleEndian.AppendUint32(buf, crc)
 
@@ -238,17 +204,18 @@ func DecodeFooter(data []byte) (*Footer, error) {
 }
 
 func decodeFooter(data []byte) (*Footer, error) {
-	if len(data) < HeaderSize+8 {
-		return nil, ErrCorruptSegment
+	if len(data) < LSG_FOOTER_TRAILER_SIZE {
+		return nil, fmt.Errorf("%w: truncated trailer (file size %d, expected >= %d)", ErrCorruptSegment, len(data), LSG_FOOTER_TRAILER_SIZE)
 	}
 
-	// Read footer size and CRC from the last 8 bytes.
-	footerSize := binary.LittleEndian.Uint32(data[len(data)-8 : len(data)-4])
+	trailerStart := len(data) - LSG_FOOTER_TRAILER_SIZE
+	footerSize := binary.LittleEndian.Uint32(data[trailerStart : trailerStart+4])
+	storedCapsSummary := binary.LittleEndian.Uint32(data[trailerStart+4 : trailerStart+8])
 	storedCRC := binary.LittleEndian.Uint32(data[len(data)-4:])
 
-	totalFooterLen := int(footerSize) + 8
+	totalFooterLen := int(footerSize) + LSG_FOOTER_TRAILER_SIZE
 	if totalFooterLen > len(data) {
-		return nil, ErrCorruptSegment
+		return nil, fmt.Errorf("%w: truncated trailer (file size %d, expected >= %d)", ErrCorruptSegment, len(data), totalFooterLen)
 	}
 
 	footerStart := len(data) - totalFooterLen
@@ -262,26 +229,39 @@ func decodeFooter(data []byte) (*Footer, error) {
 	payload := data[footerStart : footerStart+int(footerSize)]
 	pos := 0
 
-	// Magic.
-	if pos+4 > len(payload) || string(payload[pos:pos+4]) != FooterMagic {
+	if pos+8 > len(payload) || string(payload[pos:pos+4]) != LSG_FOOTER_MAGIC {
+		return nil, ErrCorruptSegment
+	}
+	pos += 4
+	if payload[pos] != 0 || payload[pos+1] != 0 || payload[pos+2] != 0 || payload[pos+3] != 0 {
 		return nil, ErrCorruptSegment
 	}
 	pos += 4
 
 	f := &Footer{}
 
-	// Event count.
 	if pos+8 > len(payload) {
 		return nil, ErrCorruptSegment
 	}
 	f.EventCount = int64(binary.LittleEndian.Uint64(payload[pos : pos+8]))
 	pos += 8
+	if pos+16 > len(payload) {
+		return nil, ErrCorruptSegment
+	}
+	f.RequiredCaps = binary.LittleEndian.Uint64(payload[pos : pos+8])
+	pos += 8
+	f.OptionalCaps = binary.LittleEndian.Uint64(payload[pos : pos+8])
+	pos += 8
+	if footerCapsSummary(f.RequiredCaps, f.OptionalCaps) != storedCapsSummary {
+		return nil, ErrCorruptSegment
+	}
 
-	// Row group count.
-	if pos+4 > len(payload) {
+	if pos+8 > len(payload) {
 		return nil, ErrCorruptSegment
 	}
 	rgCount := binary.LittleEndian.Uint32(payload[pos : pos+4])
+	pos += 4
+	catCount := binary.LittleEndian.Uint32(payload[pos : pos+4])
 	pos += 4
 
 	f.RowGroups = make([]RowGroupMeta, rgCount)
@@ -427,14 +407,12 @@ func decodeFooter(data []byte) (*Footer, error) {
 		pos += 8
 		f.RowGroups[rg].PerColumnBloomLength = int64(binary.LittleEndian.Uint64(payload[pos : pos+8]))
 		pos += 8
+		if pos+8 > len(payload) {
+			return nil, ErrCorruptSegment
+		}
+		f.RowGroups[rg].RequiredCapabilities = binary.LittleEndian.Uint64(payload[pos : pos+8])
+		pos += 8
 	}
-
-	// Column catalog.
-	if pos+4 > len(payload) {
-		return nil, ErrCorruptSegment
-	}
-	catCount := binary.LittleEndian.Uint32(payload[pos : pos+4])
-	pos += 4
 
 	f.Catalog = make([]CatalogEntry, catCount)
 	for i := uint32(0); i < catCount; i++ {
@@ -443,6 +421,9 @@ func decodeFooter(data []byte) (*Footer, error) {
 		}
 		nameLen := int(binary.LittleEndian.Uint16(payload[pos : pos+2]))
 		pos += 2
+		if nameLen > 1024 {
+			return nil, ErrCorruptSegment
+		}
 		// Bounds check using int64 to prevent overflow on 32-bit architectures.
 		if int64(pos)+int64(nameLen) > int64(len(payload)) {
 			return nil, ErrCorruptSegment
@@ -474,4 +455,23 @@ func decodeFooter(data []byte) (*Footer, error) {
 	}
 
 	return f, nil
+}
+
+func footerCapsSummary(required, optional uint64) uint32 {
+	return uint32(required) ^ uint32(optional>>32)
+}
+
+func aggregateCapabilities(rowGroups []RowGroupMeta) (uint64, uint64) {
+	var required uint64
+	for _, rg := range rowGroups {
+		required |= rg.RequiredCapabilities
+	}
+	return required, 0
+}
+
+func lowestSetBit(mask uint64) int {
+	if mask == 0 {
+		return -1
+	}
+	return bits.TrailingZeros64(mask)
 }

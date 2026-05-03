@@ -10,6 +10,10 @@ import (
 	"github.com/blevesearch/vellum"
 )
 
+const (
+	lsgInvertedMagic = "LSIX"
+)
+
 // InvertedIndex maps terms to posting lists (roaring bitmaps of event IDs).
 // Built during segment creation and serialized for storage.
 type InvertedIndex struct {
@@ -73,14 +77,18 @@ func (idx *InvertedIndex) Terms() []string {
 //
 // Wire format:
 //
-//	[4B FST length] [FST data] [posting lists: 4B bitmap length + bitmap data ...]
+//	"LSIX" [1B revision=0] [3B reserved=0] [4B FST length] [FST data] [posting lists...]
 //
 // The FST maps each term to a uint64 offset into the posting list area.
 func (idx *InvertedIndex) Encode() ([]byte, error) {
 	terms := idx.Terms()
+	result := make([]byte, 0, 12)
+	result = append(result, lsgInvertedMagic...)
+	result = append(result, 0, 0, 0, 0)
 	if len(terms) == 0 {
-		// Empty index: 4B zero FST length.
-		return make([]byte, 4), nil
+		// Empty index: 4B zero FST length after the region header.
+		result = binary.LittleEndian.AppendUint32(result, 0)
+		return result, nil
 	}
 
 	// Serialize all posting lists first to get offsets.
@@ -117,7 +125,6 @@ func (idx *InvertedIndex) Encode() ([]byte, error) {
 
 	// Assemble: [4B fst_len] [fst_data] [posting_data]
 	fstData := fstBuf.Bytes()
-	result := make([]byte, 0, 4+len(fstData)+postingBuf.Len())
 	result = binary.LittleEndian.AppendUint32(result, uint32(len(fstData)))
 	result = append(result, fstData...)
 	result = append(result, postingBuf.Bytes()...)
@@ -133,26 +140,32 @@ type SerializedIndex struct {
 
 // DecodeInvertedIndex opens a serialized inverted index.
 func DecodeInvertedIndex(data []byte) (*SerializedIndex, error) {
-	if len(data) < 4 {
+	if len(data) < 12 {
 		return nil, fmt.Errorf("index: data too short")
 	}
+	if string(data[0:4]) != lsgInvertedMagic {
+		return nil, fmt.Errorf("index: inverted region magic mismatch")
+	}
+	if data[4] != 0 || data[5] != 0 || data[6] != 0 || data[7] != 0 {
+		return nil, fmt.Errorf("index: unsupported inverted region revision")
+	}
 
-	fstLen := binary.LittleEndian.Uint32(data[0:4])
+	fstLen := binary.LittleEndian.Uint32(data[8:12])
 	if fstLen == 0 {
 		return &SerializedIndex{}, nil
 	}
 
-	if 4+int(fstLen) > len(data) {
+	if 12+int(fstLen) > len(data) {
 		return nil, fmt.Errorf("index: truncated FST data")
 	}
 
-	fstData := data[4 : 4+fstLen]
+	fstData := data[12 : 12+fstLen]
 	fst, err := vellum.Load(fstData)
 	if err != nil {
 		return nil, fmt.Errorf("index: load FST: %w", err)
 	}
 
-	postingData := data[4+fstLen:]
+	postingData := data[12+fstLen:]
 
 	return &SerializedIndex{fst: fst, postingData: postingData}, nil
 }

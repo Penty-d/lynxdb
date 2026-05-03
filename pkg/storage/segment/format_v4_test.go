@@ -651,7 +651,7 @@ func TestV4_CRC32_Integrity(t *testing.T) {
 	// Corrupt a byte in the middle of the data (column chunk area).
 	corrupt := make([]byte, len(data))
 	copy(corrupt, data)
-	corrupt[HeaderSize+50] ^= 0xFF // flip a byte in a column chunk
+	corrupt[LSG_HEADER_SIZE+50] ^= 0xFF // flip a byte in a column chunk
 
 	// At least one of OpenSegment or ReadEvents MUST fail on corrupted data.
 	// If both succeed, CRC integrity checking is broken.
