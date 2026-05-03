@@ -79,6 +79,41 @@ func TestDedupSpillTransition(t *testing.T) {
 	}
 }
 
+func TestDedupExternalBloomChargesMetadataClass(t *testing.T) {
+	rows := make([]map[string]event.Value, 1000)
+	for i := range rows {
+		rows[i] = map[string]event.Value{
+			"key": event.StringValue(fmt.Sprintf("val%d", i%200)),
+		}
+	}
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.CleanupAll()
+
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: 64 << 20})
+	metadataBudget := memgov.NewBudgetAdapterWithLimit(memgov.NewQueryBudget(gov, "dedup"), gov, 64<<20)
+	defer metadataBudget.Close()
+
+	acct := memgov.NewTestBudget("test", 3*1024).NewAccount("dedup")
+	iter := newDedupIteratorWithSpill(NewRowScanIterator(rows, 64), []string{"key"}, 1, acct, mgr)
+	iter.SetMetadataAccount(metadataBudget.NewMetadataAccount("dedup-bloom"))
+
+	if _, err := CollectAll(context.Background(), iter); err != nil {
+		t.Fatal(err)
+	}
+
+	usage := gov.ClassUsage(memgov.ClassMetadata)
+	if usage.Peak < externalDedupMinBloomBits/8 {
+		t.Fatalf("metadata peak = %d, want at least %d", usage.Peak, externalDedupMinBloomBits/8)
+	}
+	if usage.Allocated != 0 {
+		t.Fatalf("metadata allocated after close = %d, want 0", usage.Allocated)
+	}
+}
+
 func TestDedupSpillWithLimit(t *testing.T) {
 	// Test dedup with limit=3 and spill. Each unique key should appear at most 3 times.
 	n := 600

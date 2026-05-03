@@ -513,10 +513,18 @@ func (d *DedupIterator) spill() error {
 	d.externalSet = eds
 	d.spilledEntries = int64(len(d.seenHash)) + int64(len(d.seenExact))
 
-	// Track the bloom filter heap allocation for observability. The bloom is
-	// not budget-bound (it lives outside the MemoryAccount) but we record the
-	// size so ResourceStats can report total memory overhead accurately.
+	// Track the bloom filter heap allocation as metadata. The bloom is not
+	// revocable like row working sets, but it must still be visible to the
+	// process-wide governor and per-query peak stats.
 	d.bloomAllocBytes = int64(len(eds.bloom)) * 8 // []uint64 → bytes
+	if err := d.metadataAcct.Grow(d.bloomAllocBytes); err != nil {
+		eds.close()
+		d.externalSet = nil
+		d.spilledEntries = 0
+		d.bloomAllocBytes = 0
+
+		return fmt.Errorf("dedup.spill: bloom metadata memory: %w", err)
+	}
 
 	// Preserve per-hash limit counts for limit > 1.
 	if d.limit > 1 {

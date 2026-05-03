@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"container/heap"
 	"context"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ const (
 type transactionGroup struct {
 	events     []map[string]event.Value
 	order      int64
+	lastTime   time.Time
 	rowBytes   int64
 	stateBytes int64
 }
@@ -30,6 +32,39 @@ type transactionGroup struct {
 type transactionOutput struct {
 	order int64
 	row   map[string]event.Value
+}
+
+type transactionExpiryItem struct {
+	key      string
+	order    int64
+	lastTime time.Time
+}
+
+type transactionExpiryHeap []transactionExpiryItem
+
+func (h transactionExpiryHeap) Len() int { return len(h) }
+
+func (h transactionExpiryHeap) Less(i, j int) bool {
+	if h[i].lastTime.Equal(h[j].lastTime) {
+		return h[i].order < h[j].order
+	}
+
+	return h[i].lastTime.Before(h[j].lastTime)
+}
+
+func (h transactionExpiryHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *transactionExpiryHeap) Push(x interface{}) {
+	*h = append(*h, x.(transactionExpiryItem))
+}
+
+func (h *transactionExpiryHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+
+	return item
 }
 
 // TransactionIterator groups events by a field with maxspan/startswith/endswith.
@@ -142,6 +177,10 @@ func (t *TransactionIterator) ResourceStats() OperatorResourceStats {
 func (t *TransactionIterator) Schema() []FieldInfo { return nil }
 
 func (t *TransactionIterator) materialize(ctx context.Context) error {
+	if t.maxSpan > 0 && t.startsWith == "" && t.endsWith == "" {
+		return t.materializeStreamingMaxSpan(ctx)
+	}
+
 	// Collect all events grouped by field value.
 	groups := make(map[string]*transactionGroup)
 	groupOrder := make([]string, 0)
@@ -191,6 +230,7 @@ func (t *TransactionIterator) materialize(ctx context.Context) error {
 				groupOrder = append(groupOrder, key)
 			}
 			g.events = append(g.events, row)
+			g.lastTime = getTime(row)
 			g.rowBytes += rowBytes
 		}
 	}
@@ -207,6 +247,132 @@ func (t *TransactionIterator) materialize(ctx context.Context) error {
 	t.emitted = true
 
 	return nil
+}
+
+func (t *TransactionIterator) materializeStreamingMaxSpan(ctx context.Context) error {
+	active := make(map[string]*transactionGroup)
+	expiry := &transactionExpiryHeap{}
+	heap.Init(expiry)
+	outputs := make([]transactionOutput, 0)
+	nextOrder := int64(0)
+	var lastInputTime time.Time
+
+	evictExpired := func(watermark time.Time) error {
+		for expiry.Len() > 0 {
+			item := (*expiry)[0]
+			g := active[item.key]
+			if g == nil || g.order != item.order || !g.lastTime.Equal(item.lastTime) {
+				heap.Pop(expiry)
+
+				continue
+			}
+			if !g.lastTime.Add(t.maxSpan).Before(watermark) {
+				break
+			}
+			heap.Pop(expiry)
+			delete(active, item.key)
+			if err := t.appendFinalTransactionOutput(&outputs, item.key, g, false); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	for {
+		batch, err := t.child.Next(ctx)
+		if err != nil {
+			return err
+		}
+		if batch == nil {
+			break
+		}
+
+		batchRows := make([]map[string]event.Value, batch.Len)
+		for i := 0; i < batch.Len; i++ {
+			batchRows[i] = batch.Row(i)
+		}
+
+		for i, row := range batchRows {
+			rowTime, ok := getTimeOK(row)
+			if !ok {
+				if t.spillMgr != nil && len(outputs) == 0 {
+					return t.spillAndMaterialize(ctx, active, transactionGroupOrder(active), batchRows[i:])
+				}
+
+				return fmt.Errorf("transaction.streaming: maxspan requires _time on every row")
+			}
+			if !lastInputTime.IsZero() && rowTime.Before(lastInputTime) {
+				if t.spillMgr != nil && len(outputs) == 0 {
+					return t.spillAndMaterialize(ctx, active, transactionGroupOrder(active), batchRows[i:])
+				}
+
+				return fmt.Errorf("transaction.streaming: maxspan requires time-ordered input")
+			}
+			lastInputTime = rowTime
+
+			if err := evictExpired(rowTime); err != nil {
+				return err
+			}
+
+			rowBytes := EstimateRowBytes(row)
+			if err := t.acct.Grow(rowBytes); err != nil {
+				if t.spillMgr != nil && len(outputs) == 0 {
+					return t.spillAndMaterialize(ctx, active, transactionGroupOrder(active), batchRows[i:])
+				}
+
+				return fmt.Errorf("transaction.streaming: row memory: %w", err)
+			}
+
+			key := ""
+			if v, ok := row[t.field]; ok {
+				key = v.String()
+			}
+			g, ok := active[key]
+			if !ok {
+				stateBytes := estimatedTransactionGroupBytes + int64(len(key))
+				if err := t.acct.Grow(stateBytes); err != nil {
+					t.acct.Shrink(rowBytes)
+					if t.spillMgr != nil && len(outputs) == 0 {
+						return t.spillAndMaterialize(ctx, active, transactionGroupOrder(active), batchRows[i:])
+					}
+
+					return fmt.Errorf("transaction.streaming: group state: %w", err)
+				}
+				g = &transactionGroup{order: nextOrder, stateBytes: stateBytes}
+				nextOrder++
+				active[key] = g
+			}
+			g.events = append(g.events, row)
+			g.rowBytes += rowBytes
+			g.lastTime = rowTime
+			heap.Push(expiry, transactionExpiryItem{key: key, order: g.order, lastTime: rowTime})
+		}
+	}
+
+	for _, key := range transactionGroupOrder(active) {
+		g := active[key]
+		if err := t.appendFinalTransactionOutput(&outputs, key, g, false); err != nil {
+			return err
+		}
+		delete(active, key)
+	}
+	t.sortAndStoreOutputs(outputs)
+	t.emitted = true
+
+	return nil
+}
+
+func transactionGroupOrder(groups map[string]*transactionGroup) []string {
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.SliceStable(keys, func(i, j int) bool {
+		return groups[keys[i]].order < groups[keys[j]].order
+	})
+
+	return keys
 }
 
 func (t *TransactionIterator) spillAndMaterialize(ctx context.Context, groups map[string]*transactionGroup, groupOrder []string, overflowRows []map[string]event.Value) error {
@@ -375,7 +541,7 @@ func (t *TransactionIterator) processTransactionPartition(path string) ([]transa
 }
 
 func (t *TransactionIterator) appendTransactionOutput(outputs *[]transactionOutput, key string, g *transactionGroup) error {
-	txRow := t.buildTransactionRow(key, g.events)
+	txRow := t.buildTransactionRow(key, g.events, true)
 	if txRow == nil {
 		return nil
 	}
@@ -387,13 +553,30 @@ func (t *TransactionIterator) appendTransactionOutput(outputs *[]transactionOutp
 	return nil
 }
 
-func (t *TransactionIterator) buildTransactionRow(key string, events []map[string]event.Value) map[string]event.Value {
+func (t *TransactionIterator) appendFinalTransactionOutput(outputs *[]transactionOutput, key string, g *transactionGroup, applyMaxSpanFilter bool) error {
+	txRow := t.buildTransactionRow(key, g.events, applyMaxSpanFilter)
+	if txRow == nil {
+		t.releaseTransactionGroup(g)
+
+		return nil
+	}
+	rowBytes := EstimateRowBytes(txRow)
+	t.releaseTransactionGroup(g)
+	if err := t.acct.Grow(rowBytes); err != nil {
+		return fmt.Errorf("transaction.streaming: output row: %w", err)
+	}
+	*outputs = append(*outputs, transactionOutput{order: g.order, row: txRow})
+
+	return nil
+}
+
+func (t *TransactionIterator) buildTransactionRow(key string, events []map[string]event.Value, applyMaxSpanFilter bool) map[string]event.Value {
 	if len(events) == 0 {
 		return nil
 	}
 
 	// Apply maxspan filter.
-	if t.maxSpan > 0 && len(events) >= 2 {
+	if applyMaxSpanFilter && t.maxSpan > 0 && len(events) >= 2 {
 		firstTime := getTime(events[0])
 		lastTime := getTime(events[len(events)-1])
 		if lastTime.Sub(firstTime) > t.maxSpan {
@@ -460,11 +643,17 @@ func (t *TransactionIterator) sortAndStoreOutputs(outputs []transactionOutput) {
 }
 
 func getTime(row map[string]event.Value) time.Time {
+	ts, _ := getTimeOK(row)
+
+	return ts
+}
+
+func getTimeOK(row map[string]event.Value) (time.Time, bool) {
 	if v, ok := row["_time"]; ok {
 		if t, tok := v.TryAsTimestamp(); tok {
-			return t
+			return t, true
 		}
 	}
 
-	return time.Time{}
+	return time.Time{}, false
 }

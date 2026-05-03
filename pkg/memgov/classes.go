@@ -56,6 +56,8 @@ func (c MemoryClass) String() string {
 type ClassStats struct {
 	Allocated int64 `json:"allocated"`
 	Peak      int64 `json:"peak"`
+	Peak60s   int64 `json:"peak_60s"`
+	Peak24h   int64 `json:"peak_24h"`
 	Limit     int64 `json:"limit"` // 0 = no per-class limit, governed by total
 }
 

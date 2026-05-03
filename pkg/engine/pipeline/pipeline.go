@@ -107,6 +107,14 @@ func (qc *queryContext) newAccount(label string) memgov.MemoryAccount {
 	return memgov.NopAccount()
 }
 
+func (qc *queryContext) newMetadataAccount(label string) memgov.MemoryAccount {
+	if qc.govBudget != nil {
+		return qc.govBudget.NewMetadataAccount(label)
+	}
+
+	return memgov.NopAccount()
+}
+
 // newCoordinatedAccount creates a MemoryAccount for a spillable operator.
 // When a coordinator is active, the returned account has a coordinator-managed
 // sub-limit that enables budget redistribution after spill. When no coordinator
@@ -945,11 +953,18 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 
 	case *spl2.DedupCommand:
 		acct := qc.newCoordinatedAccount("dedup", reservationDedup)
+		metadataAcct := qc.newMetadataAccount("dedup-metadata")
 		if qc.dedupExact {
-			return newDedupIteratorExactWithSpill(child, c.Fields, c.Limit, acct, qc.spillMgr), nil
+			iter := newDedupIteratorExactWithSpill(child, c.Fields, c.Limit, acct, qc.spillMgr)
+			iter.SetMetadataAccount(metadataAcct)
+
+			return iter, nil
 		}
 
-		return newDedupIteratorWithSpill(child, c.Fields, c.Limit, acct, qc.spillMgr), nil
+		iter := newDedupIteratorWithSpill(child, c.Fields, c.Limit, acct, qc.spillMgr)
+		iter.SetMetadataAccount(metadataAcct)
+
+		return iter, nil
 
 	case *spl2.RexCommand:
 		field := c.Field

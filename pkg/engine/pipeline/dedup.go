@@ -40,15 +40,16 @@ const dedupWarnThreshold = 10_000_000
 // when the memory budget is exceeded, using a bloom filter + sorted hash file
 // for bounded-memory dedup at the cost of disk I/O.
 type DedupIterator struct {
-	child       Iterator
-	fields      []string
-	limit       int
-	seenHash    map[uint64]int // hash-based dedup (default)
-	seenExact   map[string]int // exact mode (only when exactMode is true)
-	exactMode   bool
-	singleField bool // true when len(fields)==1, enables zero-copy fast path
-	acct        memgov.MemoryAccount
-	warnedSize  bool // true after warning was emitted for large map
+	child        Iterator
+	fields       []string
+	limit        int
+	seenHash     map[uint64]int // hash-based dedup (default)
+	seenExact    map[string]int // exact mode (only when exactMode is true)
+	exactMode    bool
+	singleField  bool // true when len(fields)==1, enables zero-copy fast path
+	acct         memgov.MemoryAccount
+	metadataAcct memgov.MemoryAccount // bloom/index metadata charged separately
+	warnedSize   bool                 // true after warning was emitted for large map
 
 	// Spill-to-disk support.
 	spillMgr            *SpillManager     // lifecycle manager for spill files (nil = no spill support)
@@ -70,12 +71,13 @@ func NewDedupIterator(child Iterator, fields []string, limit int) *DedupIterator
 	}
 
 	return &DedupIterator{
-		child:       child,
-		fields:      fields,
-		limit:       limit,
-		seenHash:    make(map[uint64]int),
-		singleField: len(fields) == 1,
-		acct:        memgov.NopAccount(),
+		child:        child,
+		fields:       fields,
+		limit:        limit,
+		seenHash:     make(map[uint64]int),
+		singleField:  len(fields) == 1,
+		acct:         memgov.NopAccount(),
+		metadataAcct: memgov.NopAccount(),
 	}
 }
 
@@ -87,6 +89,12 @@ func NewDedupIteratorWithBudget(child Iterator, fields []string, limit int, acct
 	return d
 }
 
+// SetMetadataAccount sets the account used for bloom/index metadata allocated
+// by external dedup spill structures.
+func (d *DedupIterator) SetMetadataAccount(acct memgov.MemoryAccount) {
+	d.metadataAcct = memgov.EnsureAccount(acct)
+}
+
 // NewDedupIteratorExact creates a dedup operator using exact string keys.
 // Use this when correctness is critical for very high cardinality datasets.
 func NewDedupIteratorExact(child Iterator, fields []string, limit int, acct memgov.MemoryAccount) *DedupIterator {
@@ -95,13 +103,14 @@ func NewDedupIteratorExact(child Iterator, fields []string, limit int, acct memg
 	}
 
 	return &DedupIterator{
-		child:       child,
-		fields:      fields,
-		limit:       limit,
-		seenExact:   make(map[string]int),
-		exactMode:   true,
-		singleField: len(fields) == 1,
-		acct:        memgov.EnsureAccount(acct),
+		child:        child,
+		fields:       fields,
+		limit:        limit,
+		seenExact:    make(map[string]int),
+		exactMode:    true,
+		singleField:  len(fields) == 1,
+		acct:         memgov.EnsureAccount(acct),
+		metadataAcct: memgov.NopAccount(),
 	}
 }
 
@@ -274,6 +283,7 @@ func (d *DedupIterator) Close() error {
 		d.externalSet.close()
 		d.externalSet = nil
 	}
+	d.metadataAcct.Close()
 
 	return d.child.Close()
 }
