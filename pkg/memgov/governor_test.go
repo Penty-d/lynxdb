@@ -260,10 +260,19 @@ func TestUnit_Governor_PeakTracking(t *testing.T) {
 	if cs.Peak != 5000 {
 		t.Errorf("Peak = %d, want 5000 (should be watermark)", cs.Peak)
 	}
+	if cs.Peak60s != 5000 {
+		t.Errorf("Peak60s = %d, want 5000", cs.Peak60s)
+	}
+	if cs.Peak24h != 5000 {
+		t.Errorf("Peak24h = %d, want 5000", cs.Peak24h)
+	}
 
 	ts := gov.TotalUsage()
 	if ts.Peak != 5000 {
 		t.Errorf("TotalUsage.Peak = %d, want 5000", ts.Peak)
+	}
+	if ts.ByClass[ClassSpillable].Peak60s != 5000 {
+		t.Errorf("TotalUsage.ByClass[spillable].Peak60s = %d, want 5000", ts.ByClass[ClassSpillable].Peak60s)
 	}
 
 	// Reserve more than previous peak.
@@ -274,6 +283,12 @@ func TestUnit_Governor_PeakTracking(t *testing.T) {
 	cs = gov.ClassUsage(ClassSpillable)
 	if cs.Peak != 9000 {
 		t.Errorf("Peak = %d, want 9000 after new high", cs.Peak)
+	}
+	if cs.Peak60s != 9000 {
+		t.Errorf("Peak60s = %d, want 9000 after new high", cs.Peak60s)
+	}
+	if cs.Peak24h != 9000 {
+		t.Errorf("Peak24h = %d, want 9000 after new high", cs.Peak24h)
 	}
 }
 

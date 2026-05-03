@@ -122,6 +122,7 @@
 # Materialized views configuration.
 # views:
 #   max_backfill_memory_bytes: 0     # Memory budget per backfill (0 = auto)
+#   insert_max_memory_bytes: 0       # Memory budget per insert-time MV batch (0 = auto)
 #   backfill_backpressure_wait: 5s   # Wait time when pool is under pressure
 #   backfill_max_retries: 60         # Max backpressure retries before failing
 #   dispatch_batch_size: 1000        # Rows per dispatch batch

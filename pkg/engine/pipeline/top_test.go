@@ -2,9 +2,13 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func TestTopIterator_SortStability(t *testing.T) {
@@ -154,5 +158,61 @@ func TestTopIterator_DifferentCounts(t *testing.T) {
 		if got != expected[i] {
 			t.Errorf("row %d: expected %q, got %q", i, expected[i], got)
 		}
+	}
+}
+
+func TestTopIterator_AccountsLargeCounterKeys(t *testing.T) {
+	rows := []map[string]event.Value{
+		{"method": event.StringValue(strings.Repeat("x", 4096))},
+	}
+	acct := memgov.NewTestBudget("top", 2048).NewAccount("top")
+	top := NewTopIteratorWithBudget(NewRowScanIterator(rows, 1), "method", "", 10, false, 10, acct)
+
+	if _, err := CollectAll(context.Background(), top); err == nil {
+		t.Fatal("expected large top counter key to exceed budget")
+	}
+}
+
+func TestTopIterator_SpillsHighCardinalityCounters(t *testing.T) {
+	rows := make([]map[string]event.Value, 0, 105)
+	for i := 0; i < 5; i++ {
+		rows = append(rows, map[string]event.Value{"method": event.StringValue("hot")})
+	}
+	for i := 0; i < 100; i++ {
+		rows = append(rows, map[string]event.Value{"method": event.StringValue(fmt.Sprintf("cold-%03d", i))})
+	}
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	acct := memgov.NewTestBudget("top", 4*1024).NewAccount("top")
+	top := NewTopIteratorWithSpill(NewRowScanIterator(rows, 16), "method", "", 3, false, 10, acct, mgr)
+
+	got, err := CollectAll(context.Background(), top)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("rows: got %d, want 3", len(got))
+	}
+	if got[0]["method"].String() != "hot" {
+		t.Fatalf("first method = %q, want hot", got[0]["method"])
+	}
+	if got[0]["count"].AsInt() != 5 {
+		t.Fatalf("hot count = %d, want 5", got[0]["count"].AsInt())
+	}
+	wantPercent := float64(5) / float64(len(rows)) * 100
+	if math.Abs(got[0]["percent"].AsFloat()-wantPercent) > 0.0001 {
+		t.Fatalf("hot percent = %f, want %f", got[0]["percent"].AsFloat(), wantPercent)
+	}
+	rs := top.ResourceStats()
+	if rs.SpilledRows == 0 {
+		t.Fatal("expected top spill path to write rows")
+	}
+	if rs.SpillBytes == 0 {
+		t.Fatal("expected top spill bytes to be reported")
 	}
 }

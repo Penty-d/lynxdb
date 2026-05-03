@@ -3,38 +3,78 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // SessionizeIterator groups events into sessions based on time gaps.
-// When consecutive events by a group key exceed maxpause, a new session starts.
-// Adds _session_id, _session_start, _session_end fields to each row.
+// Input is sorted by group keys and _time via the existing sort iterator, so
+// sessionize only buffers one active session while streaming finalized rows.
 type SessionizeIterator struct {
 	child     Iterator
 	maxPause  time.Duration
 	groupBy   []string
 	batchSize int
+	acct      memgov.MemoryAccount
 
-	done   bool
-	output []map[string]event.Value
-	offset int
+	currentBatch *Batch
+	batchOffset  int
+
+	haveSession   bool
+	sessionID     int64
+	currentGroup  string
+	currentStart  time.Time
+	currentEnd    time.Time
+	currentRows   []map[string]event.Value
+	currentBytes  int64
+	pending       []map[string]event.Value
+	pendingBytes  int64
+	pendingOffset int
+	eof           bool
 }
 
 // NewSessionizeIterator creates a sessionize operator.
 func NewSessionizeIterator(child Iterator, maxPause string, groupBy []string, batchSize int) *SessionizeIterator {
+	return NewSessionizeIteratorWithBudget(child, maxPause, groupBy, batchSize, memgov.NopAccount(), memgov.NopAccount(), nil)
+}
+
+// NewSessionizeIteratorWithBudget creates a sessionize operator that uses a
+// spill-capable sort for ordering and accounts for the active session buffer.
+func NewSessionizeIteratorWithBudget(
+	child Iterator,
+	maxPause string,
+	groupBy []string,
+	batchSize int,
+	sortAcct memgov.MemoryAccount,
+	sessionAcct memgov.MemoryAccount,
+	mgr *SpillManager,
+) *SessionizeIterator {
 	dur := parseDuration(maxPause)
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}
 
+	sortFields := make([]SortField, 0, len(groupBy)+1)
+	for _, field := range groupBy {
+		sortFields = append(sortFields, SortField{Name: field})
+	}
+	sortFields = append(sortFields, SortField{Name: "_time"})
+
+	var sorted Iterator
+	if mgr != nil {
+		sorted = NewSortIteratorWithSpill(child, sortFields, batchSize, memgov.EnsureAccount(sortAcct), mgr)
+	} else {
+		sorted = NewSortIteratorWithBudget(child, sortFields, batchSize, memgov.EnsureAccount(sortAcct))
+	}
+
 	return &SessionizeIterator{
-		child:     child,
+		child:     sorted,
 		maxPause:  dur,
 		groupBy:   groupBy,
 		batchSize: batchSize,
+		acct:      memgov.EnsureAccount(sessionAcct),
 	}
 }
 
@@ -43,116 +83,168 @@ func (s *SessionizeIterator) Init(ctx context.Context) error {
 }
 
 func (s *SessionizeIterator) Next(ctx context.Context) (*Batch, error) {
-	if !s.done {
-		if err := s.materialize(ctx); err != nil {
-			return nil, err
+	out := NewBatch(s.batchSize)
+	for out.Len < s.batchSize {
+		if s.pendingOffset >= len(s.pending) {
+			if s.pendingBytes > 0 {
+				s.acct.Shrink(s.pendingBytes)
+				s.pendingBytes = 0
+			}
+			s.pending = nil
+			s.pendingOffset = 0
+			ok, err := s.readNextFinalizedSession(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				break
+			}
 		}
-		s.done = true
+
+		for out.Len < s.batchSize && s.pendingOffset < len(s.pending) {
+			out.AddRow(s.pending[s.pendingOffset])
+			s.pendingOffset++
+		}
 	}
-	if s.output == nil || s.offset >= len(s.output) {
+
+	if out.Len == 0 {
 		return nil, nil
 	}
-	end := s.offset + s.batchSize
-	if end > len(s.output) {
-		end = len(s.output)
-	}
-	batch := BatchFromRows(s.output[s.offset:end])
-	s.offset = end
 
-	return batch, nil
+	return out, nil
 }
 
-func (s *SessionizeIterator) materialize(ctx context.Context) error {
-	// Drain child.
-	var rows []map[string]event.Value
+func (s *SessionizeIterator) readNextFinalizedSession(ctx context.Context) (bool, error) {
 	for {
-		batch, err := s.child.Next(ctx)
-		if batch == nil {
-			break
-		}
+		row, ok, err := s.nextRow(ctx)
 		if err != nil {
-			return err
+			return false, err
 		}
-		for i := 0; i < batch.Len; i++ {
-			rows = append(rows, batch.Row(i))
+		if !ok {
+			s.eof = true
+			if !s.haveSession {
+				return false, nil
+			}
+			s.finalizeCurrentSession()
+
+			return true, nil
+		}
+
+		groupKey := s.groupKey(row)
+		rowTime := getTime(row)
+		if !s.haveSession {
+			if err := s.startSession(groupKey, rowTime, row); err != nil {
+				return false, err
+			}
+			continue
+		}
+
+		if groupKey != s.currentGroup || (!s.currentEnd.IsZero() && rowTime.Sub(s.currentEnd) > s.maxPause) {
+			s.finalizeCurrentSession()
+			if err := s.startSession(groupKey, rowTime, row); err != nil {
+				return false, err
+			}
+
+			return true, nil
+		}
+
+		if err := s.appendCurrentRow(row, rowTime); err != nil {
+			return false, err
 		}
 	}
+}
 
-	if len(rows) == 0 {
-		return nil
+func (s *SessionizeIterator) nextRow(ctx context.Context) (map[string]event.Value, bool, error) {
+	for {
+		if s.currentBatch != nil && s.batchOffset < s.currentBatch.Len {
+			row := s.currentBatch.Row(s.batchOffset)
+			s.batchOffset++
+
+			return row, true, nil
+		}
+		if s.eof {
+			return nil, false, nil
+		}
+
+		batch, err := s.child.Next(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		if batch == nil {
+			return nil, false, nil
+		}
+		s.currentBatch = batch
+		s.batchOffset = 0
 	}
+}
 
-	// Sort by group keys + time.
-	sort.Slice(rows, func(i, j int) bool {
-		for _, f := range s.groupBy {
-			vi := ""
-			if v, ok := rows[i][f]; ok {
-				vi = v.String()
-			}
-			vj := ""
-			if v, ok := rows[j][f]; ok {
-				vj = v.String()
-			}
-			if vi != vj {
-				return vi < vj
-			}
-		}
+func (s *SessionizeIterator) startSession(groupKey string, rowTime time.Time, row map[string]event.Value) error {
+	s.sessionID++
+	s.haveSession = true
+	s.currentGroup = groupKey
+	s.currentStart = rowTime
+	s.currentEnd = rowTime
+	s.currentRows = nil
+	s.currentBytes = 0
 
-		return getTime(rows[i]).Before(getTime(rows[j]))
-	})
+	return s.appendCurrentRow(row, rowTime)
+}
 
-	// Assign sessions.
-	sessionID := int64(0)
-	var lastGroup string
-	var lastTime time.Time
-
-	for _, row := range rows {
-		// Compute group key.
-		groupKey := ""
-		for _, f := range s.groupBy {
-			if v, ok := row[f]; ok {
-				groupKey += "|" + v.String()
-			}
-		}
-
-		t := getTime(row)
-
-		// New session if group changed or gap exceeded.
-		if groupKey != lastGroup || (lastTime != (time.Time{}) && t.Sub(lastTime) > s.maxPause) {
-			sessionID++
-			row["_session_start"] = event.TimestampValue(t)
-		} else if _, ok := row["_session_start"]; !ok {
-			row["_session_start"] = event.TimestampValue(t)
-		}
-
-		row["_session_id"] = event.IntValue(sessionID)
-		row["_session_end"] = event.TimestampValue(t)
-
-		lastGroup = groupKey
-		lastTime = t
+func (s *SessionizeIterator) appendCurrentRow(row map[string]event.Value, rowTime time.Time) error {
+	rowBytes := EstimateRowBytes(row)
+	if err := s.acct.Grow(rowBytes); err != nil {
+		return fmt.Errorf("sessionize: memory budget exceeded: %w", err)
 	}
-
-	// Second pass: set correct _session_end for all rows in a session.
-	sessionEnds := make(map[int64]time.Time)
-	for i := len(rows) - 1; i >= 0; i-- {
-		sid := rows[i]["_session_id"].AsInt()
-		if _, ok := sessionEnds[sid]; !ok {
-			sessionEnds[sid] = getTime(rows[i])
-		}
-		rows[i]["_session_end"] = event.TimestampValue(sessionEnds[sid])
+	s.currentRows = append(s.currentRows, row)
+	s.currentBytes += rowBytes
+	if rowTime.After(s.currentEnd) {
+		s.currentEnd = rowTime
 	}
-
-	s.output = rows
 
 	return nil
 }
 
+func (s *SessionizeIterator) finalizeCurrentSession() {
+	for _, row := range s.currentRows {
+		row["_session_id"] = event.IntValue(s.sessionID)
+		row["_session_start"] = event.TimestampValue(s.currentStart)
+		row["_session_end"] = event.TimestampValue(s.currentEnd)
+	}
+	s.pending = s.currentRows
+	s.pendingBytes = s.currentBytes
+	s.pendingOffset = 0
+	s.currentRows = nil
+	s.haveSession = false
+	s.currentBytes = 0
+}
+
+func (s *SessionizeIterator) groupKey(row map[string]event.Value) string {
+	groupKey := ""
+	for _, f := range s.groupBy {
+		if v, ok := row[f]; ok {
+			groupKey += "|" + v.String()
+		}
+	}
+
+	return groupKey
+}
+
 func (s *SessionizeIterator) Close() error {
+	if s.currentBytes > 0 {
+		s.acct.Shrink(s.currentBytes)
+		s.currentBytes = 0
+	}
+	if s.pendingBytes > 0 {
+		s.acct.Shrink(s.pendingBytes)
+		s.pendingBytes = 0
+	}
+	s.acct.Close()
+
 	return s.child.Close()
 }
 
-// MemoryUsed returns 0 — sessionize uses the child's memory budget.
-func (s *SessionizeIterator) MemoryUsed() int64 { return 0 }
+// MemoryUsed returns the current tracked memory for this operator.
+func (s *SessionizeIterator) MemoryUsed() int64 { return s.acct.Used() }
 
 func (s *SessionizeIterator) Schema() []FieldInfo {
 	return append(s.child.Schema(),

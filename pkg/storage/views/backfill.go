@@ -57,6 +57,10 @@ type EventSource interface {
 	ScanEvents(cursor string, limit int) ([]*event.Event, string, bool, error)
 }
 
+// BudgetedDispatchFunc processes a backfill batch with access to the
+// backfill's dedicated memory budget.
+type BudgetedDispatchFunc func([]*event.Event, *memgov.BudgetAdapter) error
+
 // Backfiller processes historical data through a view's pipeline.
 type Backfiller struct {
 	registry *ViewRegistry
@@ -98,6 +102,14 @@ func NewBackfillerWithBudget(
 // as a child. If the global pool is under pressure, the backfill pauses and retries
 // with backpressure instead of failing immediately.
 func (b *Backfiller) Run(ctx context.Context, name string, source EventSource, dispatch func([]*event.Event) error) error {
+	return b.RunWithBudgetedDispatch(ctx, name, source, func(events []*event.Event, _ *memgov.BudgetAdapter) error {
+		return dispatch(events)
+	})
+}
+
+// RunWithBudgetedDispatch executes backfill and passes the dedicated backfill
+// budget into dispatch so downstream MV insert pipelines share the same cap.
+func (b *Backfiller) RunWithBudgetedDispatch(ctx context.Context, name string, source EventSource, dispatch BudgetedDispatchFunc) error {
 	def, err := b.registry.Get(name)
 	if err != nil {
 		return err
@@ -163,7 +175,7 @@ func (b *Backfiller) Run(ctx context.Context, name string, source EventSource, d
 		}
 
 		if len(matching) > 0 {
-			if dispatchErr := dispatch(matching); dispatchErr != nil {
+			if dispatchErr := dispatch(matching, adapter); dispatchErr != nil {
 				return fmt.Errorf("views backfill: dispatch: %w", dispatchErr)
 			}
 			total += len(matching)

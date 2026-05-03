@@ -63,6 +63,27 @@ func TestCoordinatorEqualSplit(t *testing.T) {
 	}
 }
 
+func TestQueryContextNewCoordinatedAccountUsesSpillableClass(t *testing.T) {
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: 1 << 20})
+	budget := memgov.NewQueryBudget(gov, "query")
+	adapter := memgov.NewBudgetAdapterWithLimit(budget, gov, 1<<20)
+	defer adapter.Close()
+
+	qc := &queryContext{govBudget: adapter}
+	acct := qc.newCoordinatedAccount("sort", reservationSort)
+	if err := acct.Grow(4096); err != nil {
+		t.Fatalf("Grow failed: %v", err)
+	}
+	defer acct.Close()
+
+	if got := gov.ClassUsage(memgov.ClassSpillable).Allocated; got != 4096 {
+		t.Fatalf("ClassSpillable allocated = %d, want 4096", got)
+	}
+	if got := gov.ClassUsage(memgov.ClassNonRevocable).Allocated; got != 0 {
+		t.Fatalf("ClassNonRevocable allocated = %d, want 0", got)
+	}
+}
+
 func TestCoordinatorRedistributeAfterSpill(t *testing.T) {
 	// 2 operators, 100MB budget, 10% headroom.
 	budget := int64(100 << 20) // 100MB
@@ -98,6 +119,339 @@ func TestCoordinatorRedistributeAfterSpill(t *testing.T) {
 	}
 	if statsAfter[1].Spilled {
 		t.Error("after spill: aggregate should not be marked as spilled")
+	}
+}
+
+func TestCoordinatorRevokesSortBySpillingCurrentRun(t *testing.T) {
+	budget := int64(100 << 20)
+	mc := NewMemoryCoordinator(budget, 0.10)
+	mon := memgov.NewTestBudget("test", budget)
+	acct := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
+	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
+	mc.Finalize()
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	iter := NewSortIteratorWithSpill(
+		NewRowScanIterator(nil, 10),
+		[]SortField{{Name: "key"}},
+		10,
+		acct,
+		mgr,
+	)
+	defer iter.Close()
+
+	rows := []map[string]event.Value{
+		{"key": event.StringValue("b"), "payload": event.StringValue("first")},
+		{"key": event.StringValue("a"), "payload": event.StringValue("second")},
+	}
+	for _, row := range rows {
+		iter.rows = append(iter.rows, row)
+		if err := acct.Grow(EstimateRowBytes(row)); err != nil {
+			t.Fatalf("grow sort account: %v", err)
+		}
+	}
+	used := acct.Used()
+	if used == 0 {
+		t.Fatal("expected sort account to hold memory before revocation")
+	}
+
+	freed := mc.HandleRevocation(used)
+	if freed != used {
+		t.Fatalf("freed bytes = %d, want %d", freed, used)
+	}
+	if acct.Used() != 0 {
+		t.Fatalf("sort account used = %d, want 0", acct.Used())
+	}
+	if len(iter.rows) != 0 {
+		t.Fatalf("sort rows retained = %d, want 0", len(iter.rows))
+	}
+	if len(iter.spillFiles) != 1 {
+		t.Fatalf("sort spill files = %d, want 1", len(iter.spillFiles))
+	}
+	if !mc.Stats()[0].Spilled {
+		t.Fatal("expected sort slot to be marked spilled")
+	}
+}
+
+func TestCoordinatorRevokesAggregateBySpillingGroups(t *testing.T) {
+	budget := int64(100 << 20)
+	mc := NewMemoryCoordinator(budget, 0.10)
+	mon := memgov.NewTestBudget("test", budget)
+	acct := mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
+	_ = mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
+	mc.Finalize()
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	iter := NewAggregateIteratorWithSpill(
+		NewRowScanIterator(nil, 10),
+		[]AggFunc{{Name: "count", Alias: "count"}},
+		[]string{"host"},
+		acct,
+		mgr,
+	)
+	defer iter.Close()
+
+	batch := NewBatch(2)
+	batch.AddRow(map[string]event.Value{"host": event.StringValue("host-a")})
+	batch.AddRow(map[string]event.Value{"host": event.StringValue("host-b")})
+	if err := iter.processBatch(batch); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+	used := acct.Used()
+	if used == 0 {
+		t.Fatal("expected aggregate account to hold memory before revocation")
+	}
+
+	freed := mc.HandleRevocation(used)
+	if freed != used {
+		t.Fatalf("freed bytes = %d, want %d", freed, used)
+	}
+	if acct.Used() != 0 {
+		t.Fatalf("aggregate account used = %d, want 0", acct.Used())
+	}
+	if iter.groupCount != 0 {
+		t.Fatalf("aggregate group count = %d, want 0", iter.groupCount)
+	}
+	if iter.partitions == nil {
+		t.Fatal("expected aggregate partitions after revocation spill")
+	}
+	if !mc.Stats()[0].Spilled {
+		t.Fatal("expected aggregate slot to be marked spilled")
+	}
+}
+
+func TestCoordinatorRevokesJoinBySpillingBuildHash(t *testing.T) {
+	budget := int64(100 << 20)
+	mc := NewMemoryCoordinator(budget, 0.10)
+	mon := memgov.NewTestBudget("test", budget)
+	acct := mc.RegisterOperator("join", mon.NewAccount("join"), reservationJoin)
+	_ = mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
+	mc.Finalize()
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	iter := NewJoinIteratorWithSpill(
+		NewRowScanIterator(nil, 10),
+		NewRowScanIterator(nil, 10),
+		"key",
+		"inner",
+		acct,
+		mgr,
+	)
+	defer iter.Close()
+
+	rows := []map[string]event.Value{
+		{"key": event.StringValue("a"), "right": event.StringValue("r1")},
+		{"key": event.StringValue("b"), "right": event.StringValue("r2")},
+	}
+	for _, row := range rows {
+		key := row["key"].String()
+		iter.hashMap[key] = append(iter.hashMap[key], row)
+		if err := acct.Grow(EstimateRowBytes(row)); err != nil {
+			t.Fatalf("grow join account: %v", err)
+		}
+	}
+	used := acct.Used()
+	if used == 0 {
+		t.Fatal("expected join account to hold memory before revocation")
+	}
+
+	freed := mc.HandleRevocation(used)
+	if freed != used {
+		t.Fatalf("freed bytes = %d, want %d", freed, used)
+	}
+	if acct.Used() != 0 {
+		t.Fatalf("join account used = %d, want 0", acct.Used())
+	}
+	if iter.hashMap != nil {
+		t.Fatalf("join hashMap retained after revocation spill")
+	}
+	if !iter.graceRightOpen {
+		t.Fatal("expected join right-side grace partition writers to stay open")
+	}
+	if len(iter.rightPartWriters) != defaultGracePartitions {
+		t.Fatalf("right partition writers = %d, want %d", len(iter.rightPartWriters), defaultGracePartitions)
+	}
+	if iter.spilledRows != int64(len(rows)) {
+		t.Fatalf("spilled rows = %d, want %d", iter.spilledRows, len(rows))
+	}
+	if !mc.Stats()[0].Spilled {
+		t.Fatal("expected join slot to be marked spilled")
+	}
+}
+
+func TestCoordinatorRevokesEventStatsBySpillingRows(t *testing.T) {
+	budget := int64(100 << 20)
+	mc := NewMemoryCoordinator(budget, 0.10)
+	mon := memgov.NewTestBudget("test", budget)
+	acct := mc.RegisterOperator("eventstats", mon.NewAccount("eventstats"), reservationEventStats)
+	_ = mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
+	mc.Finalize()
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	iter := newEventStatsIteratorWithSpill(
+		NewRowScanIterator(nil, 10),
+		[]AggFunc{{Name: "count", Alias: "count"}},
+		[]string{"host"},
+		10,
+		acct,
+		mgr,
+	)
+	defer iter.Close()
+
+	rows := []map[string]event.Value{
+		{"host": event.StringValue("host-a"), "_raw": event.StringValue("first")},
+		{"host": event.StringValue("host-b"), "_raw": event.StringValue("second")},
+	}
+	for _, row := range rows {
+		rowBytes := EstimateRowBytes(row)
+		iter.rows = append(iter.rows, row)
+		iter.rowBytesInMem += rowBytes
+		if err := acct.Grow(rowBytes); err != nil {
+			t.Fatalf("grow eventstats account: %v", err)
+		}
+	}
+	used := acct.Used()
+	if used == 0 {
+		t.Fatal("expected eventstats account to hold memory before revocation")
+	}
+
+	freed := mc.HandleRevocation(used)
+	if freed != used {
+		t.Fatalf("freed bytes = %d, want %d", freed, used)
+	}
+	if acct.Used() != 0 {
+		t.Fatalf("eventstats account used = %d, want 0", acct.Used())
+	}
+	if !iter.spilled {
+		t.Fatal("expected eventstats to enter spilled mode")
+	}
+	if len(iter.rows) != 0 {
+		t.Fatalf("eventstats rows retained = %d, want 0", len(iter.rows))
+	}
+	if iter.spillPath == "" {
+		t.Fatal("expected eventstats spill path")
+	}
+	if !mc.Stats()[0].Spilled {
+		t.Fatal("expected eventstats slot to be marked spilled")
+	}
+}
+
+func TestCoordinatorRevokesDedupByMigratingSeenSet(t *testing.T) {
+	budget := int64(100 << 20)
+	mc := NewMemoryCoordinator(budget, 0.10)
+	mon := memgov.NewTestBudget("test", budget)
+	acct := mc.RegisterOperator("dedup", mon.NewAccount("dedup"), reservationDedup)
+	_ = mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
+	mc.Finalize()
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	iter := newDedupIteratorWithSpill(NewRowScanIterator(nil, 10), []string{"host"}, 1, acct, mgr)
+	defer iter.Close()
+	iter.seenHash[1] = 1
+	iter.seenHash[2] = 1
+	if err := acct.Grow(int64(len(iter.seenHash)) * estimatedDedupHashEntryBytes); err != nil {
+		t.Fatalf("grow dedup account: %v", err)
+	}
+	used := acct.Used()
+	if used == 0 {
+		t.Fatal("expected dedup account to hold memory before revocation")
+	}
+
+	freed := mc.HandleRevocation(used)
+	if freed != used {
+		t.Fatalf("freed bytes = %d, want %d", freed, used)
+	}
+	if acct.Used() != 0 {
+		t.Fatalf("dedup account used = %d, want 0", acct.Used())
+	}
+	if iter.externalSet == nil {
+		t.Fatal("expected dedup external set after revocation")
+	}
+	if iter.seenHash != nil {
+		t.Fatal("expected dedup in-memory hash map to be released")
+	}
+	if !mc.Stats()[0].Spilled {
+		t.Fatal("expected dedup slot to be marked spilled")
+	}
+}
+
+func TestCoordinatorRevokesOutliersBySpillingRows(t *testing.T) {
+	budget := int64(100 << 20)
+	mc := NewMemoryCoordinator(budget, 0.10)
+	mon := memgov.NewTestBudget("test", budget)
+	acct := mc.RegisterOperator("outliers", mon.NewAccount("outliers"), reservationEventStats)
+	_ = mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
+	mc.Finalize()
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	iter := NewOutliersIteratorWithBudget(NewRowScanIterator(nil, 10), "value", "iqr", 1.5, acct, mgr)
+	defer iter.Close()
+
+	rows := []map[string]event.Value{
+		{"value": event.IntValue(1), "_raw": event.StringValue("first")},
+		{"value": event.IntValue(2), "_raw": event.StringValue("second")},
+	}
+	for _, row := range rows {
+		rowBytes := EstimateRowBytes(row)
+		iter.rows = append(iter.rows, row)
+		iter.rowBytesMem += rowBytes
+		if err := acct.Grow(rowBytes); err != nil {
+			t.Fatalf("grow outliers account: %v", err)
+		}
+	}
+	used := acct.Used()
+	if used == 0 {
+		t.Fatal("expected outliers account to hold memory before revocation")
+	}
+
+	freed := mc.HandleRevocation(used)
+	if freed != used {
+		t.Fatalf("freed bytes = %d, want %d", freed, used)
+	}
+	if acct.Used() != 0 {
+		t.Fatalf("outliers account used = %d, want 0", acct.Used())
+	}
+	if !iter.spilled {
+		t.Fatal("expected outliers to enter spilled mode")
+	}
+	if len(iter.rows) != 0 {
+		t.Fatalf("outliers rows retained = %d, want 0", len(iter.rows))
+	}
+	if iter.spillPath == "" {
+		t.Fatal("expected outliers spill path")
+	}
+	if !mc.Stats()[0].Spilled {
+		t.Fatal("expected outliers slot to be marked spilled")
 	}
 }
 
@@ -322,6 +676,51 @@ func TestCountSpillableOps(t *testing.T) {
 			expected: 2,
 		},
 		{
+			name: "transaction",
+			prog: &spl2.Program{
+				Main: &spl2.Query{
+					Commands: []spl2.Command{
+						&spl2.TransactionCommand{Field: "session"},
+					},
+				},
+			},
+			expected: 1,
+		},
+		{
+			name: "top and rare",
+			prog: &spl2.Program{
+				Main: &spl2.Query{
+					Commands: []spl2.Command{
+						&spl2.TopCommand{Field: "status"},
+						&spl2.RareCommand{Field: "uri"},
+					},
+				},
+			},
+			expected: 2,
+		},
+		{
+			name: "xyseries",
+			prog: &spl2.Program{
+				Main: &spl2.Query{
+					Commands: []spl2.Command{
+						&spl2.XYSeriesCommand{XField: "x", YField: "y", ValueField: "v"},
+					},
+				},
+			},
+			expected: 1,
+		},
+		{
+			name: "rollup",
+			prog: &spl2.Program{
+				Main: &spl2.Query{
+					Commands: []spl2.Command{
+						&spl2.RollupCommand{Spans: []string{"1m"}, GroupBy: []string{"host"}},
+					},
+				},
+			},
+			expected: 1,
+		},
+		{
 			name: "CTE with stats + main with sort",
 			prog: &spl2.Program{
 				Datasets: []spl2.DatasetDef{
@@ -531,6 +930,52 @@ func TestSortAndAggregateCoordinated(t *testing.T) {
 		if prev < curr {
 			t.Errorf("results not sorted: row %d count=%d < row %d count=%d", i-1, prev, i, curr)
 		}
+	}
+}
+
+func TestSingleSpillableQueryGetsCoordinator(t *testing.T) {
+	budget := int64(1 << 20)
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: budget})
+
+	spillMgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer spillMgr.CleanupAll()
+
+	store := &ServerIndexStore{
+		Events: map[string][]*event.Event{
+			"main": {
+				{Fields: map[string]event.Value{"host": event.StringValue("host-b")}},
+				{Fields: map[string]event.Value{"host": event.StringValue("host-a")}},
+			},
+		},
+	}
+	prog := &spl2.Program{
+		Main: &spl2.Query{
+			Source: &spl2.SourceClause{Index: "main"},
+			Commands: []spl2.Command{
+				&spl2.SortCommand{Fields: []spl2.SortField{{Name: "host"}}},
+			},
+		},
+	}
+
+	result, err := BuildProgramWithGovernor(context.Background(), prog, store, nil, nil, 64, "", gov, budget, spillMgr, false, nil)
+	if err != nil {
+		t.Fatalf("build program: %v", err)
+	}
+	defer result.GovBudget.Close()
+	defer result.Iterator.Close()
+
+	if result.Coordinator == nil {
+		t.Fatal("expected coordinator for single spillable query")
+	}
+	stats := result.Coordinator.Stats()
+	if len(stats) != 1 {
+		t.Fatalf("coordinator slots = %d, want 1", len(stats))
+	}
+	if stats[0].Label != "sort" {
+		t.Fatalf("coordinator slot label = %q, want sort", stats[0].Label)
 	}
 }
 

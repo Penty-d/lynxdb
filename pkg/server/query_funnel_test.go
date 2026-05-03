@@ -94,6 +94,22 @@ func TestApplySpillAndPoolStats_SpillingStages(t *testing.T) {
 	}
 }
 
+func TestSpillSummary(t *testing.T) {
+	stages := []PipelineStage{
+		{Name: "Sort", SpilledRows: 10, SpillBytes: 1024},
+		{Name: "Aggregate", SpilledRows: 20, SpillBytes: 2048},
+		{Name: "Filter"},
+	}
+
+	operators, spilledRows := spillSummary(stages)
+	if spilledRows != 30 {
+		t.Fatalf("spilledRows = %d, want 30", spilledRows)
+	}
+	if len(operators) != 2 || operators[0] != "Sort" || operators[1] != "Aggregate" {
+		t.Fatalf("operators = %#v, want [Sort Aggregate]", operators)
+	}
+}
+
 func TestApplySpillAndPoolStats_NoSpill(t *testing.T) {
 	ss := &SearchStats{}
 	stages := []PipelineStage{

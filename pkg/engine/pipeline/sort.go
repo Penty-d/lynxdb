@@ -26,37 +26,6 @@ type SortField struct {
 	Desc bool
 }
 
-// estimatedRowBytes is a fixed estimate of memory per materialized row in sort/join buffers.
-// Conservative estimate: map header + ~8 fields * (string key + Value).
-//
-// Deprecated: Use estimateRowMapBytes for accurate per-row estimation in sort.
-// Kept for backward compatibility — still used in join buffers.
-const estimatedRowBytes int64 = 256
-
-// estimateRowMapBytes estimates the actual heap size of a materialized row map.
-// It mirrors the approach used by event.EstimateEventSize but operates on
-// map[string]event.Value. This gives accurate memory tracking for sort buffers,
-// avoiding the 1000x undercount that the fixed 256-byte estimate produces for
-// rows with large string fields (e.g., _raw with 500KB log lines).
-func estimateRowMapBytes(row map[string]event.Value) int64 {
-	// Base overhead: Go map header (~8 bytes hmap struct pointer) + bucket array.
-	// A typical map with N entries uses ~(N/6.5) buckets of 208 bytes each.
-	const mapOverhead int64 = 64
-	// Per-entry: string header (16 bytes) + Value struct (typ uint8 + str string
-	// header 16 + int64 8 + float64 8 = ~56 bytes with padding) + map bucket slot.
-	const entryOverhead int64 = 56
-
-	size := mapOverhead
-	for k, v := range row {
-		size += entryOverhead + int64(len(k))
-		if v.Type() == event.FieldTypeString {
-			size += int64(len(v.String()))
-		}
-	}
-
-	return size
-}
-
 // SortIterator fully materializes input, sorts, then streams output.
 // When a memory budget is set and exceeded, it transparently spills sorted
 // runs to disk and performs an external k-way merge sort on output.
@@ -123,6 +92,23 @@ func NewSortIteratorWithBudget(child Iterator, fields []SortField, batchSize int
 func NewSortIteratorWithSpill(child Iterator, fields []SortField, batchSize int, acct memgov.MemoryAccount, mgr *SpillManager) *SortIterator {
 	s := NewSortIteratorWithBudget(child, fields, batchSize, acct)
 	s.spillMgr = mgr
+	if ca, ok := s.acct.(*CoordinatedAccount); ok && mgr != nil {
+		ca.SetOnRevoke(func(target int64) int64 {
+			if len(s.rows) == 0 {
+				return 0
+			}
+			before := s.acct.Used()
+			if err := s.spillCurrentRun(); err != nil {
+				return 0
+			}
+			freed := before - s.acct.Used()
+			if freed < 0 {
+				return 0
+			}
+
+			return freed
+		})
+	}
 
 	return s
 }
@@ -204,23 +190,6 @@ func (s *SortIterator) MemoryUsed() int64 {
 
 func (s *SortIterator) Schema() []FieldInfo { return s.child.Schema() }
 
-// estimateColumnarBatchBytes estimates the heap size of a columnar Batch.
-// Called once per incoming batch for incremental memory tracking.
-func estimateColumnarBatchBytes(batch *Batch) int64 {
-	var total int64
-	for _, col := range batch.Columns {
-		// Slice header (24 bytes) + per-element Value (~40 bytes each).
-		total += 24 + int64(len(col))*40
-		for _, v := range col {
-			if v.Type() == event.FieldTypeString {
-				total += int64(len(v.String()))
-			}
-		}
-	}
-
-	return total
-}
-
 func (s *SortIterator) materialize(ctx context.Context) error {
 	// Transition to building phase — accumulating rows for sort.
 	if pn, ok := s.acct.(PhaseNotifier); ok {
@@ -268,7 +237,7 @@ func (s *SortIterator) materialize(ctx context.Context) error {
 		}
 
 		if columnarMode {
-			batchBytes := estimateColumnarBatchBytes(batch)
+			batchBytes := EstimateBatchBytes(batch)
 			growErr := s.acct.Grow(batchBytes)
 
 			if growErr != nil {

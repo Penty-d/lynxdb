@@ -570,6 +570,23 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 			"search_selectivity", job.Stats.SearchSelectivity,
 		)
 	}
+	if job.Stats.SpilledToDisk {
+		operators, spilledRows := spillSummary(job.Stats.PipelineStages)
+		triggerOperator := ""
+		if len(operators) > 0 {
+			triggerOperator = operators[0]
+		}
+		logger.Warn("query spilled to disk",
+			"query", job.Query,
+			"trigger_operator", triggerOperator,
+			"operators", operators,
+			"spill_bytes", job.Stats.SpillBytes,
+			"spill_files", job.Stats.SpillFiles,
+			"spilled_rows", spilledRows,
+			"peak_memory_bytes", job.Stats.PeakMemoryBytes,
+			"duration_ms", elapsed.Milliseconds(),
+		)
+	}
 
 	// Store in cache (non-fatal; log failures for observability).
 	if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(qr.rows)); err != nil {
@@ -1319,20 +1336,34 @@ func computeSearchSelectivity(ss *SearchStats) {
 // from the pipeline stage breakdown. Spill stats are aggregated across all
 // pipeline stages that spilled data.
 func applySpillAndPoolStats(ss *SearchStats, stages []PipelineStage) {
-	var spillingOperators []string
+	spillingOperators, _ := spillSummary(stages)
 	for _, stage := range stages {
-		if stage.SpillBytes > 0 {
-			ss.SpilledToDisk = true
-			ss.SpillBytes += stage.SpillBytes
-			ss.SpillFiles++ // one spill file per spilling stage (approximation)
-			spillingOperators = append(spillingOperators, stage.Name)
+		if stage.SpillBytes <= 0 {
+			continue
 		}
+		ss.SpilledToDisk = true
+		ss.SpillBytes += stage.SpillBytes
+		ss.SpillFiles++ // one spill file per spilling stage (approximation)
 	}
 
 	// Generate a human-readable performance note when spill occurs.
 	if ss.SpilledToDisk {
 		ss.SpillNote = generateSpillNote(spillingOperators)
 	}
+}
+
+func spillSummary(stages []PipelineStage) ([]string, int64) {
+	var operators []string
+	var spilledRows int64
+	for _, stage := range stages {
+		if stage.SpillBytes <= 0 && stage.SpilledRows <= 0 {
+			continue
+		}
+		operators = append(operators, stage.Name)
+		spilledRows += stage.SpilledRows
+	}
+
+	return operators, spilledRows
 }
 
 // generateSpillNote produces a context-aware performance recommendation based

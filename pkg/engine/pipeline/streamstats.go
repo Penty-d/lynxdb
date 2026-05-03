@@ -16,16 +16,21 @@ import (
 // map entry overhead (~48B).
 const estimatedRingBufferOverhead int64 = 112
 
+// estimatedRingBufferSlotBytes tracks the pre-allocated []map slot in bounded
+// ring buffers. Row payload bytes are accounted when rows are inserted.
+const estimatedRingBufferSlotBytes int64 = 8
+
 // StreamStatsIterator implements rolling window aggregation with O(N) incremental updates.
 type StreamStatsIterator struct {
-	child    Iterator
-	aggs     []AggFunc
-	groupBy  []string
-	window   int
-	current  bool
-	ringBufs map[string]*ringBuffer
-	acct     memgov.MemoryAccount          // per-operator memory tracking
-	running  map[string][]*runningAggState // per-group, per-aggregate running state
+	child     Iterator
+	aggs      []AggFunc
+	groupBy   []string
+	window    int
+	current   bool
+	ringBufs  map[string]*ringBuffer
+	acct      memgov.MemoryAccount          // per-operator memory tracking
+	running   map[string][]*runningAggState // per-group, per-aggregate running state
+	storeRows bool                          // true when window rows are needed for eviction/values()
 }
 
 // runningAggState maintains incremental aggregate state for O(1) per-row updates.
@@ -39,6 +44,7 @@ type runningAggState struct {
 
 type ringBuffer struct {
 	buf      []map[string]event.Value
+	bytes    []int64
 	pos      int
 	count    int
 	capacity int // 0 means unlimited (use append-only mode)
@@ -50,18 +56,24 @@ func newRingBuffer(size int) *ringBuffer {
 		return &ringBuffer{capacity: 0}
 	}
 
-	return &ringBuffer{buf: make([]map[string]event.Value, size), capacity: size}
+	return &ringBuffer{
+		buf:      make([]map[string]event.Value, size),
+		bytes:    make([]int64, size),
+		capacity: size,
+	}
 }
 
-func (r *ringBuffer) add(row map[string]event.Value) {
+func (r *ringBuffer) add(row map[string]event.Value, rowBytes int64) {
 	if r.capacity == 0 {
 		// Unlimited: just append
 		r.buf = append(r.buf, row)
+		r.bytes = append(r.bytes, rowBytes)
 		r.count = len(r.buf)
 
 		return
 	}
 	r.buf[r.pos] = row
+	r.bytes[r.pos] = rowBytes
 	r.pos = (r.pos + 1) % len(r.buf)
 	if r.count < len(r.buf) {
 		r.count++
@@ -93,14 +105,15 @@ func NewStreamStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, wi
 	}
 
 	return &StreamStatsIterator{
-		child:    child,
-		aggs:     aggs,
-		groupBy:  groupBy,
-		window:   window,
-		current:  current,
-		ringBufs: make(map[string]*ringBuffer),
-		acct:     memgov.NopAccount(),
-		running:  make(map[string][]*runningAggState),
+		child:     child,
+		aggs:      aggs,
+		groupBy:   groupBy,
+		window:    window,
+		current:   current,
+		ringBufs:  make(map[string]*ringBuffer),
+		acct:      memgov.NopAccount(),
+		running:   make(map[string][]*runningAggState),
+		storeRows: streamStatsNeedsRows(aggs, window),
 	}
 }
 
@@ -138,7 +151,7 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 			}
 			// Pre-allocated slots for bounded windows.
 			if rb.capacity > 0 {
-				if err := s.acct.Grow(int64(rb.capacity) * estimatedRowBytes); err != nil {
+				if err := s.acct.Grow(int64(rb.capacity) * estimatedRingBufferSlotBytes); err != nil {
 					return nil, fmt.Errorf("streamstats: memory budget exceeded (window pre-alloc): %w", err)
 				}
 			}
@@ -151,19 +164,31 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 		states := s.running[key]
 
+		rowBytes := int64(0)
+		if s.storeRows {
+			rowBytes = EstimateRowBytes(row)
+		}
+
 		// Determine which row is being evicted (if window is full).
 		var evictedRow map[string]event.Value
+		var evictedBytes int64
 		if s.current {
-			if rb.capacity > 0 && rb.count >= rb.capacity {
+			if s.storeRows && rb.capacity > 0 && rb.count >= rb.capacity {
 				// Window is full: the oldest entry will be overwritten.
 				evictedRow = rb.oldest()
+				evictedBytes = rb.nextEvictedBytes()
 			}
-			if rb.capacity == 0 || rb.count < rb.capacity {
-				if err := s.acct.Grow(estimatedRowBytes); err != nil {
+			if s.storeRows && rowBytes > evictedBytes {
+				if err := s.acct.Grow(rowBytes - evictedBytes); err != nil {
 					return nil, fmt.Errorf("streamstats: memory budget exceeded (current window grow): %w", err)
 				}
 			}
-			rb.add(row)
+			if s.storeRows {
+				rb.add(row, rowBytes)
+			}
+			if s.storeRows && evictedBytes > rowBytes {
+				s.acct.Shrink(evictedBytes - rowBytes)
+			}
 		}
 
 		// Incremental aggregate update: add new row, evict old if applicable.
@@ -189,15 +214,22 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 		if !s.current {
 			// Trailing window: add after computing.
 			var willEvict map[string]event.Value
-			if rb.capacity > 0 && rb.count >= rb.capacity {
+			var willEvictBytes int64
+			if s.storeRows && rb.capacity > 0 && rb.count >= rb.capacity {
 				willEvict = rb.oldest()
+				willEvictBytes = rb.nextEvictedBytes()
 			}
-			if rb.capacity == 0 || rb.count < rb.capacity {
-				if err := s.acct.Grow(estimatedRowBytes); err != nil {
+			if s.storeRows && rowBytes > willEvictBytes {
+				if err := s.acct.Grow(rowBytes - willEvictBytes); err != nil {
 					return nil, fmt.Errorf("streamstats: memory budget exceeded (trailing window grow): %w", err)
 				}
 			}
-			rb.add(row)
+			if s.storeRows {
+				rb.add(row, rowBytes)
+			}
+			if s.storeRows && willEvictBytes > rowBytes {
+				s.acct.Shrink(willEvictBytes - rowBytes)
+			}
 			for j, agg := range s.aggs {
 				if willEvict != nil {
 					removeValueFromRunning(states[j], agg, willEvict)
@@ -208,6 +240,19 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 	}
 
 	return batch, nil
+}
+
+func streamStatsNeedsRows(aggs []AggFunc, window int) bool {
+	if window < math.MaxInt32/2 {
+		return true
+	}
+	for _, agg := range aggs {
+		if strings.EqualFold(agg.Name, aggValues) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (s *StreamStatsIterator) Close() error {
@@ -235,6 +280,20 @@ func (r *ringBuffer) oldest() map[string]event.Value {
 	}
 
 	return r.buf[start]
+}
+
+func (r *ringBuffer) nextEvictedBytes() int64 {
+	if r.count == 0 {
+		return 0
+	}
+	if r.capacity == 0 {
+		return r.bytes[0]
+	}
+	if r.count < r.capacity {
+		return 0
+	}
+
+	return r.bytes[r.pos]
 }
 
 // newRunningAggState creates an initialized running state for the given aggregate.

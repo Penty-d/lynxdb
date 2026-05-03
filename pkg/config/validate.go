@@ -367,6 +367,9 @@ func (v *ViewsConfig) validate() error {
 	if v.MaxBackfillMemoryBytes < 0 {
 		return validationErr("views", "max_backfill_memory_bytes", v.MaxBackfillMemoryBytes.String(), "must not be negative")
 	}
+	if v.InsertMaxMemoryBytes < 0 {
+		return validationErr("views", "insert_max_memory_bytes", v.InsertMaxMemoryBytes.String(), "must not be negative")
+	}
 	if v.BackfillBackpressureWait.Duration() < 0 {
 		return validationErr("views", "backfill_backpressure_wait", v.BackfillBackpressureWait.String(), "must not be negative")
 	}

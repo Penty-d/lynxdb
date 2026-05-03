@@ -2,9 +2,11 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
@@ -162,5 +164,49 @@ func TestStreamStatsColumnVisibility(t *testing.T) {
 		cmp := vm.CompareValues(rn, event.IntValue(1))
 		t.Logf("  row %d: row_num=%v (type=%v), CompareValues(row_num, 1)=%d",
 			i, rn, rn.Type(), cmp)
+	}
+}
+
+func TestStreamStatsUnboundedCountDoesNotRetainRows(t *testing.T) {
+	row := map[string]event.Value{
+		"_raw": event.StringValue(strings.Repeat("x", 4096)),
+	}
+	acct := memgov.NewTestBudget("streamstats", 0).NewAccount("streamstats")
+	iter := NewStreamStatsIteratorWithBudget(
+		NewRowScanIterator([]map[string]event.Value{row}, 1),
+		[]AggFunc{{Name: "count", Alias: "cnt"}},
+		nil,
+		0,
+		true,
+		acct,
+	)
+
+	if _, err := CollectAll(context.Background(), iter); err != nil {
+		t.Fatal(err)
+	}
+	if acct.MaxUsed() >= 4096 {
+		t.Fatalf("unbounded count retained row payload: MaxUsed=%d", acct.MaxUsed())
+	}
+}
+
+func TestStreamStatsUnboundedValuesRetainsRows(t *testing.T) {
+	row := map[string]event.Value{
+		"_raw": event.StringValue(strings.Repeat("x", 4096)),
+	}
+	acct := memgov.NewTestBudget("streamstats", 0).NewAccount("streamstats")
+	iter := NewStreamStatsIteratorWithBudget(
+		NewRowScanIterator([]map[string]event.Value{row}, 1),
+		[]AggFunc{{Name: "values", Field: "_raw", Alias: "vals"}},
+		nil,
+		0,
+		true,
+		acct,
+	)
+
+	if _, err := CollectAll(context.Background(), iter); err != nil {
+		t.Fatal(err)
+	}
+	if acct.MaxUsed() <= 4096 {
+		t.Fatalf("unbounded values should retain row payload: MaxUsed=%d", acct.MaxUsed())
 	}
 }

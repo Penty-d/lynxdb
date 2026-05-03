@@ -107,13 +107,26 @@ func (qc *queryContext) newAccount(label string) memgov.MemoryAccount {
 	return memgov.NopAccount()
 }
 
+func (qc *queryContext) newMetadataAccount(label string) memgov.MemoryAccount {
+	if qc.govBudget != nil {
+		return qc.govBudget.NewMetadataAccount(label)
+	}
+
+	return memgov.NopAccount()
+}
+
 // newCoordinatedAccount creates a MemoryAccount for a spillable operator.
 // When a coordinator is active, the returned account has a coordinator-managed
 // sub-limit that enables budget redistribution after spill. When no coordinator
-// is active (single spillable operator, no budget, no spill support), the
-// returned account is a plain account — zero overhead.
+// is active (no budget or no spill support), the returned account is a plain
+// account with no coordinator overhead.
 func (qc *queryContext) newCoordinatedAccount(label string, reservation int64) memgov.MemoryAccount {
-	inner := qc.newAccount(label)
+	var inner memgov.MemoryAccount
+	if qc.govBudget != nil {
+		inner = qc.govBudget.NewSpillableAccount(label)
+	} else {
+		inner = memgov.NopAccount()
+	}
 	if qc.coordinator != nil {
 		return qc.coordinator.RegisterOperator(label, inner, reservation)
 	}
@@ -176,6 +189,20 @@ type BuildResult struct {
 	Iterator    Iterator
 	Coordinator *MemoryCoordinator
 	GovBudget   *memgov.BudgetAdapter // non-nil when built via BuildProgramWithGovernor
+}
+
+type revocationRegistrationIterator struct {
+	Iterator
+	unregister func()
+}
+
+func (r *revocationRegistrationIterator) Close() error {
+	if r.unregister != nil {
+		r.unregister()
+		r.unregister = nil
+	}
+
+	return r.Iterator.Close()
 }
 
 // Option configures optional components of the pipeline build.
@@ -247,8 +274,9 @@ func BuildProgramWithGovernor(ctx context.Context, prog *spl2.Program, store Ind
 		opt(qc)
 	}
 
-	// Create coordinator when 2+ spillable operators share a budget.
-	if countSpillableOps(prog) >= 2 && budgetLimit > 0 && spillMgr != nil {
+	// Create coordinator for any spillable operator so governor pressure can
+	// revoke memory even when a query has only one spillable stage.
+	if countSpillableOps(prog) >= 1 && budgetLimit > 0 && spillMgr != nil {
 		qc.coordinator = NewMemoryCoordinator(budgetLimit, 0.10)
 	}
 
@@ -280,7 +308,8 @@ func BuildProgramWithGovernor(ctx context.Context, prog *spl2.Program, store Ind
 
 	if qc.coordinator != nil {
 		qc.coordinator.Finalize()
-		gov.OnPressure(memgov.ClassSpillable, qc.coordinator.HandleRevocation)
+		unregister := RegisterRevocationCoordinator(gov, qc.coordinator)
+		iter = &revocationRegistrationIterator{Iterator: iter, unregister: unregister}
 	}
 
 	return &BuildResult{
@@ -380,12 +409,12 @@ func (qc *queryContext) buildSourceIterator(source *spl2.SourceClause) (Iterator
 	// Only applies to the basic IndexStore path (CLI mode). Streaming/batch
 	// stores handle multi-source at the server layer via source scope.
 	if len(source.Indices) > 0 {
-			if st, isStreaming := qc.store.(StreamingIndexStore); isStreaming {
-				// Server mode: create one iterator per source and union them.
-				// For single-source, return directly (no union overhead).
-				if len(source.Indices) == 1 {
-					return st.GetEventIterator(source.Indices[0]), nil
-				}
+		if st, isStreaming := qc.store.(StreamingIndexStore); isStreaming {
+			// Server mode: create one iterator per source and union them.
+			// For single-source, return directly (no union overhead).
+			if len(source.Indices) == 1 {
+				return st.GetEventIterator(source.Indices[0]), nil
+			}
 			iters := make([]Iterator, 0, len(source.Indices))
 			for _, idx := range source.Indices {
 				iters = append(iters, st.GetEventIterator(idx))
@@ -672,6 +701,16 @@ func commandStageName(cmd spl2.Command) string {
 // commands. Used by tail to plug LiveScanIterator as the source instead of
 // an event store.
 func BuildFromSource(ctx context.Context, source Iterator, commands []spl2.Command, batchSize int) (Iterator, error) {
+	return buildFromSource(ctx, source, commands, batchSize, nil)
+}
+
+// BuildFromSourceWithBudget builds a pipeline from an existing source iterator
+// with operator accounts backed by the supplied BudgetAdapter.
+func BuildFromSourceWithBudget(ctx context.Context, source Iterator, commands []spl2.Command, batchSize int, budget *memgov.BudgetAdapter) (Iterator, error) {
+	return buildFromSource(ctx, source, commands, batchSize, budget)
+}
+
+func buildFromSource(ctx context.Context, source Iterator, commands []spl2.Command, batchSize int, budget *memgov.BudgetAdapter) (Iterator, error) {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}
@@ -680,6 +719,7 @@ func BuildFromSource(ctx context.Context, source Iterator, commands []spl2.Comma
 		datasets:  make(map[string][]map[string]event.Value),
 		batchSize: batchSize,
 		progCache: vm.NewProgramCache(),
+		govBudget: budget,
 	}
 	iter := source
 	for _, cmd := range commands {
@@ -913,11 +953,18 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 
 	case *spl2.DedupCommand:
 		acct := qc.newCoordinatedAccount("dedup", reservationDedup)
+		metadataAcct := qc.newMetadataAccount("dedup-metadata")
 		if qc.dedupExact {
-			return newDedupIteratorExactWithSpill(child, c.Fields, c.Limit, acct, qc.spillMgr), nil
+			iter := newDedupIteratorExactWithSpill(child, c.Fields, c.Limit, acct, qc.spillMgr)
+			iter.SetMetadataAccount(metadataAcct)
+
+			return iter, nil
 		}
 
-		return newDedupIteratorWithSpill(child, c.Fields, c.Limit, acct, qc.spillMgr), nil
+		iter := newDedupIteratorWithSpill(child, c.Fields, c.Limit, acct, qc.spillMgr)
+		iter.SetMetadataAccount(metadataAcct)
+
+		return iter, nil
 
 	case *spl2.RexCommand:
 		field := c.Field
@@ -1023,18 +1070,24 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return NewUnionIterator(children), nil
 
 	case *spl2.XYSeriesCommand:
-		return NewXYSeriesIteratorWithBudget(child, c.XField, c.YField, c.ValueField, qc.batchSize, qc.newAccount("xyseries")), nil
+		return NewXYSeriesIteratorWithSpill(child, c.XField, c.YField, c.ValueField, qc.batchSize, qc.newCoordinatedAccount("xyseries", reservationAggregate), qc.spillMgr), nil
 
 	case *spl2.TransactionCommand:
 		dur := parseDuration(c.MaxSpan)
+		// TRANSACTION needs ascending _time order: the streaming maxspan path
+		// uses a watermark to evict expired groups, and even the buffered path
+		// computes duration from first/last event in input order. Segment scan
+		// reads newest-first by default, so inject a sort to normalize input.
+		sortAcct := qc.newCoordinatedAccount("transaction-sort", reservationSort)
+		sorted := NewSortIteratorWithSpill(child, []SortField{{Name: "_time"}}, qc.batchSize, sortAcct, qc.spillMgr)
 
-		return NewTransactionIteratorWithBudget(child, c.Field, dur, c.StartsWith, c.EndsWith, qc.batchSize, qc.newAccount("transaction")), nil
+		return NewTransactionIteratorWithSpill(sorted, c.Field, dur, c.StartsWith, c.EndsWith, qc.batchSize, qc.newCoordinatedAccount("transaction", reservationEventStats), qc.spillMgr), nil
 
 	case *spl2.TopCommand:
-		return NewTopIteratorWithBudget(child, c.Field, c.ByField, c.N, false, qc.batchSize, qc.newAccount("top")), nil
+		return NewTopIteratorWithSpill(child, c.Field, c.ByField, c.N, false, qc.batchSize, qc.newCoordinatedAccount("top", reservationAggregate), qc.spillMgr), nil
 
 	case *spl2.RareCommand:
-		return NewTopIteratorWithBudget(child, c.Field, c.ByField, c.N, true, qc.batchSize, qc.newAccount("rare")), nil
+		return NewTopIteratorWithSpill(child, c.Field, c.ByField, c.N, true, qc.batchSize, qc.newCoordinatedAccount("rare", reservationAggregate), qc.spillMgr), nil
 
 	case *spl2.GlimpseCommand:
 		return NewGlimpseIterator(child, c.SampleSize), nil
@@ -1046,28 +1099,36 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return nil, fmt.Errorf("unresolved use command %q — fragment expansion failed", c.Name)
 
 	case *spl2.OutliersCommand:
-		return NewOutliersIterator(child, c.Field, c.Method, c.Threshold), nil
+		return NewOutliersIteratorWithBudget(child, c.Field, c.Method, c.Threshold, qc.newCoordinatedAccount("outliers", reservationEventStats), qc.spillMgr), nil
 
 	case *spl2.CompareCommand:
 		return nil, fmt.Errorf("build pipeline: compare must be intercepted at query level")
 
 	case *spl2.PatternsCommand:
-		return NewPatternsIterator(child, c.Field, c.MaxTemplates, c.Similarity), nil
+		return NewPatternsIteratorWithBudget(child, c.Field, c.MaxTemplates, c.Similarity, qc.newAccount("patterns")), nil
 
 	case *spl2.TraceCommand:
-		return NewTraceIterator(child, c.TraceIDField, c.SpanIDField, c.ParentIDField), nil
+		return NewTraceIteratorWithBudget(child, c.TraceIDField, c.SpanIDField, c.ParentIDField, qc.newAccount("trace")), nil
 
 	case *spl2.RollupCommand:
-		return NewRollupIterator(child, c.Spans, c.GroupBy, qc.batchSize), nil
+		return NewRollupIteratorWithSpill(child, c.Spans, c.GroupBy, qc.batchSize, qc.newCoordinatedAccount("rollup", reservationAggregate), qc.spillMgr), nil
 
 	case *spl2.CorrelateCommand:
-		return NewCorrelateIterator(child, c.Field1, c.Field2, c.Method), nil
+		return NewCorrelateIteratorWithBudget(child, c.Field1, c.Field2, c.Method, qc.newAccount("correlate")), nil
 
 	case *spl2.SessionizeCommand:
-		return NewSessionizeIterator(child, c.MaxPause, c.GroupBy, qc.batchSize), nil
+		return NewSessionizeIteratorWithBudget(
+			child,
+			c.MaxPause,
+			c.GroupBy,
+			qc.batchSize,
+			qc.newCoordinatedAccount("sessionize-sort", reservationSort),
+			qc.newAccount("sessionize"),
+			qc.spillMgr,
+		), nil
 
 	case *spl2.TopologyCommand:
-		return NewTopologyIterator(child, c.SourceField, c.DestField, c.WeightField, c.MaxNodes, qc.batchSize), nil
+		return NewTopologyIteratorWithBudget(child, c.SourceField, c.DestField, c.WeightField, c.MaxNodes, qc.batchSize, qc.newAccount("topology")), nil
 
 	case *spl2.FillnullCommand:
 		return NewFillnullIteratorWithBudget(child, c.Value, c.Fields, qc.newAccount("fillnull")), nil
@@ -1204,6 +1265,7 @@ type TailIterator struct {
 	child     Iterator
 	count     int
 	ring      []map[string]event.Value // fixed-size circular buffer of size `count`
+	ringBytes []int64                  // tracked bytes for each ring slot
 	totalSeen int                      // total rows written (for ring position and fill tracking)
 	emitted   bool
 	result    []map[string]event.Value // linearized output after accumulation
@@ -1222,6 +1284,7 @@ func NewTailIterator(child Iterator, count, batchSize int) *TailIterator {
 		child:     child,
 		count:     count,
 		ring:      make([]map[string]event.Value, count),
+		ringBytes: make([]int64, count),
 		batchSize: batchSize,
 		acct:      memgov.NopAccount(),
 	}
@@ -1264,14 +1327,26 @@ func (t *TailIterator) Next(ctx context.Context) (*Batch, error) {
 					break
 				}
 				for i := 0; i < batch.Len; i++ {
+					row := batch.Row(i)
+					rowBytes := EstimateRowBytes(row)
+					slot := t.totalSeen % t.count
 					// Track memory: only Grow for new slots (first fill of ring).
-					// Replacements are memory-neutral (one row in, one row out).
 					if t.totalSeen < t.count {
-						if err := t.acct.Grow(estimatedRowBytes); err != nil {
+						if err := t.acct.Grow(rowBytes); err != nil {
 							return nil, fmt.Errorf("tail: memory budget exceeded: %w", err)
 						}
+					} else {
+						oldBytes := t.ringBytes[slot]
+						if rowBytes > oldBytes {
+							if err := t.acct.Grow(rowBytes - oldBytes); err != nil {
+								return nil, fmt.Errorf("tail: memory budget exceeded: %w", err)
+							}
+						} else if oldBytes > rowBytes {
+							t.acct.Shrink(oldBytes - rowBytes)
+						}
 					}
-					t.ring[t.totalSeen%t.count] = batch.Row(i)
+					t.ring[slot] = row
+					t.ringBytes[slot] = rowBytes
 					t.totalSeen++
 				}
 			}

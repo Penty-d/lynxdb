@@ -2,9 +2,16 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
+)
+
+const (
+	estimatedTopologyEdgeBytes int64 = 96
+	estimatedTopologyNodeBytes int64 = 64
 )
 
 // TopologyIterator is a blocking operator that builds a connection graph
@@ -17,6 +24,7 @@ type TopologyIterator struct {
 	weightField string
 	maxNodes    int
 	batchSize   int
+	acct        memgov.MemoryAccount
 
 	done   bool
 	output *Batch
@@ -41,6 +49,12 @@ type nodeStats struct {
 
 // NewTopologyIterator creates a new topology iterator.
 func NewTopologyIterator(child Iterator, src, dst, weight string, maxNodes, batchSize int) *TopologyIterator {
+	return NewTopologyIteratorWithBudget(child, src, dst, weight, maxNodes, batchSize, memgov.NopAccount())
+}
+
+// NewTopologyIteratorWithBudget creates a topology iterator with memory
+// accounting for graph edge and node maps.
+func NewTopologyIteratorWithBudget(child Iterator, src, dst, weight string, maxNodes, batchSize int, acct memgov.MemoryAccount) *TopologyIterator {
 	return &TopologyIterator{
 		child:       child,
 		sourceField: src,
@@ -48,6 +62,7 @@ func NewTopologyIterator(child Iterator, src, dst, weight string, maxNodes, batc
 		weightField: weight,
 		maxNodes:    maxNodes,
 		batchSize:   batchSize,
+		acct:        memgov.EnsureAccount(acct),
 	}
 }
 
@@ -100,6 +115,9 @@ func (t *TopologyIterator) materialize(ctx context.Context) error {
 			key := topoEdge{Src: src, Dst: dst}
 			es, ok := edges[key]
 			if !ok {
+				if err := t.acct.Grow(estimatedTopologyEdgeBytes + int64(len(src)+len(dst))); err != nil {
+					return fmt.Errorf("topology: memory budget exceeded for edge state: %w", err)
+				}
 				es = &edgeStats{}
 				edges[key] = es
 			}
@@ -113,12 +131,18 @@ func (t *TopologyIterator) materialize(ctx context.Context) error {
 			}
 
 			if _, ok := nodes[src]; !ok {
+				if err := t.acct.Grow(estimatedTopologyNodeBytes + int64(len(src))); err != nil {
+					return fmt.Errorf("topology: memory budget exceeded for source node state: %w", err)
+				}
 				nodes[src] = &nodeStats{}
 			}
 			nodes[src].OutDegree++
 			nodes[src].OutCount++
 
 			if _, ok := nodes[dst]; !ok {
+				if err := t.acct.Grow(estimatedTopologyNodeBytes + int64(len(dst))); err != nil {
+					return fmt.Errorf("topology: memory budget exceeded for destination node state: %w", err)
+				}
 				nodes[dst] = &nodeStats{}
 			}
 			nodes[dst].InDegree++
@@ -200,8 +224,13 @@ func topoGetFloat(v event.Value) (float64, bool) {
 }
 
 func (t *TopologyIterator) Close() error {
+	t.acct.Close()
+
 	return t.child.Close()
 }
+
+// MemoryUsed returns the current tracked memory for this operator.
+func (t *TopologyIterator) MemoryUsed() int64 { return t.acct.Used() }
 
 func (t *TopologyIterator) Schema() []FieldInfo {
 	fields := []FieldInfo{

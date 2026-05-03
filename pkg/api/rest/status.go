@@ -105,6 +105,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 				classes[memgov.MemoryClass(i).String()] = map[string]interface{}{
 					"allocated_bytes": cs.Allocated,
 					"peak_bytes":      cs.Peak,
+					"peak_60s_bytes":  cs.Peak60s,
+					"peak_24h_bytes":  cs.Peak24h,
 					"limit_bytes":     cs.Limit,
 				}
 			}

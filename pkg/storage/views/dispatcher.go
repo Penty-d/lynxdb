@@ -29,6 +29,10 @@ const (
 	// entire ingest hot path indefinitely.
 	processInsertTimeout = 5 * time.Second
 
+	// defaultInsertMaxMemoryBytes caps one MV insert pipeline batch when the
+	// process-wide governor has no finite pool limit.
+	defaultInsertMaxMemoryBytes int64 = 128 << 20
+
 	// Aggregation function name constants shared across serialization and merge.
 	aggFnCount = "count"
 	aggFnSum   = "sum"
@@ -112,16 +116,33 @@ type Dispatcher struct {
 	registry       *ViewRegistry
 	layout         *storage.Layout
 	logger         *slog.Logger
+	gov            memgov.Governor
 	done           chan struct{}
 	wg             sync.WaitGroup
 	batchMaxEvents int
 	batchMaxDelay  time.Duration
+	insertMaxBytes int64
 }
 
 // NewDispatcher creates a new MV dispatcher. batchMaxEvents and batchMaxDelay
 // control per-view event batching. Pass 0 for either to use compiled defaults
 // (1000 events, 100ms delay).
 func NewDispatcher(registry *ViewRegistry, layout *storage.Layout, logger *slog.Logger, batchMaxEvents int, batchMaxDelay time.Duration) *Dispatcher {
+	return NewDispatcherWithBudget(registry, layout, logger, batchMaxEvents, batchMaxDelay, nil, 0)
+}
+
+// NewDispatcherWithBudget creates a dispatcher whose insert-time MV pipelines
+// allocate from the supplied governor. insertMaxBytes is a per-view dispatch
+// batch cap; 0 uses min(128MB, governor pool / 16), or 128MB for unlimited pools.
+func NewDispatcherWithBudget(
+	registry *ViewRegistry,
+	layout *storage.Layout,
+	logger *slog.Logger,
+	batchMaxEvents int,
+	batchMaxDelay time.Duration,
+	gov memgov.Governor,
+	insertMaxBytes int64,
+) *Dispatcher {
 	if batchMaxEvents <= 0 {
 		batchMaxEvents = defaultBatchMaxEvents
 	}
@@ -133,9 +154,11 @@ func NewDispatcher(registry *ViewRegistry, layout *storage.Layout, logger *slog.
 		registry:       registry,
 		layout:         layout,
 		logger:         logger,
+		gov:            gov,
 		done:           make(chan struct{}),
 		batchMaxEvents: batchMaxEvents,
 		batchMaxDelay:  batchMaxDelay,
+		insertMaxBytes: insertMaxBytes,
 	}
 }
 
@@ -294,6 +317,17 @@ type viewBatch struct {
 // (streaming commands, partial aggregation) outside the lock to avoid
 // holding d.mu during expensive operations.
 func (d *Dispatcher) Dispatch(events []*event.Event) error {
+	return d.dispatch(events, nil)
+}
+
+// DispatchWithBudget routes events while charging insert-time work against an
+// existing BudgetAdapter. Backfills use this so scan, transform, and partial
+// aggregation all share the backfill's dedicated budget.
+func (d *Dispatcher) DispatchWithBudget(events []*event.Event, adapter *memgov.BudgetAdapter) error {
+	return d.dispatch(events, adapter)
+}
+
+func (d *Dispatcher) dispatch(events []*event.Event, adapter *memgov.BudgetAdapter) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -336,7 +370,18 @@ func (d *Dispatcher) Dispatch(events []*event.Event) error {
 
 		if vb.av.analysis != nil && vb.av.analysis.IsAggregation && vb.av.analysis.AggSpec != nil {
 			// Aggregation view: run streaming pipeline + compute partial agg + serialize.
-			results, err := d.processInsertBatch(vb.av, vb.events)
+			budget := adapter
+			closeBudget := false
+			if budget == nil {
+				budget = d.newInsertBudgetAdapter(vb.av.def.Name)
+				if budget != nil {
+					closeBudget = true
+				}
+			}
+			results, err := d.processInsertBatch(vb.av, vb.events, budget)
+			if closeBudget {
+				budget.Close()
+			}
 			if err != nil {
 				d.logger.Warn("views: insert pipeline failed",
 					"view", vb.av.def.Name, "err", err)
@@ -359,23 +404,51 @@ func (d *Dispatcher) Dispatch(events []*event.Event) error {
 	return nil
 }
 
+func (d *Dispatcher) newInsertBudgetAdapter(viewName string) *memgov.BudgetAdapter {
+	if d.gov == nil {
+		return nil
+	}
+	limit := d.insertMaxBytes
+	if limit <= 0 {
+		limit = defaultInsertMaxMemoryBytes
+		if usage := d.gov.TotalUsage(); usage.Limit > 0 && usage.Limit/16 < limit {
+			limit = usage.Limit / 16
+		}
+		if limit <= 0 {
+			limit = defaultInsertMaxMemoryBytes
+		}
+	}
+	qb := memgov.NewQueryBudget(d.gov, "mv-insert:"+viewName)
+
+	return memgov.NewBudgetAdapterWithLimit(qb, d.gov, limit)
+}
+
 // processInsertBatch runs the insert-time pipeline for an aggregation view.
 // It applies streaming commands, computes partial aggregates, and serializes state.
 // Uses a bounded context (processInsertTimeout) to avoid blocking ingestion
 // indefinitely if a rex regex backtracks or an eval expression hangs.
-func (d *Dispatcher) processInsertBatch(av *activeView, events []*event.Event) ([]*event.Event, error) {
+func (d *Dispatcher) processInsertBatch(av *activeView, events []*event.Event, adapter *memgov.BudgetAdapter) ([]*event.Event, error) {
 	var transformed []*event.Event
 
 	if len(av.analysis.StreamingCmds) > 0 {
 		// Run streaming commands through the pipeline engine with a bounded context.
 		ctx, cancel := context.WithTimeout(context.Background(), processInsertTimeout)
 		defer cancel()
-		source := pipeline.NewScanIteratorWithBudget(events, pipeline.DefaultBatchSize, memgov.NopAccount())
-		iter, err := pipeline.BuildFromSource(ctx, source, av.analysis.StreamingCmds, pipeline.DefaultBatchSize)
+		scanAcct := memgov.NopAccount()
+		outputAcct := memgov.NopAccount()
+		if adapter != nil {
+			scanAcct = adapter.NewAccount("mv-insert-scan")
+			outputAcct = adapter.NewAccount("mv-insert-output")
+		}
+		defer scanAcct.Close()
+		defer outputAcct.Close()
+
+		source := pipeline.NewScanIteratorWithBudget(events, pipeline.DefaultBatchSize, scanAcct)
+		iter, err := pipeline.BuildFromSourceWithBudget(ctx, source, av.analysis.StreamingCmds, pipeline.DefaultBatchSize, adapter)
 		if err != nil {
 			return nil, fmt.Errorf("views.processInsertBatch: build pipeline: %w", err)
 		}
-		rows, err := pipeline.CollectAll(ctx, iter)
+		rows, err := collectPipelineRowsWithBudget(ctx, iter, outputAcct)
 		if err != nil {
 			return nil, fmt.Errorf("views.processInsertBatch: collect: %w", err)
 		}
@@ -389,10 +462,44 @@ func (d *Dispatcher) processInsertBatch(av *activeView, events []*event.Event) (
 	}
 
 	// Compute partial aggregates with correct intermediate state.
-	partialGroups := pipeline.ComputePartialAgg(transformed, av.analysis.AggSpec)
+	partialAcct := memgov.NopAccount()
+	if adapter != nil {
+		partialAcct = adapter.NewAccount("mv-insert-partial-agg")
+	}
+	defer partialAcct.Close()
+	partialGroups, err := pipeline.ComputePartialAggWithBudget(transformed, av.analysis.AggSpec, partialAcct)
+	if err != nil {
+		return nil, fmt.Errorf("views.processInsertBatch: partial agg: %w", err)
+	}
 
 	// Serialize partial state to events for storage.
 	return PartialGroupsToEvents(partialGroups, av.analysis.AggSpec, av.def.Name), nil
+}
+
+func collectPipelineRowsWithBudget(ctx context.Context, iter pipeline.Iterator, acct memgov.MemoryAccount) ([]map[string]event.Value, error) {
+	if err := iter.Init(ctx); err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	var rows []map[string]event.Value
+	for {
+		batch, err := iter.Next(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			break
+		}
+		if err := acct.Grow(pipeline.EstimateBatchBytes(batch)); err != nil {
+			return nil, err
+		}
+		for i := 0; i < batch.Len; i++ {
+			rows = append(rows, batch.Row(i))
+		}
+	}
+
+	return rows, nil
 }
 
 // FlushView flushes a single view's memtable to a segment on disk.

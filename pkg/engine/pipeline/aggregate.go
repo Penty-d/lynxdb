@@ -146,6 +146,24 @@ func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct
 func NewAggregateIteratorWithSpill(child Iterator, aggs []AggFunc, groupBy []string, acct memgov.MemoryAccount, mgr *SpillManager) *AggregateIterator {
 	a := NewAggregateIterator(child, aggs, groupBy, acct)
 	a.spillMgr = mgr
+	if ca, ok := a.acct.(*CoordinatedAccount); ok && mgr != nil {
+		ca.SetOnRevoke(func(target int64) int64 {
+			if a.groupCount == 0 {
+				return 0
+			}
+			before := a.acct.Used()
+			a.spillToDisk()
+			if a.spillErr != nil {
+				return 0
+			}
+			freed := before - a.acct.Used()
+			if freed < 0 {
+				return 0
+			}
+
+			return freed
+		})
+	}
 
 	return a
 }

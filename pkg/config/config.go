@@ -302,6 +302,10 @@ type ViewsConfig struct {
 	// 0 means auto-compute from the global pool.
 	MaxBackfillMemoryBytes ByteSize `yaml:"max_backfill_memory_bytes" json:"max_backfill_memory_bytes"`
 
+	// InsertMaxMemoryBytes is the per-view budget for one insert-time MV
+	// pipeline batch. 0 means auto-compute: min(128MB, total pool / 16).
+	InsertMaxMemoryBytes ByteSize `yaml:"insert_max_memory_bytes" json:"insert_max_memory_bytes"`
+
 	// BackfillBackpressureWait is how long a backfill waits when the global pool
 	// is under pressure from interactive queries before retrying.
 	// Default: 5s.

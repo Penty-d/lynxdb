@@ -2,39 +2,85 @@ package pipeline
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"math"
+	"os"
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // OutliersIterator is a blocking operator that identifies outlier rows using
-// statistical methods (IQR, Z-score, or MAD). It accumulates all rows from
-// its child, computes statistics, then emits all rows with added _outlier
-// (bool) and _score (float64) columns.
+// statistical methods (IQR, Z-score, or MAD). Rows are buffered in memory
+// until the budget pushes back; with a SpillManager configured, row buffering
+// transitions to columnar spill and replay.
 type OutliersIterator struct {
 	child     Iterator
 	field     string
 	method    string
 	threshold float64
+	acct      memgov.MemoryAccount
 
 	// Accumulation phase.
-	done bool
+	done        bool
+	rows        []map[string]event.Value
+	rowBytesMem int64
+	values      []float64
 
 	// Emission phase.
-	output *Batch
-	offset int
+	scores    []float64
+	isOutlier []bool
+	offset    int
+
+	// Spill state.
+	spillMgr        *SpillManager
+	spillWriter     *ColumnarSpillWriter
+	spillReader     *ColumnarSpillReader
+	spillPath       string
+	spilled         bool
+	spilledRows     int64
+	spillBytesTotal int64
 }
 
 // NewOutliersIterator creates a new outliers iterator.
 func NewOutliersIterator(child Iterator, field, method string, threshold float64) *OutliersIterator {
-	return &OutliersIterator{
+	return NewOutliersIteratorWithBudget(child, field, method, threshold, memgov.NopAccount(), nil)
+}
+
+// NewOutliersIteratorWithBudget creates an outliers iterator with row-buffer
+// accounting and optional columnar spill support.
+func NewOutliersIteratorWithBudget(child Iterator, field, method string, threshold float64, acct memgov.MemoryAccount, mgr *SpillManager) *OutliersIterator {
+	o := &OutliersIterator{
 		child:     child,
 		field:     field,
 		method:    method,
 		threshold: threshold,
+		acct:      memgov.EnsureAccount(acct),
+		spillMgr:  mgr,
 	}
+	if ca, ok := o.acct.(*CoordinatedAccount); ok && mgr != nil {
+		ca.SetOnRevoke(func(target int64) int64 {
+			if o.spilled || len(o.rows) == 0 {
+				return 0
+			}
+			before := o.acct.Used()
+			if err := o.spillBufferedRows(); err != nil {
+				return 0
+			}
+			freed := before - o.acct.Used()
+			if freed < 0 {
+				return 0
+			}
+
+			return freed
+		})
+	}
+
+	return o
 }
 
 func (o *OutliersIterator) Init(ctx context.Context) error {
@@ -42,46 +88,67 @@ func (o *OutliersIterator) Init(ctx context.Context) error {
 }
 
 func (o *OutliersIterator) Next(ctx context.Context) (*Batch, error) {
-	// Accumulate all rows from the child.
 	if !o.done {
-		o.done = true
-
-		var allRows []map[string]event.Value
-		for {
-			batch, err := o.child.Next(ctx)
-			if err != nil {
-				return nil, err
-			}
-			if batch == nil {
-				break
-			}
-			for i := 0; i < batch.Len; i++ {
-				allRows = append(allRows, batch.Row(i))
-			}
+		if err := o.materialize(ctx); err != nil {
+			return nil, err
 		}
-
-		// Compute outlier scores and build output batch.
-		o.output = o.computeOutliers(allRows)
+		o.done = true
 	}
 
-	// Emit in batches (the full output is already computed).
-	if o.output == nil || o.offset >= o.output.Len {
+	if o.offset >= len(o.values) {
 		return nil, nil
 	}
 
-	end := o.offset + DefaultBatchSize
-	if end > o.output.Len {
-		end = o.output.Len
+	batch := NewBatch(DefaultBatchSize)
+	for batch.Len < DefaultBatchSize && o.offset < len(o.values) {
+		row, err := o.rowAtOffset()
+		if err != nil {
+			return nil, err
+		}
+		row["_outlier"] = event.BoolValue(o.isOutlier[o.offset])
+		row["_score"] = event.FloatValue(o.scores[o.offset])
+		batch.AddRow(row)
+		o.offset++
 	}
 
-	result := o.output.Slice(o.offset, end)
-	o.offset = end
+	if batch.Len == 0 {
+		return nil, nil
+	}
 
-	return result, nil
+	return batch, nil
 }
 
 func (o *OutliersIterator) Close() error {
-	return o.child.Close()
+	var errs []error
+	if o.spillWriter != nil {
+		if err := o.spillWriter.CloseFile(); err != nil {
+			errs = append(errs, fmt.Errorf("outliers: close spill writer: %w", err))
+		}
+		o.spillWriter = nil
+	}
+	if o.spillReader != nil {
+		if err := o.spillReader.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		o.spillReader = nil
+	}
+	if o.spillPath != "" {
+		if info, err := os.Stat(o.spillPath); err == nil {
+			o.spillBytesTotal = info.Size()
+		}
+		if o.spillMgr != nil {
+			o.spillMgr.Release(o.spillPath)
+		} else {
+			os.Remove(o.spillPath)
+		}
+		o.spillPath = ""
+	}
+	o.acct.Close()
+	if err := o.child.Close(); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
 }
 
 func (o *OutliersIterator) Schema() []FieldInfo {
@@ -93,50 +160,153 @@ func (o *OutliersIterator) Schema() []FieldInfo {
 	)
 }
 
-// computeOutliers applies the selected outlier detection method and returns
-// a batch enriched with _outlier and _score columns.
-func (o *OutliersIterator) computeOutliers(rows []map[string]event.Value) *Batch {
-	if len(rows) == 0 {
-		return NewBatch(0)
-	}
+// MemoryUsed returns the current tracked memory for this operator.
+func (o *OutliersIterator) MemoryUsed() int64 { return o.acct.Used() }
 
-	// Extract numeric values from the field.
-	values := make([]float64, len(rows))
-	for i, row := range rows {
-		if v, ok := row[o.field]; ok {
-			if f, ok := vm.ValueToFloat(v); ok {
-				values[i] = f
-			} else {
-				values[i] = math.NaN()
-			}
-		} else {
-			values[i] = math.NaN()
+// ResourceStats implements ResourceReporter for spill observability.
+func (o *OutliersIterator) ResourceStats() OperatorResourceStats {
+	spillBytes := o.spillBytesTotal
+	if o.spillPath != "" {
+		if info, err := os.Stat(o.spillPath); err == nil {
+			spillBytes = info.Size()
 		}
 	}
 
-	// Compute scores based on method.
-	var scores []float64
-	var isOutlier []bool
+	return OperatorResourceStats{
+		PeakBytes:   o.acct.MaxUsed(),
+		SpilledRows: o.spilledRows,
+		SpillBytes:  spillBytes,
+	}
+}
+
+func (o *OutliersIterator) materialize(ctx context.Context) error {
+	for {
+		batch, err := o.child.Next(ctx)
+		if err != nil {
+			return err
+		}
+		if batch == nil {
+			break
+		}
+		for i := 0; i < batch.Len; i++ {
+			row := batch.Row(i)
+			if err := o.acct.Grow(8); err != nil {
+				return fmt.Errorf("outliers: memory budget exceeded for values: %w", err)
+			}
+			o.values = append(o.values, outlierNumericValue(row, o.field))
+			if o.spilled {
+				if err := o.spillWriter.WriteRow(row); err != nil {
+					return fmt.Errorf("outliers: write spill: %w", err)
+				}
+				o.spilledRows++
+				continue
+			}
+			rowBytes := EstimateRowBytes(row)
+			if err := o.acct.Grow(rowBytes); err != nil {
+				if o.spillMgr == nil {
+					return fmt.Errorf("outliers: memory budget exceeded for rows: %w", err)
+				}
+				if err := o.transitionToSpill(row); err != nil {
+					return err
+				}
+				continue
+			}
+			o.rows = append(o.rows, row)
+			o.rowBytesMem += rowBytes
+		}
+	}
+
+	if o.spilled && o.spillWriter != nil {
+		if err := o.spillWriter.CloseFile(); err != nil {
+			return fmt.Errorf("outliers: close spill: %w", err)
+		}
+		o.spillWriter = nil
+	}
 
 	switch o.method {
 	case "iqr":
-		scores, isOutlier = o.computeIQR(values)
+		o.scores, o.isOutlier = o.computeIQR(o.values)
 	case "zscore":
-		scores, isOutlier = o.computeZScore(values)
+		o.scores, o.isOutlier = o.computeZScore(o.values)
 	case "mad":
-		scores, isOutlier = o.computeMAD(values)
+		o.scores, o.isOutlier = o.computeMAD(o.values)
 	default:
-		scores, isOutlier = o.computeIQR(values)
+		o.scores, o.isOutlier = o.computeIQR(o.values)
 	}
 
-	b := NewBatch(len(rows))
-	for i, row := range rows {
-		row["_outlier"] = event.BoolValue(isOutlier[i])
-		row["_score"] = event.FloatValue(scores[i])
-		b.AddRow(row)
+	return nil
+}
+
+func (o *OutliersIterator) transitionToSpill(currentRow map[string]event.Value) error {
+	if err := o.spillBufferedRows(); err != nil {
+		return err
+	}
+	if err := o.spillWriter.WriteRow(currentRow); err != nil {
+		return fmt.Errorf("outliers: write current row: %w", err)
+	}
+	o.spilledRows++
+
+	return nil
+}
+
+func (o *OutliersIterator) spillBufferedRows() error {
+	sw, err := NewColumnarSpillWriter(o.spillMgr, "outliers")
+	if err != nil {
+		return fmt.Errorf("outliers: create spill file: %w", err)
+	}
+	o.spillWriter = sw
+	o.spillPath = sw.Path()
+	o.spilled = true
+
+	for _, row := range o.rows {
+		if err := sw.WriteRow(row); err != nil {
+			return fmt.Errorf("outliers: write buffered row: %w", err)
+		}
+	}
+	o.spilledRows = int64(len(o.rows))
+
+	o.acct.Shrink(o.rowBytesMem)
+	o.rows = nil
+	o.rowBytesMem = 0
+	if sn, ok := o.acct.(SpillNotifier); ok {
+		sn.NotifySpilled()
 	}
 
-	return b
+	return nil
+}
+
+func (o *OutliersIterator) rowAtOffset() (map[string]event.Value, error) {
+	if !o.spilled {
+		return o.rows[o.offset], nil
+	}
+	if o.spillReader == nil {
+		reader, err := NewColumnarSpillReader(o.spillPath)
+		if err != nil {
+			return nil, fmt.Errorf("outliers: open spill reader: %w", err)
+		}
+		o.spillReader = reader
+	}
+	row, err := o.spillReader.ReadRow()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("outliers: spill ended before row %d", o.offset)
+		}
+		return nil, fmt.Errorf("outliers: read spill: %w", err)
+	}
+
+	return row, nil
+}
+
+func outlierNumericValue(row map[string]event.Value, field string) float64 {
+	v, ok := row[field]
+	if !ok {
+		return math.NaN()
+	}
+	if f, ok := vm.ValueToFloat(v); ok {
+		return f
+	}
+
+	return math.NaN()
 }
 
 // computeIQR computes outlier scores using the Interquartile Range method.

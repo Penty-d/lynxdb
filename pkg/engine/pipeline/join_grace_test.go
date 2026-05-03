@@ -114,6 +114,9 @@ func TestJoinGraceHashJoinFallback(t *testing.T) {
 	if rs.SpilledRows == 0 {
 		t.Fatal("expected SpilledRows > 0 for grace join")
 	}
+	if rs.SpillBytes == 0 {
+		t.Fatal("expected SpillBytes > 0 for grace join")
+	}
 }
 
 func TestJoinGraceHashJoinLeftOuter(t *testing.T) {

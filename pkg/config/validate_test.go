@@ -236,6 +236,7 @@ func TestValidateViews(t *testing.T) {
 		wantErr string
 	}{
 		{"negative max_backfill_memory", func(v *ViewsConfig) { v.MaxBackfillMemoryBytes = -1 }, "views.max_backfill_memory_bytes"},
+		{"negative insert_max_memory", func(v *ViewsConfig) { v.InsertMaxMemoryBytes = -1 }, "views.insert_max_memory_bytes"},
 		{"negative backfill_backpressure_wait", func(v *ViewsConfig) { v.BackfillBackpressureWait = Duration(-time.Second) }, "views.backfill_backpressure_wait"},
 		{"negative backfill_max_retries", func(v *ViewsConfig) { v.BackfillMaxRetries = -1 }, "views.backfill_max_retries"},
 	}

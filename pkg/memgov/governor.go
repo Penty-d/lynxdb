@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // ErrMemoryPressure is returned when the governor cannot satisfy a reservation
@@ -53,10 +54,22 @@ type globalGovernor struct {
 
 	pressure *pressureRegistry
 
+	classPeakHistory [numClasses]rollingPeakWindow
+	totalPeakHistory rollingPeakWindow
+
 	// Metrics (atomic for lock-free reads in hot paths).
 	reserveCount  atomic.Int64
 	releaseCount  atomic.Int64
 	pressureCount atomic.Int64
+}
+
+type peakBucket struct {
+	minute int64
+	peak   int64
+}
+
+type rollingPeakWindow struct {
+	buckets [24 * 60]peakBucket
 }
 
 // GovernorConfig configures the global governor.
@@ -123,6 +136,7 @@ func (g *globalGovernor) Reserve(class MemoryClass, n int64) error {
 	if g.totalAllocated > g.totalPeak {
 		g.totalPeak = g.totalAllocated
 	}
+	g.recordRollingPeakLocked(class)
 
 	g.mu.Unlock()
 
@@ -154,6 +168,7 @@ func (g *globalGovernor) TryReserve(class MemoryClass, n int64) bool {
 	if g.totalAllocated > g.totalPeak {
 		g.totalPeak = g.totalAllocated
 	}
+	g.recordRollingPeakLocked(class)
 
 	return true
 }
@@ -185,6 +200,8 @@ func (g *globalGovernor) ClassUsage(class MemoryClass) ClassStats {
 	return ClassStats{
 		Allocated: g.allocated[class],
 		Peak:      g.peak[class],
+		Peak60s:   g.classPeakHistory[class].maxSince(currentMinute(), 1),
+		Peak24h:   g.classPeakHistory[class].maxSince(currentMinute(), 24*60),
 		Limit:     g.limits[class],
 	}
 }
@@ -194,14 +211,20 @@ func (g *globalGovernor) TotalUsage() TotalStats {
 	defer g.mu.Unlock()
 
 	ts := TotalStats{
-		Allocated: g.totalAllocated,
-		Peak:      g.totalPeak,
-		Limit:     g.limit,
+		Allocated:      g.totalAllocated,
+		Peak:           g.totalPeak,
+		Limit:          g.limit,
+		ReserveEvents:  g.reserveCount.Load(),
+		ReleaseEvents:  g.releaseCount.Load(),
+		PressureEvents: g.pressureCount.Load(),
 	}
+	nowMinute := currentMinute()
 	for i := MemoryClass(0); i < numClasses; i++ {
 		ts.ByClass[i] = ClassStats{
 			Allocated: g.allocated[i],
 			Peak:      g.peak[i],
+			Peak60s:   g.classPeakHistory[i].maxSince(nowMinute, 1),
+			Peak24h:   g.classPeakHistory[i].maxSince(nowMinute, 24*60),
 			Limit:     g.limits[i],
 		}
 	}
@@ -211,4 +234,46 @@ func (g *globalGovernor) TotalUsage() TotalStats {
 
 func (g *globalGovernor) OnPressure(class MemoryClass, cb PressureCallback) {
 	g.pressure.register(class, cb)
+}
+
+func (g *globalGovernor) recordRollingPeakLocked(class MemoryClass) {
+	now := currentMinute()
+	g.classPeakHistory[class].record(now, g.allocated[class])
+	g.totalPeakHistory.record(now, g.totalAllocated)
+}
+
+func currentMinute() int64 {
+	return time.Now().Unix() / 60
+}
+
+func (w *rollingPeakWindow) record(minute, value int64) {
+	idx := minute % int64(len(w.buckets))
+	if idx < 0 {
+		idx += int64(len(w.buckets))
+	}
+	b := &w.buckets[idx]
+	if b.minute != minute {
+		b.minute = minute
+		b.peak = value
+		return
+	}
+	if value > b.peak {
+		b.peak = value
+	}
+}
+
+func (w *rollingPeakWindow) maxSince(nowMinute, windowMinutes int64) int64 {
+	var max int64
+	cutoff := nowMinute - windowMinutes + 1
+	for i := range w.buckets {
+		b := w.buckets[i]
+		if b.minute < cutoff || b.minute > nowMinute {
+			continue
+		}
+		if b.peak > max {
+			max = b.peak
+		}
+	}
+
+	return max
 }

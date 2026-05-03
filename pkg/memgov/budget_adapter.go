@@ -43,6 +43,21 @@ func (ba *BudgetAdapter) NewAccount(label string) *AccountAdapter {
 	return newTrackedAccountAdapter(opMem, ba)
 }
 
+// NewSpillableAccount creates an account whose allocations are charged to
+// ClassSpillable. Use this for blocking operators that can release memory by
+// spilling or by coordinator-directed budget shrinkage. Ordinary NewAccount
+// remains ClassNonRevocable for scan buffers and other pinned work.
+func (ba *BudgetAdapter) NewSpillableAccount(label string) *AccountAdapter {
+	return newTrackedClassAccountAdapter(ba.gov, ClassSpillable, ba)
+}
+
+// NewMetadataAccount creates an account charged to ClassMetadata. Use this for
+// auxiliary data structures such as bloom filters and indexes that are
+// re-readable or rebuildable, but are not operator working rows.
+func (ba *BudgetAdapter) NewMetadataAccount(label string) *AccountAdapter {
+	return newTrackedClassAccountAdapter(ba.gov, ClassMetadata, ba)
+}
+
 // Limit returns the per-query memory limit (0 = no per-query limit).
 func (ba *BudgetAdapter) Limit() int64 {
 	return ba.limit

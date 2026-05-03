@@ -31,6 +31,7 @@ const joinPrefetchBuffer = 4
 // concurrently with the right-side hash table build, overlapping I/O with
 // computation for better throughput.
 type JoinIterator struct {
+	mu        sync.Mutex
 	left      Iterator
 	right     Iterator
 	field     string
@@ -44,14 +45,17 @@ type JoinIterator struct {
 	// Grace hash join state (populated only when in-memory build exceeds budget).
 	spillMgr         *SpillManager
 	graceMode        bool
+	rightPartWriters []*ColumnarSpillWriter
+	graceRightOpen   bool
 	leftPartPaths    []string                            // paths to left partition spill files
 	rightPartPaths   []string                            // paths to right partition spill files
 	currentPartition int                                 // current partition being probed
 	partHashMap      map[string][]map[string]event.Value // temp hash table for current partition
-	partLeftReader   *SpillReader                        // reader for current left partition
+	partLeftReader   *ColumnarSpillReader                // reader for current left partition
 	partBuffer       []map[string]event.Value            // buffered output rows for current partition
 	partBufferOffset int                                 // offset into partBuffer
 	spilledRows      int64                               // total rows spilled (for ResourceReporter)
+	spillBytesTotal  int64                               // persisted spill bytes (survives Close)
 
 	// Prefetch state: when enabled, left-side batches are read into a
 	// buffered channel concurrently with the right-side hash table build.
@@ -107,6 +111,11 @@ func NewJoinIteratorWithSpill(left, right Iterator, field, joinType string,
 	acct memgov.MemoryAccount, mgr *SpillManager) *JoinIterator {
 	j := NewJoinIteratorWithBudget(left, right, field, joinType, acct)
 	j.spillMgr = mgr
+	if ca, ok := j.acct.(*CoordinatedAccount); ok && mgr != nil {
+		ca.SetOnRevoke(func(target int64) int64 {
+			return j.revokeBuildSideToGrace()
+		})
+	}
 
 	return j
 }
@@ -214,8 +223,21 @@ func (j *JoinIterator) Close() error {
 		j.partLeftReader.Close()
 		j.partLeftReader = nil
 	}
+	if j.rightPartWriters != nil {
+		for _, sw := range j.rightPartWriters {
+			if sw == nil {
+				continue
+			}
+			_ = sw.CloseFile()
+			if j.spillMgr != nil {
+				j.spillMgr.Release(sw.Path())
+			}
+		}
+		j.rightPartWriters = nil
+	}
 	// Release all partition spill files.
 	if j.spillMgr != nil {
+		j.spillBytesTotal = sumSpillPathBytes(j.leftPartPaths) + sumSpillPathBytes(j.rightPartPaths)
 		for _, p := range j.leftPartPaths {
 			j.spillMgr.Release(p)
 		}
@@ -239,9 +261,15 @@ func (j *JoinIterator) MemoryUsed() int64 {
 
 // ResourceStats implements ResourceReporter for per-operator spill metrics.
 func (j *JoinIterator) ResourceStats() OperatorResourceStats {
+	spillBytes := j.spillBytesTotal
+	if spillBytes == 0 {
+		spillBytes = sumSpillPathBytes(j.leftPartPaths) + sumSpillPathBytes(j.rightPartPaths)
+	}
+
 	return OperatorResourceStats{
 		PeakBytes:   j.acct.MaxUsed(),
 		SpilledRows: j.spilledRows,
+		SpillBytes:  spillBytes,
 	}
 }
 
@@ -266,7 +294,26 @@ func (j *JoinIterator) buildHashTable(ctx context.Context) error {
 		if batch == nil {
 			break
 		}
-		if err := j.acct.Grow(int64(batch.Len) * estimatedRowBytes); err != nil {
+
+		j.mu.Lock()
+		graceRightOpen := j.graceRightOpen
+		j.mu.Unlock()
+		if graceRightOpen {
+			if err := j.partitionBatchRight(batch); err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		rows := make([]map[string]event.Value, batch.Len)
+		var batchBytes int64
+		for i := 0; i < batch.Len; i++ {
+			row := batch.Row(i)
+			rows[i] = row
+			batchBytes += EstimateRowBytes(row)
+		}
+		if err := j.acct.Grow(batchBytes); err != nil {
 			// Budget exceeded — fall back to grace hash join if SpillManager is configured.
 			if j.spillMgr != nil {
 				return j.graceHashJoin(ctx, batch)
@@ -274,14 +321,31 @@ func (j *JoinIterator) buildHashTable(ctx context.Context) error {
 
 			return fmt.Errorf("join.buildHashTable: %w", err)
 		}
-		for i := 0; i < batch.Len; i++ {
-			row := batch.Row(i)
+		j.mu.Lock()
+		if j.graceRightOpen {
+			j.mu.Unlock()
+			j.acct.Shrink(batchBytes)
+			if err := j.partitionBatchRight(batch); err != nil {
+				return err
+			}
+
+			continue
+		}
+		for _, row := range rows {
 			key := ""
 			if v, ok := row[j.field]; ok {
 				key = v.String()
 			}
 			j.hashMap[key] = append(j.hashMap[key], row)
 		}
+		j.mu.Unlock()
+	}
+
+	j.mu.Lock()
+	graceRightOpen := j.graceRightOpen
+	j.mu.Unlock()
+	if graceRightOpen {
+		return j.finalizeGraceHashJoin(ctx)
 	}
 
 	// For bloom_semi strategy, build a hash set of keys for pre-filtering.
@@ -364,49 +428,18 @@ func hashPartition(key string, numPartitions int) int {
 // exceeds the memory budget. It partitions both sides into N spill files
 // using hash partitioning on the join key, then processes one partition at a time.
 func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) error {
-	numParts := defaultGracePartitions
+	j.mu.Lock()
+	if !j.graceRightOpen {
+		if err := j.startGraceRightLocked(); err != nil {
+			j.mu.Unlock()
 
-	rightWriters := make([]*SpillWriter, numParts)
-	for i := range rightWriters {
-		sw, err := NewManagedSpillWriter(j.spillMgr, fmt.Sprintf("join-R-%02d", i))
-		if err != nil {
-			return fmt.Errorf("join.graceHashJoin: create right partition: %w", err)
-		}
-		rightWriters[i] = sw
-	}
-
-	// Partition existing hashMap rows into right partitions.
-	for key, rows := range j.hashMap {
-		p := hashPartition(key, numParts)
-		for _, row := range rows {
-			if err := rightWriters[p].WriteRow(row); err != nil {
-				return fmt.Errorf("join.graceHashJoin: write existing right row: %w", err)
-			}
-			j.spilledRows++
+			return err
 		}
 	}
+	j.mu.Unlock()
 
-	// Release in-memory hash table.
-	j.hashMap = nil
-	j.acct.Shrink(j.acct.Used())
-
-	// Notify coordinator that this operator has spilled, allowing rebalancing.
-	if sn, ok := j.acct.(SpillNotifier); ok {
-		sn.NotifySpilled()
-	}
-
-	// Partition the overflow batch.
-	for i := 0; i < overflowBatch.Len; i++ {
-		row := overflowBatch.Row(i)
-		key := ""
-		if v, ok := row[j.field]; ok {
-			key = v.String()
-		}
-		p := hashPartition(key, numParts)
-		if err := rightWriters[p].WriteRow(row); err != nil {
-			return fmt.Errorf("join.graceHashJoin: write overflow right row: %w", err)
-		}
-		j.spilledRows++
+	if err := j.partitionBatchRight(overflowBatch); err != nil {
+		return err
 	}
 
 	// Continue reading remaining right batches and partition them.
@@ -422,18 +455,128 @@ func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) 
 		if batch == nil {
 			break
 		}
-		for i := 0; i < batch.Len; i++ {
-			row := batch.Row(i)
-			key := ""
-			if v, ok := row[j.field]; ok {
-				key = v.String()
+		if err := j.partitionBatchRight(batch); err != nil {
+			return err
+		}
+	}
+
+	return j.finalizeGraceHashJoin(ctx)
+}
+
+// revokeBuildSideToGrace spills the current build-side hash table without
+// reading either child iterator. The normal build loop will finish partitioning
+// remaining right rows and then partition the left side.
+func (j *JoinIterator) revokeBuildSideToGrace() int64 {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if j.graceMode || j.graceRightOpen || len(j.hashMap) == 0 {
+		return 0
+	}
+	before := j.acct.Used()
+	if err := j.startGraceRightLocked(); err != nil {
+		return 0
+	}
+	freed := before - j.acct.Used()
+	if freed < 0 {
+		return 0
+	}
+
+	return freed
+}
+
+// startGraceRightLocked creates right-side partition writers, spills the
+// currently built hash table, and releases its accounted memory. j.mu must be
+// held by the caller.
+func (j *JoinIterator) startGraceRightLocked() error {
+	if j.spillMgr == nil {
+		return fmt.Errorf("join.graceHashJoin: no spill manager")
+	}
+	if j.graceRightOpen {
+		return nil
+	}
+
+	writers := make([]*ColumnarSpillWriter, defaultGracePartitions)
+	cleanup := true
+	defer func() {
+		if !cleanup {
+			return
+		}
+		for _, sw := range writers {
+			if sw == nil {
+				continue
 			}
-			p := hashPartition(key, numParts)
-			if err := rightWriters[p].WriteRow(row); err != nil {
-				return fmt.Errorf("join.graceHashJoin: write right row: %w", err)
+			_ = sw.CloseFile()
+			j.spillMgr.Release(sw.Path())
+		}
+	}()
+
+	for i := range writers {
+		sw, err := NewColumnarSpillWriter(j.spillMgr, fmt.Sprintf("join-R-%02d", i))
+		if err != nil {
+			return fmt.Errorf("join.graceHashJoin: create right partition: %w", err)
+		}
+		writers[i] = sw
+	}
+
+	for key, rows := range j.hashMap {
+		p := hashPartition(key, len(writers))
+		for _, row := range rows {
+			if err := writers[p].WriteRow(row); err != nil {
+				return fmt.Errorf("join.graceHashJoin: write existing right row: %w", err)
 			}
 			j.spilledRows++
 		}
+	}
+
+	// Release in-memory hash table.
+	j.hashMap = nil
+	j.acct.Shrink(j.acct.Used())
+	j.rightPartWriters = writers
+	j.graceRightOpen = true
+	cleanup = false
+
+	// Notify coordinator that this operator has spilled, allowing rebalancing.
+	if sn, ok := j.acct.(SpillNotifier); ok {
+		sn.NotifySpilled()
+	}
+
+	return nil
+}
+
+func (j *JoinIterator) partitionBatchRight(batch *Batch) error {
+	j.mu.Lock()
+	writers := j.rightPartWriters
+	j.mu.Unlock()
+	if len(writers) == 0 {
+		return fmt.Errorf("join.graceHashJoin: right partition writers not initialized")
+	}
+
+	for i := 0; i < batch.Len; i++ {
+		row := batch.Row(i)
+		key := ""
+		if v, ok := row[j.field]; ok {
+			key = v.String()
+		}
+		p := hashPartition(key, len(writers))
+		if err := writers[p].WriteRow(row); err != nil {
+			return fmt.Errorf("join.graceHashJoin: write right row: %w", err)
+		}
+		j.spilledRows++
+	}
+
+	return nil
+}
+
+func (j *JoinIterator) finalizeGraceHashJoin(ctx context.Context) error {
+	j.mu.Lock()
+	rightWriters := j.rightPartWriters
+	j.rightPartWriters = nil
+	j.graceRightOpen = false
+	j.mu.Unlock()
+	numParts := len(rightWriters)
+	if numParts == 0 {
+		return fmt.Errorf("join.graceHashJoin: no right partition writers to finalize")
 	}
 
 	// Close right writers and collect paths.
@@ -445,9 +588,9 @@ func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) 
 		}
 	}
 
-	leftWriters := make([]*SpillWriter, numParts)
+	leftWriters := make([]*ColumnarSpillWriter, numParts)
 	for i := range leftWriters {
-		sw, err := NewManagedSpillWriter(j.spillMgr, fmt.Sprintf("join-L-%02d", i))
+		sw, err := NewColumnarSpillWriter(j.spillMgr, fmt.Sprintf("join-L-%02d", i))
 		if err != nil {
 			return fmt.Errorf("join.graceHashJoin: create left partition: %w", err)
 		}
@@ -482,7 +625,7 @@ func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) 
 // rows are drained from j.prefetchCh instead of calling j.left.Next() directly.
 // This prevents a data race between two goroutines calling Next() on the
 // same non-thread-safe iterator.
-func (j *JoinIterator) partitionLeftSide(ctx context.Context, writers []*SpillWriter, numParts int) error {
+func (j *JoinIterator) partitionLeftSide(ctx context.Context, writers []*ColumnarSpillWriter, numParts int) error {
 	if j.prefetchCh != nil {
 		// Prefetch goroutine owns j.left — drain from the channel.
 		for res := range j.prefetchCh {
@@ -517,7 +660,7 @@ func (j *JoinIterator) partitionLeftSide(ctx context.Context, writers []*SpillWr
 
 // partitionBatchLeft writes a batch of left-side rows to the appropriate
 // partition writers based on the join key hash.
-func (j *JoinIterator) partitionBatchLeft(batch *Batch, writers []*SpillWriter, numParts int) error {
+func (j *JoinIterator) partitionBatchLeft(batch *Batch, writers []*ColumnarSpillWriter, numParts int) error {
 	for i := 0; i < batch.Len; i++ {
 		row := batch.Row(i)
 		key := ""
@@ -594,7 +737,7 @@ func (j *JoinIterator) nextGrace(ctx context.Context) (*Batch, error) {
 // and opens the left-side partition reader.
 func (j *JoinIterator) loadPartition(idx int) error {
 	// Load right partition into hash table.
-	rightReader, err := NewSpillReader(j.rightPartPaths[idx])
+	rightReader, err := NewColumnarSpillReader(j.rightPartPaths[idx])
 	if err != nil {
 		return fmt.Errorf("join.loadPartition: open right %d: %w", idx, err)
 	}
@@ -610,7 +753,7 @@ func (j *JoinIterator) loadPartition(idx int) error {
 			return fmt.Errorf("join.loadPartition: read right %d: %w", idx, readErr)
 		}
 		// Track memory for partition hash table.
-		if growErr := j.acct.Grow(estimatedRowBytes); growErr != nil {
+		if growErr := j.acct.Grow(EstimateRowBytes(row)); growErr != nil {
 			return fmt.Errorf("join.loadPartition: partition %d too large for memory: %w", idx, growErr)
 		}
 		key := ""
@@ -630,7 +773,7 @@ func (j *JoinIterator) loadPartition(idx int) error {
 	j.partHashMap = hashMap
 
 	// Open left partition reader.
-	leftReader, err := NewSpillReader(j.leftPartPaths[idx])
+	leftReader, err := NewColumnarSpillReader(j.leftPartPaths[idx])
 	if err != nil {
 		return fmt.Errorf("join.loadPartition: open left %d: %w", idx, err)
 	}

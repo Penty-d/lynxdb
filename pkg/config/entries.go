@@ -191,6 +191,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 
 	// Views.
 	add("views.max_backfill_memory_bytes", cfg.Views.MaxBackfillMemoryBytes.String(), dflt.Views.MaxBackfillMemoryBytes.String(), fileCfg.Views.MaxBackfillMemoryBytes.String(), "LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES")
+	add("views.insert_max_memory_bytes", cfg.Views.InsertMaxMemoryBytes.String(), dflt.Views.InsertMaxMemoryBytes.String(), fileCfg.Views.InsertMaxMemoryBytes.String(), "LYNXDB_VIEWS_INSERT_MAX_MEMORY_BYTES")
 	add("views.backfill_backpressure_wait", cfg.Views.BackfillBackpressureWait.String(), dflt.Views.BackfillBackpressureWait.String(), fileCfg.Views.BackfillBackpressureWait.String(), "LYNXDB_VIEWS_BACKFILL_BACKPRESSURE_WAIT")
 	add("views.backfill_max_retries", strconv.Itoa(cfg.Views.BackfillMaxRetries), strconv.Itoa(dflt.Views.BackfillMaxRetries), strconv.Itoa(fileCfg.Views.BackfillMaxRetries), "LYNXDB_VIEWS_BACKFILL_MAX_RETRIES")
 	add("views.dispatch_batch_size", strconv.Itoa(cfg.Views.DispatchBatchSize), strconv.Itoa(dflt.Views.DispatchBatchSize), strconv.Itoa(fileCfg.Views.DispatchBatchSize), "LYNXDB_VIEWS_DISPATCH_BATCH_SIZE")

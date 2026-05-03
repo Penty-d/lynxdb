@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -90,11 +91,24 @@ func IsPushableAgg(name string) bool {
 
 // ComputePartialAgg computes partial aggregates from a slice of events.
 func ComputePartialAgg(events []*event.Event, spec *PartialAggSpec) []*PartialAggGroup {
+	groups, _ := ComputePartialAggWithBudget(events, spec, memgov.NopAccount())
+
+	return groups
+}
+
+// ComputePartialAggWithBudget computes partial aggregates while accounting for
+// newly-created group state. Existing groups update in place; large distinct
+// sets and sketches are bounded by their own promotion thresholds.
+func ComputePartialAggWithBudget(events []*event.Event, spec *PartialAggSpec, acct memgov.MemoryAccount) ([]*PartialAggGroup, error) {
+	acct = memgov.EnsureAccount(acct)
 	groups := make(map[uint64][]*PartialAggGroup)
 
 	for _, ev := range events {
 		h := partialGroupKeyHash(ev, spec.GroupBy)
-		group := findOrCreatePartialGroup(groups, h, ev, spec)
+		group, err := findOrCreatePartialGroupWithBudget(groups, h, ev, spec, acct)
+		if err != nil {
+			return nil, err
+		}
 
 		for j, fn := range spec.Funcs {
 			val := extractEventValue(ev, fn.Field)
@@ -108,7 +122,7 @@ func ComputePartialAgg(events []*event.Event, spec *PartialAggSpec) []*PartialAg
 		result = append(result, chain...)
 	}
 
-	return result
+	return result, nil
 }
 
 // ComputePartialAggFromBatches runs partial aggregation on pipeline output batches.
@@ -513,11 +527,26 @@ func hashValue(h hash.Hash64, v event.Value, buf []byte) {
 
 // findOrCreatePartialGroup looks up or creates a partial agg group by hash.
 func findOrCreatePartialGroup(groups map[uint64][]*PartialAggGroup, h uint64, ev *event.Event, spec *PartialAggSpec) *PartialAggGroup {
+	group, _ := findOrCreatePartialGroupWithBudget(groups, h, ev, spec, memgov.NopAccount())
+
+	return group
+}
+
+func findOrCreatePartialGroupWithBudget(
+	groups map[uint64][]*PartialAggGroup,
+	h uint64,
+	ev *event.Event,
+	spec *PartialAggSpec,
+	acct memgov.MemoryAccount,
+) (*PartialAggGroup, error) {
 	chain := groups[h]
 	for _, g := range chain {
 		if partialKeysEqualEvent(g.Key, ev, spec.GroupBy) {
-			return g
+			return g, nil
 		}
+	}
+	if err := acct.Grow(estimatePartialGroupBytes(ev, spec)); err != nil {
+		return nil, err
 	}
 	group := &PartialAggGroup{
 		Key:    extractEventGroupKey(ev, spec.GroupBy),
@@ -529,7 +558,19 @@ func findOrCreatePartialGroup(groups map[uint64][]*PartialAggGroup, h uint64, ev
 	}
 	groups[h] = append(chain, group)
 
-	return group
+	return group, nil
+}
+
+func estimatePartialGroupBytes(ev *event.Event, spec *PartialAggSpec) int64 {
+	size := int64(len(spec.GroupBy))*estimatedKeyBytes + int64(len(spec.Funcs))*estimatedAggStateBytes
+	for _, g := range spec.GroupBy {
+		v := extractEventValue(ev, g)
+		if s, ok := v.TryAsString(); ok && len(s) > 8 {
+			size += int64(len(s))
+		}
+	}
+
+	return size
 }
 
 // extractEventGroupKey extracts group-by field values from an event.
