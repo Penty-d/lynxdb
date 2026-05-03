@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 func postESBulk(t *testing.T, addr, body string) *http.Response {
@@ -889,6 +891,42 @@ func TestESStub_IndexTemplatePut(t *testing.T) {
 	}
 	if result["acknowledged"] != true {
 		t.Fatalf("acknowledged = %#v, want true", result["acknowledged"])
+	}
+}
+
+func TestESBulk_DisabledByReload_Returns503(t *testing.T) {
+	runtimeCfg := config.DefaultConfig()
+	srv, cleanup := startTestServerWithConfig(t, Config{
+		RuntimeConfig: runtimeCfg,
+		Ingest:        runtimeCfg.Ingest,
+	})
+	defer cleanup()
+
+	updated := *runtimeCfg
+	updated.Ingest.ESCompat.Enabled = false
+	if restart, err := srv.ReloadConfig(&updated); err != nil {
+		t.Fatalf("ReloadConfig: %v", err)
+	} else if len(restart) != 0 {
+		t.Fatalf("restartRequired = %v, want none", restart)
+	}
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader(`{"index":{"_index":"logs"}}
+{"message":"hello"}
+`),
+	)
+	if err != nil {
+		t.Fatalf("POST _bulk: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Retry-After"); got != "5" {
+		t.Fatalf("Retry-After = %q, want 5", got)
 	}
 }
 

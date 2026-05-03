@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
@@ -262,6 +263,17 @@ type esPendingItem struct {
 
 func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	setESHeaders(w)
+	if !esCompatEnabled(s.currentIngestConfig()) {
+		w.Header().Set("Retry-After", "5")
+		respondJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "unavailable",
+				"reason": "Elasticsearch compatibility ingest is disabled",
+			},
+			"status": http.StatusServiceUnavailable,
+		})
+		return
+	}
 
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
@@ -488,6 +500,13 @@ func (s *Server) recordESBulkItem(action, result string) {
 	}
 }
 
+func esCompatEnabled(ingest config.IngestConfig) bool {
+	if ingest.ESCompat.AdvertisedVersion == "" && ingest.ESCompat.ClusterName == "" {
+		return true
+	}
+	return ingest.ESCompat.Enabled
+}
+
 func processESBatch(ctx context.Context, pipe *pipeline.Pipeline, batch []*event.Event, s *Server) error {
 	processed, err := pipe.Process(batch)
 	if err != nil {
@@ -529,6 +548,17 @@ func makeErrorItem(action, index, id string, httpStatus int, errType, reason str
 
 func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 	setESHeaders(w)
+	if !esCompatEnabled(s.currentIngestConfig()) {
+		w.Header().Set("Retry-After", "5")
+		respondJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "unavailable",
+				"reason": "Elasticsearch compatibility ingest is disabled",
+			},
+			"status": http.StatusServiceUnavailable,
+		})
+		return
+	}
 
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return

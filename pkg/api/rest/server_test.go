@@ -54,14 +54,15 @@ func startTestServerWithConfig(t *testing.T, cfg Config) (*Server, func()) {
 	}
 
 	srv, err := NewServer(Config{
-		Addr:    "127.0.0.1:0",
-		DataDir: cfg.DataDir,
-		Storage: cfg.Storage,
-		Logger:  logger,
-		Query:   queryCfg,
-		Ingest:  cfg.Ingest,
-		Server:  cfg.Server,
-		Views:   cfg.Views,
+		Addr:          "127.0.0.1:0",
+		DataDir:       cfg.DataDir,
+		RuntimeConfig: cfg.RuntimeConfig,
+		Storage:       cfg.Storage,
+		Logger:        logger,
+		Query:         queryCfg,
+		Ingest:        cfg.Ingest,
+		Server:        cfg.Server,
+		Views:         cfg.Views,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

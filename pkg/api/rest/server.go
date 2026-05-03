@@ -612,6 +612,9 @@ func (s engineSink) Write(events []*event.Event) error {
 }
 
 func (s *Server) submitShipperEvents(ctx context.Context, events []*event.Event) error {
+	if !s.currentIngestConfig().Staging.Enabled {
+		return s.engine.IngestContext(ctx, events)
+	}
 	if s.stagingBuffer != nil {
 		return s.stagingBuffer.Add(ctx, events)
 	}
