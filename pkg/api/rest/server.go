@@ -571,6 +571,15 @@ func (s *Server) Addr() string {
 	return s.httpServer.Addr
 }
 
+// OTLPHTTPAddr returns the resolved canonical OTLP/HTTP listener address.
+// It is empty when the listener is disabled.
+func (s *Server) OTLPHTTPAddr() string {
+	if s.otlpHTTPReceiver == nil {
+		return ""
+	}
+	return s.otlpHTTPReceiver.Addr()
+}
+
 // SetIndexStore sets an external IndexStore for full SPL2 queries.
 func (s *Server) SetIndexStore(store *spl2.IndexStore) {
 	s.engine.SetIndexStore(store)

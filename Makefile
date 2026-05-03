@@ -6,7 +6,7 @@ LDFLAGS  = -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Dat
 
 CUSTOM_GCL = ./custom-gcl
 
-.PHONY: build test test-unit test-e2e test-cli vet clean lint lint-build
+.PHONY: build test test-unit test-e2e test-cli test-compat test-compat-filebeat test-compat-fluentbit test-compat-vector test-compat-otelcol vet clean lint lint-build
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o lynxdb ./cmd/lynxdb/
@@ -18,6 +18,21 @@ test-unit:
 
 test-e2e:
 	go test -tags e2e -count=1 -timeout 180s ./test/e2e/
+
+test-compat:
+	go test -timeout 5m -tags=e2e -run "^TestE2E_Shipper" ./test/e2e/shippers/...
+
+test-compat-filebeat:
+	go test -timeout 2m -tags=e2e -run "^TestE2E_Shipper_Filebeat" ./test/e2e/shippers/
+
+test-compat-fluentbit:
+	go test -timeout 2m -tags=e2e -run "^TestE2E_Shipper_FluentBit" ./test/e2e/shippers/
+
+test-compat-vector:
+	go test -timeout 3m -tags=e2e -run "^TestE2E_Shipper_Vector" ./test/e2e/shippers/
+
+test-compat-otelcol:
+	go test -timeout 3m -tags=e2e -run "^TestE2E_Shipper_OtelCol" ./test/e2e/shippers/
 
 test-cli: build
 	go test -tags clitest -count=1 -timeout 300s ./test/cli/
