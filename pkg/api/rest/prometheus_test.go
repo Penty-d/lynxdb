@@ -140,6 +140,18 @@ func TestPrometheusMetrics_StagingMetrics(t *testing.T) {
 	assertHistogramCount(t, families, "lynxdb_ingest_staging_flush_size_bytes", 1)
 }
 
+func TestPrometheusMetrics_ESHandshakeCounter(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	pm.RecordESHandshake("license")
+	pm.RecordESHandshake("license")
+	pm.RecordESHandshake("template")
+
+	families := gatherMetrics(t, pm)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_es_handshake_total", "kind", "license", 2)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_es_handshake_total", "kind", "template", 1)
+}
+
 func TestPrometheusMetrics_ZeroSkipsNotRecorded(t *testing.T) {
 	pm := NewPrometheusMetrics()
 

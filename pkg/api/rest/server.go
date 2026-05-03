@@ -52,6 +52,8 @@ type Server struct {
 	syslogReceiver     *syslogrecv.Receiver
 	otlpHTTPReceiver   *otlphttp.Receiver
 	esHandshake        *eshttp.Handshake
+	esStubs            *eshttp.Stubs
+	promMetrics        *PrometheusMetrics
 	levelVar           *slog.LevelVar
 	logger             *slog.Logger
 }
@@ -166,6 +168,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// every completed query records histogram observations (duration, scan,
 	// pipeline, memory, rows) and increments segment-skip counters.
 	promMetrics := NewPrometheusMetrics()
+	s.promMetrics = promMetrics
 	engine.SetOnQueryComplete(promMetrics.RecordQuery)
 
 	if cfg.Syslog.Enabled() {
@@ -223,6 +226,16 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s.esHandshake = esHandshake
+	esStubs, err := eshttp.NewStubs(eshttp.Config{
+		AdvertisedVersion: esCfg.AdvertisedVersion,
+		ClusterName:       esCfg.ClusterName,
+		DataDir:           cfg.DataDir,
+		S3Bucket:          cfg.Storage.S3Bucket,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.esStubs = esStubs
 
 	mux := http.NewServeMux()
 
@@ -337,7 +350,18 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /api/v1/views/{name}/backfill", s.handleViewBackfill)
 
 	// Elasticsearch compatibility.
-	mux.Handle("GET /{$}", esHandshake)
+	mux.Handle("GET /{$}", s.esCompatibilityHandler("root", esHandshake))
+	mux.Handle("GET /_xpack", s.esCompatibilityHandler("xpack", http.HandlerFunc(esStubs.XPackInfo)))
+	mux.Handle("GET /_xpack/license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
+	mux.Handle("GET /_license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
+	mux.Handle("GET /_cat/templates", s.esCompatibilityHandler("templates", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("PUT /_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.Acknowledged)))
+	mux.Handle("GET /_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.IndexTemplates)))
+	mux.Handle("GET /_ilm/policy/{name...}", s.esCompatibilityHandler("ilm", http.HandlerFunc(esStubs.NotFound)))
+	mux.Handle("GET /_ingest/pipeline/{name...}", s.esCompatibilityHandler("pipeline", http.HandlerFunc(esStubs.NotFound)))
+	mux.Handle("GET /_nodes/{path...}", s.esCompatibilityHandler("nodes", http.HandlerFunc(esStubs.NodesHTTP)))
+	mux.Handle("GET /_alias", s.esCompatibilityHandler("alias", http.HandlerFunc(esStubs.EmptyAliases)))
+	mux.Handle("GET /_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.EmptyDataStreams)))
 	mux.HandleFunc("POST /_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /{index}/_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /api/v1/es/_bulk", s.handleESBulk)
@@ -345,20 +369,21 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /api/v1/es/", s.handleESClusterInfo)
 	mux.HandleFunc("GET /api/v1/es", s.handleESClusterInfo)
 
-	// ES stub endpoints — Filebeat calls these during startup.
-	// Return 200 + {} to prevent 404 errors when setup.ilm.enabled/setup.template.enabled
-	// are not explicitly set to false in filebeat.yml.
+	// Backward-compatible ES stub aliases under the legacy API prefix.
 	esStub := s.handleESStub
-	mux.HandleFunc("GET /api/v1/es/_ilm/policy/{name...}", esStub)
+	mux.Handle("GET /api/v1/es/_xpack", s.esCompatibilityHandler("xpack", http.HandlerFunc(esStubs.XPackInfo)))
+	mux.Handle("GET /api/v1/es/_xpack/license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
+	mux.Handle("GET /api/v1/es/_license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
+	mux.Handle("GET /api/v1/es/_cat/templates", s.esCompatibilityHandler("templates", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("GET /api/v1/es/_ilm/policy/{name...}", s.esCompatibilityHandler("ilm", http.HandlerFunc(esStubs.NotFound)))
 	mux.HandleFunc("PUT /api/v1/es/_ilm/policy/{name...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_index_template/{name...}", esStub)
-	mux.HandleFunc("PUT /api/v1/es/_index_template/{name...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_ingest/pipeline/{name...}", esStub)
+	mux.Handle("GET /api/v1/es/_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.IndexTemplates)))
+	mux.Handle("PUT /api/v1/es/_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.Acknowledged)))
+	mux.Handle("GET /api/v1/es/_ingest/pipeline/{name...}", s.esCompatibilityHandler("pipeline", http.HandlerFunc(esStubs.NotFound)))
 	mux.HandleFunc("PUT /api/v1/es/_ingest/pipeline/{name...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_nodes/{path...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_license", esStub)
-	mux.HandleFunc("GET /api/v1/es/_data_stream/{name...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_alias", esStub)
+	mux.Handle("GET /api/v1/es/_nodes/{path...}", s.esCompatibilityHandler("nodes", http.HandlerFunc(esStubs.NodesHTTP)))
+	mux.Handle("GET /api/v1/es/_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.EmptyDataStreams)))
+	mux.Handle("GET /api/v1/es/_alias", s.esCompatibilityHandler("alias", http.HandlerFunc(esStubs.EmptyAliases)))
 	// PUT/HEAD /{index} must be registered after underscore-prefixed paths
 	// to avoid Go 1.22+ ServeMux wildcard-vs-specific conflicts.
 	mux.HandleFunc("PUT /api/v1/es/{index}", esStub)

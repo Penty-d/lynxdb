@@ -791,14 +791,14 @@ func TestESStub_ILMPolicy(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
-	if result["error"] == "" {
-		t.Fatalf("expected error payload, got %v", result)
+	if len(result) != 0 {
+		t.Fatalf("expected empty object, got %v", result)
 	}
 
 	if h := resp.Header.Get("X-Elastic-Product"); h != "Elasticsearch" {
@@ -816,8 +816,15 @@ func TestESStub_IndexTemplate(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if templates, ok := result["index_templates"].([]interface{}); !ok || len(templates) != 0 {
+		t.Fatalf("index_templates = %#v, want empty array", result["index_templates"])
 	}
 }
 
@@ -831,8 +838,57 @@ func TestESStub_IngestPipeline(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestESStub_License(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/_license", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	license := result["license"].(map[string]interface{})
+	if license["status"] != "active" || license["type"] != "basic" {
+		t.Fatalf("license = %#v, want active basic", license)
+	}
+}
+
+func TestESStub_IndexTemplatePut(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("http://%s/_index_template/filebeat", srv.Addr()),
+		strings.NewReader(`{"index_patterns":["filebeat-*"]}`),
+	)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result["acknowledged"] != true {
+		t.Fatalf("acknowledged = %#v, want true", result["acknowledged"])
 	}
 }
 

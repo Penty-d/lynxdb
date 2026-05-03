@@ -44,7 +44,7 @@ service:
 				},
 			})
 
-			waitForSourceCount(t, rig, "otlp", 100)
+			waitForSourceCount(t, rig, "otlp", 100, func() string { return containerLogs(t, ctr) })
 			assertNoShipperErrors(t, containerLogs(t, ctr))
 		})
 	}

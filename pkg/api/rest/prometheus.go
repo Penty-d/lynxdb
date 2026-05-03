@@ -38,6 +38,7 @@ type PrometheusMetrics struct {
 	ingestBatchesTotal         prometheus.Counter
 	ingestBytesTotal           prometheus.Counter
 	ingestErrorsTotal          prometheus.Counter
+	ingestESHandshakeTotal     *prometheus.CounterVec
 	decompressionRejectedTotal *prometheus.CounterVec
 	stagingFlushesTotal        *prometheus.CounterVec
 	stagingOverflowsTotal      prometheus.Counter
@@ -176,6 +177,10 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		Name: "lynxdb_ingest_errors_total",
 		Help: "Total ingest errors.",
 	})
+	ingestESHandshake := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_es_handshake_total",
+		Help: "Total Elasticsearch compatibility handshake and management probe requests.",
+	}, []string{"kind"})
 	decompressionRejected := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "lynxdb_ingest_decompression_rejected_total",
 		Help: "Total shipper ingest requests rejected by compressed or decompressed body limits.",
@@ -315,6 +320,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		ingestBatches,
 		ingestBytes,
 		ingestErrors,
+		ingestESHandshake,
 		decompressionRejected,
 		stagingFlushes,
 		stagingOverflows,
@@ -364,6 +370,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		ingestBatchesTotal:         ingestBatches,
 		ingestBytesTotal:           ingestBytes,
 		ingestErrorsTotal:          ingestErrors,
+		ingestESHandshakeTotal:     ingestESHandshake,
 		decompressionRejectedTotal: decompressionRejected,
 		stagingFlushesTotal:        stagingFlushes,
 		stagingOverflowsTotal:      stagingOverflows,
@@ -393,6 +400,13 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		spillFilesActive:           spillFilesActive,
 		spillBytesActive:           spillBytesActive,
 	}
+}
+
+func (pm *PrometheusMetrics) RecordESHandshake(kind string) {
+	if kind == "" {
+		kind = "unknown"
+	}
+	pm.ingestESHandshakeTotal.WithLabelValues(kind).Inc()
 }
 
 func (pm *PrometheusMetrics) OnReject(stage, encoding string) {

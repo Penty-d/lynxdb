@@ -566,11 +566,23 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleESClusterInfo(w http.ResponseWriter, r *http.Request) {
+	if s.promMetrics != nil {
+		s.promMetrics.RecordESHandshake("cluster")
+	}
 	if s.esHandshake == nil {
 		respondInternalError(w, "elasticsearch compatibility handshake is not initialized")
 		return
 	}
 	s.esHandshake.ServeHTTP(w, r)
+}
+
+func (s *Server) esCompatibilityHandler(kind string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.promMetrics != nil {
+			s.promMetrics.RecordESHandshake(kind)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleESStub is a catch-all handler for ES management endpoints that Filebeat

@@ -47,7 +47,7 @@ sinks:
 				},
 			})
 
-			waitForSourceCount(t, rig, "test-vector", 100)
+			waitForSourceCount(t, rig, "test-vector", 100, func() string { return containerLogs(t, ctr) })
 			assertNoShipperErrors(t, containerLogs(t, ctr))
 		})
 	}

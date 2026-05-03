@@ -35,6 +35,6 @@ output.elasticsearch:
 		},
 	})
 
-	waitForSourceCount(t, rig, "filebeat-8.15.0", 100)
+	waitForSourceCount(t, rig, "filebeat-8.15.0", 100, func() string { return containerLogs(t, ctr) })
 	assertNoShipperErrors(t, containerLogs(t, ctr))
 }

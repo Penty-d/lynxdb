@@ -42,6 +42,6 @@ func TestE2E_Shipper_FluentBit(t *testing.T) {
 		},
 	})
 
-	waitForSourceCount(t, rig, "test-fluentbit", 100)
+	waitForSourceCount(t, rig, "test-fluentbit", 100, func() string { return containerLogs(t, ctr) })
 	assertNoShipperErrors(t, containerLogs(t, ctr))
 }
