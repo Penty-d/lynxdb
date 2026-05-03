@@ -99,7 +99,7 @@ func TestMmapSegment_BloomFilter(t *testing.T) {
 		t.Fatalf("BloomFilter: %v", err)
 	}
 	if bf == nil {
-		t.Fatal("expected bloom filter (V2 segment)")
+		t.Fatal("expected bloom filter ")
 	}
 
 	// "request" and "processed" should be in every event's _raw.
@@ -143,7 +143,7 @@ func TestMmapSegment_InvertedIndex(t *testing.T) {
 		t.Fatalf("InvertedIndex: %v", err)
 	}
 	if inv == nil {
-		t.Fatal("expected inverted index (V2 segment)")
+		t.Fatal("expected inverted index ")
 	}
 
 	// Search for a term that's in all events.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"math"
 	"math/rand"
 	"testing"
@@ -240,6 +241,40 @@ func TestSegment_InvalidMagic(t *testing.T) {
 	_, err := OpenSegment([]byte("JUNK" + "xxxxxxxxxxxx"))
 	if err == nil {
 		t.Fatal("expected error for invalid magic")
+	}
+}
+
+func TestReadChunk_ZSTDRequiresCapability(t *testing.T) {
+	data := []byte("chunk")
+	r := &Reader{data: data, footer: &Footer{}}
+	cc := &ColumnChunkMeta{
+		Name:        "field",
+		Compression: CompressionZSTD,
+		Offset:      0,
+		Length:      int64(len(data)),
+		CRC32:       crc32.ChecksumIEEE(data),
+	}
+
+	_, err := r.readChunk(cc)
+	if !errors.Is(err, ErrCorruptSegment) {
+		t.Fatalf("readChunk error = %v, want ErrCorruptSegment", err)
+	}
+}
+
+func TestReadChunk_UnknownCompressionIsCapabilityError(t *testing.T) {
+	data := []byte("chunk")
+	r := &Reader{data: data, footer: &Footer{}}
+	cc := &ColumnChunkMeta{
+		Name:        "field",
+		Compression: CompressionType(99),
+		Offset:      0,
+		Length:      int64(len(data)),
+		CRC32:       crc32.ChecksumIEEE(data),
+	}
+
+	_, err := r.readChunk(cc)
+	if !errors.Is(err, ErrUnsupportedCapability) {
+		t.Fatalf("readChunk error = %v, want ErrUnsupportedCapability", err)
 	}
 }
 

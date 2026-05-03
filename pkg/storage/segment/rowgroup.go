@@ -51,6 +51,7 @@ type RowGroupMeta struct {
 	ConstColumns         []ConstColumnEntry // columns with identical value across all rows in this RG
 	PerColumnBloomOffset int64              // byte offset of this row group's per-column bloom section
 	PerColumnBloomLength int64              // byte length of this row group's per-column bloom section
+	RequiredCapabilities uint64             // required capability bits used by this row group
 }
 
 // CatalogEntry describes a column in the column catalog.
@@ -85,6 +86,8 @@ type PrimaryIndex struct {
 func EncodePrimaryIndex(idx *PrimaryIndex) []byte {
 	buf := make([]byte, 0, 256)
 
+	buf = append(buf, LSG_PRIMARY_MAGIC...)
+	buf = append(buf, 0, 0, 0, 0)
 	buf = binary.LittleEndian.AppendUint32(buf, uint32(idx.Interval))
 	buf = binary.LittleEndian.AppendUint16(buf, uint16(len(idx.SortFields)))
 	for _, name := range idx.SortFields {
@@ -109,6 +112,18 @@ func EncodePrimaryIndex(idx *PrimaryIndex) []byte {
 // DecodePrimaryIndex deserializes a PrimaryIndex from binary data.
 func DecodePrimaryIndex(data []byte) (*PrimaryIndex, error) {
 	pos := 0
+
+	if pos+8 > len(data) {
+		return nil, ErrCorruptRegion
+	}
+	if string(data[pos:pos+4]) != LSG_PRIMARY_MAGIC {
+		return nil, ErrCorruptRegion
+	}
+	pos += 4
+	if data[pos] != 0 || data[pos+1] != 0 || data[pos+2] != 0 || data[pos+3] != 0 {
+		return nil, ErrCorruptRegion
+	}
+	pos += 4
 
 	if pos+4 > len(data) {
 		return nil, ErrCorruptSegment

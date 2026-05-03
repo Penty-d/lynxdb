@@ -351,12 +351,11 @@ func (e *Engine) buildSegmentSources(
 			InvertedIdx: seg.invertedIdx,
 			Bloom:       seg.bloom,
 			Meta: enginepipeline.SegmentMeta{
-				ID:           seg.meta.ID,
-				MinTime:      seg.meta.MinTime,
-				MaxTime:      seg.meta.MaxTime,
-				EventCount:   seg.meta.EventCount,
-				SizeBytes:    seg.meta.SizeBytes,
-				BloomVersion: seg.meta.BloomVersion,
+				ID:         seg.meta.ID,
+				MinTime:    seg.meta.MinTime,
+				MaxTime:    seg.meta.MaxTime,
+				EventCount: seg.meta.EventCount,
+				SizeBytes:  seg.meta.SizeBytes,
 			},
 		})
 	}
@@ -823,7 +822,7 @@ func shouldSkipSegment(seg *segmentHandle, hints *spl2.QueryHints, ss *storeStat
 		return true
 	}
 
-	if len(hints.SearchTerms) > 0 && seg.bloom != nil && seg.meta.BloomVersion >= 2 {
+	if len(hints.SearchTerms) > 0 && seg.bloom != nil {
 		if !seg.bloom.MayContainAll(hints.SearchTerms) {
 			ss.SegmentsSkippedBF++
 
@@ -949,7 +948,7 @@ func readSegmentEvents(
 	readStart := time.Now()
 
 	var searchBitmap *roaring.Bitmap
-	if len(hints.SearchTerms) > 0 && seg.invertedIdx != nil && seg.meta.BloomVersion >= 2 {
+	if len(hints.SearchTerms) > 0 && seg.invertedIdx != nil {
 		for i, term := range hints.SearchTerms {
 			bm, err := seg.invertedIdx.Search(term)
 			if err != nil {
@@ -1518,7 +1517,7 @@ func readSegmentColumnar(
 
 	// Search terms → bitmap via inverted index.
 	var searchBitmap *roaring.Bitmap
-	if len(hints.SearchTerms) > 0 && seg.invertedIdx != nil && seg.meta.BloomVersion >= 2 {
+	if len(hints.SearchTerms) > 0 && seg.invertedIdx != nil {
 		for i, term := range hints.SearchTerms {
 			bm, err := seg.invertedIdx.Search(term)
 			if err != nil {

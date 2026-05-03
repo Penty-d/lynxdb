@@ -694,19 +694,18 @@ func (e *Engine) onPartitionDeleted(removedIDs []string, partitionDir string) {
 // subsystems (tiering) that still expect model.SegmentMeta.
 func partMetaToSegmentMeta(pm *part.Meta) model.SegmentMeta {
 	return model.SegmentMeta{
-		ID:           pm.ID,
-		Index:        pm.Index,
-		Partition:    pm.Partition,
-		MinTime:      pm.MinTime,
-		MaxTime:      pm.MaxTime,
-		EventCount:   pm.EventCount,
-		SizeBytes:    pm.SizeBytes,
-		Level:        pm.Level,
-		Path:         pm.Path,
-		CreatedAt:    pm.CreatedAt,
-		Columns:      pm.Columns,
-		Tier:         pm.Tier,
-		BloomVersion: 2,
+		ID:         pm.ID,
+		Index:      pm.Index,
+		Partition:  pm.Partition,
+		MinTime:    pm.MinTime,
+		MaxTime:    pm.MaxTime,
+		EventCount: pm.EventCount,
+		SizeBytes:  pm.SizeBytes,
+		Level:      pm.Level,
+		Path:       pm.Path,
+		CreatedAt:  pm.CreatedAt,
+		Columns:    pm.Columns,
+		Tier:       pm.Tier,
 	}
 }
 

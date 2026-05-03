@@ -1,0 +1,23 @@
+binary_versions:
+  - binary: v1.0.0
+    reads: "1"
+    writes: "1"
+    marker_accepts: "1"
+    notes: Initial release
+capabilities:
+  - bit: 0
+    name: ColumnZSTD
+    class: required
+    description: A column chunk uses ZSTD layer-2 compression.
+magics:
+  - magic: LSG1
+    role: Segment file magic for format-major v1
+  - magic: LSGE
+    role: Footer payload magic
+  - magic: LSIX
+    role: Inverted-index region magic
+  - magic: LSPK
+    role: Sparse primary-index region magic
+  - magic: LSBL
+    role: Per-row-group bloom region magic
+

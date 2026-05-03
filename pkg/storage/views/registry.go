@@ -12,23 +12,34 @@ import (
 
 const viewsFile = "views.json"
 
+type registryFile struct {
+	FormatVersion int              `json:"format_version"`
+	Views         []ViewDefinition `json:"views"`
+}
+
 // ViewRegistry manages view definitions with persistent storage.
 type ViewRegistry struct {
-	mu        sync.RWMutex
-	persistMu sync.Mutex // serializes disk writes (separate from data lock)
-	views     map[string]ViewDefinition
-	dir       string
+	mu            sync.RWMutex
+	persistMu     sync.Mutex // serializes disk writes (separate from data lock)
+	views         map[string]ViewDefinition
+	dir           string
+	formatVersion int
 }
 
 // Open loads or creates a view registry in the given directory.
 func Open(dir string) (*ViewRegistry, error) {
+	return OpenWithFormatVersion(dir, 1)
+}
+
+func OpenWithFormatVersion(dir string, formatVersion int) (*ViewRegistry, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("views: mkdir %s: %w", dir, err)
 	}
 
 	r := &ViewRegistry{
-		views: make(map[string]ViewDefinition),
-		dir:   dir,
+		views:         make(map[string]ViewDefinition),
+		dir:           dir,
+		formatVersion: formatVersion,
 	}
 
 	path := filepath.Join(dir, viewsFile)
@@ -41,11 +52,14 @@ func Open(dir string) (*ViewRegistry, error) {
 		return nil, fmt.Errorf("views: read %s: %w", path, err)
 	}
 
-	var defs []ViewDefinition
-	if err := json.Unmarshal(data, &defs); err != nil {
+	var file registryFile
+	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, fmt.Errorf("views: unmarshal %s: %w", path, err)
 	}
-	for _, d := range defs {
+	if file.FormatVersion != formatVersion {
+		return nil, fmt.Errorf("views: format_version %d does not match data dir format %d", file.FormatVersion, formatVersion)
+	}
+	for _, d := range file.Views {
 		r.views[d.Name] = d
 	}
 
@@ -182,7 +196,11 @@ func (r *ViewRegistry) snapshotLocked() ([]byte, error) {
 		return defs[i].Name < defs[j].Name
 	})
 
-	data, err := json.MarshalIndent(defs, "", "  ")
+	file := registryFile{
+		FormatVersion: r.formatVersion,
+		Views:         defs,
+	}
+	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("views: marshal: %w", err)
 	}

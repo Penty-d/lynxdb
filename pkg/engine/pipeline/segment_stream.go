@@ -37,12 +37,11 @@ type SegmentSource struct {
 
 // SegmentMeta holds the subset of segment metadata needed by the streaming iterator.
 type SegmentMeta struct {
-	ID           string
-	MinTime      time.Time
-	MaxTime      time.Time
-	EventCount   int64
-	SizeBytes    int64
-	BloomVersion int
+	ID         string
+	MinTime    time.Time
+	MaxTime    time.Time
+	EventCount int64
+	SizeBytes  int64
 }
 
 // SegmentStreamHints contains query hints that control scan optimization
@@ -787,7 +786,7 @@ func (s *SegmentStreamIterator) shouldSkipByTime(seg *SegmentSource) bool {
 }
 
 func (s *SegmentStreamIterator) shouldSkipByBloom(seg *SegmentSource) bool {
-	if len(s.hints.SearchTerms) == 0 || seg.Bloom == nil || seg.Meta.BloomVersion < 2 {
+	if len(s.hints.SearchTerms) == 0 || seg.Bloom == nil {
 		return false
 	}
 
@@ -803,7 +802,7 @@ func (s *SegmentStreamIterator) computeSegmentBitmap(seg *SegmentSource) *roarin
 		if bm != nil {
 			s.streamStats.BitmapHits += int64(bm.GetCardinality())
 		}
-	} else if len(s.hints.SearchTerms) > 0 && seg.InvertedIdx != nil && seg.Meta.BloomVersion >= 2 {
+	} else if len(s.hints.SearchTerms) > 0 && seg.InvertedIdx != nil {
 		// Fallback: flat terms (AND only) — existing logic unchanged.
 		for i, term := range s.hints.SearchTerms {
 			termBM, err := seg.InvertedIdx.Search(term)

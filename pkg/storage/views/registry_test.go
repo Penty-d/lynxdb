@@ -1,7 +1,10 @@
 package views
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +53,44 @@ func TestViewRegistry_CreateAndGet(t *testing.T) {
 	}
 	if len(got.Columns) != 2 {
 		t.Errorf("Columns: got %d, want 2", len(got.Columns))
+	}
+}
+
+func TestViewRegistry_PersistsFormatVersion(t *testing.T) {
+	dir := t.TempDir()
+	r, err := OpenWithFormatVersion(dir, 1)
+	if err != nil {
+		t.Fatalf("OpenWithFormatVersion: %v", err)
+	}
+	if err := r.Create(testDef("mv_test")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, viewsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file registryFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if file.FormatVersion != 1 {
+		t.Fatalf("FormatVersion = %d, want 1", file.FormatVersion)
+	}
+	if len(file.Views) != 1 || file.Views[0].Name != "mv_test" {
+		t.Fatalf("persisted views = %+v", file.Views)
+	}
+}
+
+func TestViewRegistry_RejectsWrongFormatVersion(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte(`{"format_version":99,"views":[]}`)
+	if err := os.WriteFile(filepath.Join(dir, viewsFile), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := OpenWithFormatVersion(dir, 1); err == nil {
+		t.Fatal("OpenWithFormatVersion succeeded, want mismatch error")
 	}
 }
 

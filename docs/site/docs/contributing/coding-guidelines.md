@@ -362,7 +362,7 @@ package segment
 Every exported type, function, and method must have a Go doc comment:
 
 ```go
-// SegmentWriter writes events to a columnar .lsg V2 segment file.
+// SegmentWriter writes events to a columnar .lsg format-major v1 segment file.
 // It encodes each column with type-specific encoding (delta-varint for
 // timestamps, dictionary for strings, Gorilla for floats, LZ4 for raw text)
 // and builds a bloom filter and inverted index.

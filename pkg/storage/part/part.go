@@ -5,7 +5,7 @@
 // rename (write to tmp_* -> os.Rename to final path). This eliminates WAL encoding
 // overhead, memtable lock contention, and flush blocking.
 //
-// Each part is a standard .lsg V4 segment file readable by the existing
+// Each part is a standard .lsg format-major v1 segment file readable by the existing
 // segment.Reader. Parts are organized in time-partitioned directories and tracked
 // by a filesystem-scanned registry (no separate metadata files).
 //
@@ -25,7 +25,7 @@ const DefaultRowGroupSize = 8192
 
 // Meta describes an immutable part on disk.
 // Parts are the fundamental unit of storage in the direct-to-disk model.
-// Each part is a single .lsg V4 segment file with one or more row groups.
+// Each part is a single .lsg format-major v1 segment file with one or more row groups.
 type Meta struct {
 	// ID uniquely identifies this part.
 	// Format: "part-<index>-L<level>-<tsNano>"

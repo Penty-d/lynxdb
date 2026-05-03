@@ -61,7 +61,7 @@ type bloomSectionData struct {
 // default LZ4 layer 2 compression.
 func NewStreamWriter(w io.Writer, compression CompressionType) *StreamWriter {
 	return &StreamWriter{
-		w:        NewWriterWithCompression(w, compression),
+		w:        newStreamBackingWriter(w, compression),
 		fieldSet: make(map[string]event.FieldType),
 		inv:      index.NewInvertedIndex(),
 	}
@@ -140,9 +140,9 @@ func (sw *StreamWriter) WriteRowGroup(events []*event.Event) error {
 		catalogIndex[cat.Name] = i
 	}
 
-	// Write header on first call with placeholder rgCount=0.
+	// Write header on first call; caps are patched at Finalize.
 	if !sw.headerWritten {
-		header := makeHeader(rgSize, 0) // placeholder count; reader uses footer
+		header := makeHeader(LSG_FORMAT_MAJOR_V1, 0, 0)
 		if _, err := sw.w.w.Write(header); err != nil {
 			return fmt.Errorf("segment: write header: %w", err)
 		}
@@ -188,7 +188,7 @@ func (sw *StreamWriter) WriteRowGroup(events []*event.Event) error {
 	// Pass 2: build per-column blooms for this RG.
 	bloomSectionOffset := sw.w.w.written
 
-	var bloomSection []byte
+	bloomSection := makeBloomRegionPrefix()
 
 	var bloomCount uint16
 	for _, colName := range bloomColumnNames {
@@ -231,6 +231,7 @@ func (sw *StreamWriter) WriteRowGroup(events []*event.Event) error {
 	}
 	rgMeta.PerColumnBloomOffset = bloomSectionOffset
 	rgMeta.PerColumnBloomLength = sw.w.w.written - bloomSectionOffset
+	rgMeta.RequiredCapabilities = requiredCapsForRowGroup(rgMeta)
 
 	sw.bloomSections = append(sw.bloomSections, bloomSectionData{
 		offset: bloomSectionOffset,
@@ -346,10 +347,31 @@ func (sw *StreamWriter) Finalize() (int64, error) {
 		InvertedLength: invertedLength,
 		Catalog:        finalCatalog,
 	}
+	footer.RequiredCaps, footer.OptionalCaps = aggregateCapabilities(sw.rowGroups)
 	footerBytes := encodeFooter(footer)
 	if _, err := sw.w.w.Write(footerBytes); err != nil {
 		return sw.w.w.written, fmt.Errorf("segment: write footer: %w", err)
 	}
 
-	return sw.w.w.written, nil
+	header := makeHeader(LSG_FORMAT_MAJOR_V1, footer.RequiredCaps, footer.OptionalCaps)
+	if sw.w.direct {
+		n, err := sw.w.writerAt.WriteAt(header, 0)
+		if err != nil {
+			return sw.w.w.written, err
+		}
+		if n != len(header) {
+			return sw.w.w.written, io.ErrShortWrite
+		}
+		return sw.w.w.written, nil
+	}
+
+	patchHeader(sw.w.buf.Bytes(), LSG_FORMAT_MAJOR_V1, footer.RequiredCaps, footer.OptionalCaps)
+	n, err := sw.w.out.Write(sw.w.buf.Bytes())
+	if err != nil {
+		return int64(n), err
+	}
+	if n != sw.w.buf.Len() {
+		return int64(n), io.ErrShortWrite
+	}
+	return int64(n), nil
 }

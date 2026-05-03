@@ -1,6 +1,7 @@
 package segment
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -77,11 +78,17 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 
 // Writer creates .lsg segment files from a batch of events.
 type Writer struct {
+	out      io.Writer
+	writerAt interface {
+		WriteAt([]byte, int64) (int, error)
+	}
+	buf         bytes.Buffer
 	w           *countingWriter
 	compression CompressionType // layer 2 compression (default: LZ4)
-	sortKey     []string        // sort key fields for sparse primary index (MV segments)
-	rgSize      int             // row group size override (0 = use DefaultRowGroupSize)
-	maxColumns  int             // max user-defined columns per segment (0 = unlimited)
+	direct      bool
+	sortKey     []string // sort key fields for sparse primary index (MV segments)
+	rgSize      int      // row group size override (0 = use DefaultRowGroupSize)
+	maxColumns  int      // max user-defined columns per segment (0 = unlimited)
 }
 
 // SetSortKey configures the sort key fields used to build a sparse primary index.
@@ -107,24 +114,43 @@ func (sw *Writer) SetMaxColumns(n int) {
 
 // NewWriter creates a writer that outputs to w with default LZ4 layer 2 compression.
 func NewWriter(w io.Writer) *Writer {
-	return &Writer{w: &countingWriter{w: w}, compression: CompressionLZ4}
+	sw := &Writer{out: w, compression: CompressionLZ4}
+	sw.resetBuffer()
+	return sw
 }
 
 // NewWriterWithCompression creates a writer with a specific layer 2 compression.
 func NewWriterWithCompression(w io.Writer, compression CompressionType) *Writer {
-	return &Writer{w: &countingWriter{w: w}, compression: compression}
+	sw := &Writer{out: w, compression: compression}
+	sw.resetBuffer()
+	return sw
+}
+
+func newStreamBackingWriter(w io.Writer, compression CompressionType) *Writer {
+	sw := &Writer{out: w, compression: compression}
+	if writerAt, ok := w.(interface {
+		WriteAt([]byte, int64) (int, error)
+	}); ok {
+		sw.writerAt = writerAt
+		sw.direct = true
+		sw.w = &countingWriter{w: w}
+		return sw
+	}
+	sw.resetBuffer()
+	return sw
 }
 
 // builtinColumns is the ordered list of builtin column names.
 // Used to compute catalog indices for presence bitmap.
 var builtinColumns = []string{"_time", "_raw", "_source", "_sourcetype", "host", "index"}
 
-// Write encodes the given events into .lsg V4 format and writes to the underlying writer.
+// Write encodes the given events into .lsg format-major v1 and writes to the underlying writer.
 // Events should be sorted by timestamp. Returns total bytes written.
 func (sw *Writer) Write(events []*event.Event) (int64, error) {
 	if len(events) == 0 {
 		return 0, ErrNoEvents
 	}
+	sw.resetBuffer()
 
 	// Determine row groups.
 	rgSize := sw.rgSize
@@ -133,8 +159,7 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 	}
 	rgCount := (len(events) + rgSize - 1) / rgSize
 
-	// Write header (V4).
-	header := makeHeader(rgSize, rgCount)
+	header := makeHeader(LSG_FORMAT_MAJOR_V1, 0, 0)
 	if _, err := sw.w.Write(header); err != nil {
 		return sw.w.written, fmt.Errorf("segment: write header: %w", err)
 	}
@@ -201,6 +226,7 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 		if err != nil {
 			return sw.w.written, fmt.Errorf("segment: row group %d: %w", rg, err)
 		}
+		rgMeta.RequiredCapabilities = requiredCapsForRowGroup(rgMeta)
 		rowGroups = append(rowGroups, rgMeta)
 	}
 
@@ -266,7 +292,7 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 		bloomSectionOffset := sw.w.written
 
 		// Build bloom for each column in this RG, encode into one section.
-		var bloomSection []byte
+		bloomSection := makeBloomRegionPrefix()
 
 		// Count how many column blooms we'll write.
 		var bloomCount uint16
@@ -360,12 +386,22 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 		PrimaryIndexLength: primaryIndexLength,
 		Catalog:            catalog,
 	}
+	footer.RequiredCaps, footer.OptionalCaps = aggregateCapabilities(rowGroups)
 	footerBytes := encodeFooter(footer)
 	if _, err := sw.w.Write(footerBytes); err != nil {
 		return sw.w.written, fmt.Errorf("segment: write footer: %w", err)
 	}
 
-	return sw.w.written, nil
+	patchHeader(sw.buf.Bytes(), LSG_FORMAT_MAJOR_V1, footer.RequiredCaps, footer.OptionalCaps)
+	n, err := sw.out.Write(sw.buf.Bytes())
+	if err != nil {
+		return int64(n), err
+	}
+	if n != sw.buf.Len() {
+		return int64(n), io.ErrShortWrite
+	}
+
+	return int64(n), nil
 }
 
 // writeRowGroup writes a single row group and returns its metadata.
@@ -524,6 +560,14 @@ func (sw *Writer) writeRowGroup(events []*event.Event, fieldSet map[string]event
 	}
 
 	return rgMeta, nil
+}
+
+func requiredCapsForRowGroup(rg RowGroupMeta) uint64 {
+	var caps uint64
+	for _, c := range rg.Columns {
+		caps |= requiredCapsForCompression(c.Compression)
+	}
+	return caps
 }
 
 // isConstString returns true if all values in the slice are identical and non-empty.
@@ -1043,13 +1087,34 @@ func topFieldsByFrequency(events []*event.Event, fieldNames []string, maxColumns
 	return fieldNames[:maxColumns]
 }
 
-func makeHeader(rowGroupSize, rowGroupCount int) []byte {
-	header := make([]byte, HeaderSize)
-	copy(header[0:4], MagicBytes)
-	binary.LittleEndian.PutUint16(header[4:6], FormatV4)
-	binary.LittleEndian.PutUint16(header[6:8], 0) // flags (reserved)
-	binary.LittleEndian.PutUint32(header[8:12], uint32(rowGroupSize))
-	binary.LittleEndian.PutUint32(header[12:16], uint32(rowGroupCount))
+func (sw *Writer) resetBuffer() {
+	sw.buf.Reset()
+	sw.w = &countingWriter{w: &sw.buf}
+}
+
+func makeHeader(major uint16, requiredCaps, optionalCaps uint64) []byte {
+	header := make([]byte, LSG_HEADER_SIZE)
+	copy(header[0:4], MagicForMajor(major))
+	binary.LittleEndian.PutUint16(header[4:6], major)
+	header[6] = 0
+	header[7] = 0
+	binary.LittleEndian.PutUint64(header[8:16], requiredCaps)
+	binary.LittleEndian.PutUint64(header[16:24], optionalCaps)
 
 	return header
+}
+
+func patchHeader(data []byte, major uint16, requiredCaps, optionalCaps uint64) {
+	copy(data[0:LSG_HEADER_SIZE], makeHeader(major, requiredCaps, optionalCaps))
+}
+
+func makeRegionHeader(magic string) []byte {
+	buf := make([]byte, 0, 8)
+	buf = append(buf, magic...)
+	buf = append(buf, 0, 0, 0, 0)
+	return buf
+}
+
+func makeBloomRegionPrefix() []byte {
+	return makeRegionHeader(LSG_BLOOM_MAGIC)
 }

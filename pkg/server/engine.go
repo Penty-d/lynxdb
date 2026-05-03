@@ -43,6 +43,7 @@ type Engine struct {
 	indexes      map[string]model.IndexConfig
 	currentEpoch atomic.Pointer[segmentEpoch] // immutable segment snapshot; see epoch.go
 	dataDir      string
+	formatMajor  uint16
 	retention    time.Duration // data retention period for partition-based retention
 	storageCfg   config.StorageConfig
 	logger       *slog.Logger

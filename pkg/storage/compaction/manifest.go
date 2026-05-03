@@ -13,6 +13,7 @@ import (
 // Manifest tracks an in-flight compaction for crash recovery.
 // Written before merge starts, removed after completion.
 type Manifest struct {
+	FormatVersion   int       `json:"format_version"`
 	ID              string    `json:"id"`
 	Index           string    `json:"index"`
 	Partition       string    `json:"partition,omitempty"`
@@ -29,13 +30,18 @@ const maxHistoryEntries = 1000
 
 // ManifestStore manages compaction manifests on disk.
 type ManifestStore struct {
-	pendingDir string // path to compaction/pending/ directory
-	historyDir string // path to compaction/history/ directory
+	pendingDir    string // path to compaction/pending/ directory
+	historyDir    string // path to compaction/history/ directory
+	formatVersion int
 }
 
 // NewManifestStore creates a manifest store at the given directory.
 // Creates the pending and history directories if they don't exist.
 func NewManifestStore(dir string) (*ManifestStore, error) {
+	return NewManifestStoreWithFormatVersion(dir, 1)
+}
+
+func NewManifestStoreWithFormatVersion(dir string, formatVersion int) (*ManifestStore, error) {
 	pendingDir := filepath.Join(dir, "compaction", "pending")
 	if err := os.MkdirAll(pendingDir, 0o755); err != nil {
 		return nil, fmt.Errorf("compaction.NewManifestStore: create pending dir: %w", err)
@@ -46,12 +52,13 @@ func NewManifestStore(dir string) (*ManifestStore, error) {
 		return nil, fmt.Errorf("compaction.NewManifestStore: create history dir: %w", err)
 	}
 
-	return &ManifestStore{pendingDir: pendingDir, historyDir: historyDir}, nil
+	return &ManifestStore{pendingDir: pendingDir, historyDir: historyDir, formatVersion: formatVersion}, nil
 }
 
 // Write writes a manifest for an in-flight compaction.
 // Uses atomic write (tmp + rename) to prevent partial writes on crash.
 func (ms *ManifestStore) Write(m *Manifest) error {
+	m.FormatVersion = ms.formatVersion
 	data, err := json.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("compaction.ManifestStore.Write: marshal: %w", err)
@@ -87,6 +94,7 @@ func (ms *ManifestStore) Remove(id string) error {
 // The manifest should have OutputSegmentID and CompletedAt set before calling.
 // Uses atomic write to history, then removes from pending.
 func (ms *ManifestStore) Complete(m *Manifest) error {
+	m.FormatVersion = ms.formatVersion
 	data, err := json.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("compaction.ManifestStore.Complete: marshal: %w", err)
@@ -174,6 +182,13 @@ func (ms *ManifestStore) loadDir(dir string) ([]*Manifest, error) {
 		var m Manifest
 		if err := json.Unmarshal(data, &m); err != nil {
 			continue // skip corrupt manifests
+		}
+		if m.FormatVersion != ms.formatVersion {
+			slog.Debug("compaction.manifest: dropping manifest with mismatched format_version",
+				"path", filepath.Join(dir, entry.Name()),
+				"format_version", m.FormatVersion,
+				"current", ms.formatVersion)
+			continue
 		}
 
 		manifests = append(manifests, &m)

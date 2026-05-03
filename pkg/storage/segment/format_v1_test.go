@@ -13,7 +13,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 )
 
-func TestV4_BloomAndInvertedRoundtrip(t *testing.T) {
+func TestV1_BloomAndInvertedRoundtrip(t *testing.T) {
 	events := generateTestEvents(200)
 
 	var buf bytes.Buffer
@@ -23,7 +23,7 @@ func TestV4_BloomAndInvertedRoundtrip(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 
-	t.Logf("V4 segment: %d events, %d bytes", len(events), written)
+	t.Logf("v1 segment: %d events, %d bytes", len(events), written)
 
 	r, err := OpenSegment(buf.Bytes())
 	if err != nil {
@@ -97,7 +97,7 @@ func TestV4_BloomAndInvertedRoundtrip(t *testing.T) {
 	}
 }
 
-func TestV4_ColumnPruning(t *testing.T) {
+func TestV1_ColumnPruning(t *testing.T) {
 	events := generateTestEvents(50)
 
 	var buf bytes.Buffer
@@ -132,7 +132,7 @@ func TestV4_ColumnPruning(t *testing.T) {
 	}
 }
 
-func TestV4_BloomFilter_NegativeCheck(t *testing.T) {
+func TestV1_BloomFilter_NegativeCheck(t *testing.T) {
 	events := generateTestEvents(100)
 
 	var buf bytes.Buffer
@@ -171,7 +171,7 @@ func TestV4_BloomFilter_NegativeCheck(t *testing.T) {
 	}
 }
 
-func TestV4_ReadEventsByBitmap(t *testing.T) {
+func TestV1_ReadEventsByBitmap(t *testing.T) {
 	events := generateTestEvents(200)
 
 	var buf bytes.Buffer
@@ -217,7 +217,7 @@ func TestV4_ReadEventsByBitmap(t *testing.T) {
 	}
 }
 
-func TestV4_ReadEventsByBitmap_EmptyBitmap(t *testing.T) {
+func TestV1_ReadEventsByBitmap_EmptyBitmap(t *testing.T) {
 	events := generateTestEvents(50)
 
 	var buf bytes.Buffer
@@ -241,7 +241,7 @@ func TestV4_ReadEventsByBitmap_EmptyBitmap(t *testing.T) {
 	}
 }
 
-func TestV4_ReadEventsFiltered(t *testing.T) {
+func TestV1_ReadEventsFiltered(t *testing.T) {
 	events := generateTestEvents(200)
 
 	var buf bytes.Buffer
@@ -276,7 +276,7 @@ func TestV4_ReadEventsFiltered(t *testing.T) {
 	}
 }
 
-func TestV4_ReadEventsFiltered_WithSearchBitmap(t *testing.T) {
+func TestV1_ReadEventsFiltered_WithSearchBitmap(t *testing.T) {
 	events := generateTestEvents(200)
 
 	var buf bytes.Buffer
@@ -313,7 +313,7 @@ func TestV4_ReadEventsFiltered_WithSearchBitmap(t *testing.T) {
 	}
 }
 
-func TestV4_StatsByName(t *testing.T) {
+func TestV1_StatsByName(t *testing.T) {
 	events := generateTestEvents(100)
 
 	var buf bytes.Buffer
@@ -406,7 +406,7 @@ func TestBloomFilter_SegmentWriteReadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestV4_MultiRowGroup_RoundTrip(t *testing.T) {
+func TestV1_MultiRowGroup_RoundTrip(t *testing.T) {
 	// Generate more than DefaultRowGroupSize events to test multi-row-group.
 	n := DefaultRowGroupSize + 500
 	events := generateTestEvents(n)
@@ -459,7 +459,7 @@ func TestV4_MultiRowGroup_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestV4_RowGroupPruning(t *testing.T) {
+func TestV1_RowGroupPruning(t *testing.T) {
 	// Create events spanning 2 row groups with distinct time ranges.
 	n := DefaultRowGroupSize + 500
 	events := generateTestEvents(n)
@@ -509,7 +509,7 @@ func TestV4_RowGroupPruning(t *testing.T) {
 	t.Logf("pruned from %d to %d events (skipped row group 0)", len(events), len(prunedEvents))
 }
 
-func TestV4_ColumnProjectionWithRowGroups(t *testing.T) {
+func TestV1_ColumnProjectionWithRowGroups(t *testing.T) {
 	n := DefaultRowGroupSize + 100
 	events := generateTestEvents(n)
 
@@ -553,7 +553,7 @@ func TestV4_ColumnProjectionWithRowGroups(t *testing.T) {
 	}
 }
 
-func TestV4_100KEvents(t *testing.T) {
+func TestV1_100KEvents(t *testing.T) {
 	events := generateTestEvents(100_000)
 
 	var buf bytes.Buffer
@@ -595,7 +595,7 @@ func TestV4_100KEvents(t *testing.T) {
 	}
 }
 
-func TestV4_EventsWithNulls(t *testing.T) {
+func TestV1_EventsWithNulls(t *testing.T) {
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	events := make([]*event.Event, 50)
 	for i := range events {
@@ -637,7 +637,7 @@ func TestV4_EventsWithNulls(t *testing.T) {
 	}
 }
 
-func TestV4_CRC32_Integrity(t *testing.T) {
+func TestV1_CRC32_Integrity(t *testing.T) {
 	events := generateTestEvents(100)
 
 	var buf bytes.Buffer
@@ -651,7 +651,7 @@ func TestV4_CRC32_Integrity(t *testing.T) {
 	// Corrupt a byte in the middle of the data (column chunk area).
 	corrupt := make([]byte, len(data))
 	copy(corrupt, data)
-	corrupt[HeaderSize+50] ^= 0xFF // flip a byte in a column chunk
+	corrupt[LSG_HEADER_SIZE+50] ^= 0xFF // flip a byte in a column chunk
 
 	// At least one of OpenSegment or ReadEvents MUST fail on corrupted data.
 	// If both succeed, CRC integrity checking is broken.
@@ -699,7 +699,7 @@ func TestV4_CRC32_Integrity(t *testing.T) {
 	}
 }
 
-func TestV4_ZSTD_RoundTrip(t *testing.T) {
+func TestV1_ZSTD_RoundTrip(t *testing.T) {
 	events := generateTestEvents(200)
 
 	var buf bytes.Buffer
@@ -750,7 +750,7 @@ func TestV4_ZSTD_RoundTrip(t *testing.T) {
 	t.Logf("ZSTD compressed chunks: %d", zstdCount)
 }
 
-func TestV4_ZSTD_RawColumnSkipsLayer2(t *testing.T) {
+func TestV1_ZSTD_RawColumnSkipsLayer2(t *testing.T) {
 	events := generateTestEvents(100)
 
 	var buf bytes.Buffer
@@ -776,7 +776,7 @@ func TestV4_ZSTD_RawColumnSkipsLayer2(t *testing.T) {
 	}
 }
 
-func TestV4_ZSTD_SizeComparison(t *testing.T) {
+func TestV1_ZSTD_SizeComparison(t *testing.T) {
 	// Generate realistic log data with repetitive patterns.
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	events := make([]*event.Event, 10000)
@@ -838,7 +838,7 @@ func TestV4_ZSTD_SizeComparison(t *testing.T) {
 	}
 }
 
-func TestV4_ZSTD_MultiRowGroup(t *testing.T) {
+func TestV1_ZSTD_MultiRowGroup(t *testing.T) {
 	// Generate enough events for 2 row groups.
 	events := generateTestEvents(DefaultRowGroupSize + 500)
 
@@ -866,7 +866,7 @@ func TestV4_ZSTD_MultiRowGroup(t *testing.T) {
 	}
 }
 
-func TestV4_PerRowGroupBloom(t *testing.T) {
+func TestV1_PerRowGroupBloom(t *testing.T) {
 	// Create events where different row groups have distinct terms.
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	events := make([]*event.Event, DefaultRowGroupSize+500)
@@ -948,7 +948,7 @@ func TestV4_PerRowGroupBloom(t *testing.T) {
 	t.Logf("Per-RG bloom: alpha→%v, beta→%v, event→%v", alphaRGs, betaRGs, eventRGs)
 }
 
-func TestV4_PerRowGroupBloom_AllTerms(t *testing.T) {
+func TestV1_PerRowGroupBloom_AllTerms(t *testing.T) {
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	events := make([]*event.Event, DefaultRowGroupSize+500)
 
@@ -999,7 +999,7 @@ func TestV4_PerRowGroupBloom_AllTerms(t *testing.T) {
 	}
 }
 
-func TestV4_PerRowGroupBloom_SingleRowGroup(t *testing.T) {
+func TestV1_PerRowGroupBloom_SingleRowGroup(t *testing.T) {
 	events := generateTestEvents(100)
 
 	var buf bytes.Buffer
@@ -1148,7 +1148,7 @@ func TestMultiRowGroupBloomUnion(t *testing.T) {
 	}
 }
 
-func TestV4_NoCompression(t *testing.T) {
+func TestV1_NoCompression(t *testing.T) {
 	events := generateTestEvents(100)
 
 	var buf bytes.Buffer
@@ -1270,9 +1270,9 @@ func TestLazyFieldsAllocation(t *testing.T) {
 	}
 }
 
-// V4 feature tests: ConstColumns, per-column bloom, presence bitmap.
+// v1 feature tests: ConstColumns, per-column bloom, presence bitmap.
 
-func TestV4_ConstColumn_Roundtrip(t *testing.T) {
+func TestV1_ConstColumn_Roundtrip(t *testing.T) {
 	// generateTestEvents creates uniform _source, _sourcetype, index → const columns.
 	events := generateTestEvents(100)
 
@@ -1350,7 +1350,7 @@ func TestV4_ConstColumn_Roundtrip(t *testing.T) {
 	}
 }
 
-func TestV4_ConstColumn_ReadStrings(t *testing.T) {
+func TestV1_ConstColumn_ReadStrings(t *testing.T) {
 	// Verify ReadStrings works for const columns.
 	events := generateTestEvents(50)
 
@@ -1382,7 +1382,7 @@ func TestV4_ConstColumn_ReadStrings(t *testing.T) {
 	}
 }
 
-func TestV4_ConstColumn_Projection(t *testing.T) {
+func TestV1_ConstColumn_Projection(t *testing.T) {
 	// Verify column projection works with const columns.
 	events := generateTestEvents(50)
 
@@ -1426,7 +1426,7 @@ func TestV4_ConstColumn_Projection(t *testing.T) {
 	}
 }
 
-func TestV4_ConstColumn_PredicateFilter(t *testing.T) {
+func TestV1_ConstColumn_PredicateFilter(t *testing.T) {
 	// Verify predicate pushdown works on const columns.
 	events := generateTestEvents(100)
 
@@ -1466,7 +1466,7 @@ func TestV4_ConstColumn_PredicateFilter(t *testing.T) {
 	}
 }
 
-func TestV4_PresenceBitmap(t *testing.T) {
+func TestV1_PresenceBitmap(t *testing.T) {
 	events := generateTestEvents(50)
 
 	var buf bytes.Buffer
@@ -1498,7 +1498,7 @@ func TestV4_PresenceBitmap(t *testing.T) {
 	}
 }
 
-func TestV4_PerColumnBloom(t *testing.T) {
+func TestV1_PerColumnBloom(t *testing.T) {
 	// Create events with known field values for per-column bloom testing.
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	events := make([]*event.Event, 100)
@@ -1576,7 +1576,7 @@ func TestV4_PerColumnBloom(t *testing.T) {
 	}
 }
 
-func TestV4_MixedConstAndChunk_MultiRG(t *testing.T) {
+func TestV1_MixedConstAndChunk_MultiRG(t *testing.T) {
 	// Create events where a column is const in one RG but not in another.
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	events := make([]*event.Event, DefaultRowGroupSize+500)
@@ -1659,7 +1659,7 @@ func TestV4_MixedConstAndChunk_MultiRG(t *testing.T) {
 	}
 }
 
-func TestV4_ConstColumn_UserField(t *testing.T) {
+func TestV1_ConstColumn_UserField(t *testing.T) {
 	// Create events where a user-defined field is const.
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	events := make([]*event.Event, 50)
@@ -1715,7 +1715,7 @@ func TestV4_ConstColumn_UserField(t *testing.T) {
 	}
 }
 
-func TestV4_ColumnarRead_ConstColumns(t *testing.T) {
+func TestV1_ColumnarRead_ConstColumns(t *testing.T) {
 	// Verify columnar read path handles const columns.
 	events := generateTestEvents(50)
 
@@ -1765,7 +1765,7 @@ func TestV4_ColumnarRead_ConstColumns(t *testing.T) {
 	}
 }
 
-func TestV4_ColumnarRead_ConstUserField(t *testing.T) {
+func TestV1_ColumnarRead_ConstUserField(t *testing.T) {
 	// Verify columnar read path handles const user-defined fields.
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	events := make([]*event.Event, 50)
@@ -1815,7 +1815,7 @@ func TestV4_ColumnarRead_ConstUserField(t *testing.T) {
 	}
 }
 
-func TestV4_ColumnNames_IncludesConst(t *testing.T) {
+func TestV1_ColumnNames_IncludesConst(t *testing.T) {
 	events := generateTestEvents(20)
 
 	var buf bytes.Buffer
@@ -1847,7 +1847,7 @@ func TestV4_ColumnNames_IncludesConst(t *testing.T) {
 	}
 }
 
-func TestV4_HasColumn_IncludesConst(t *testing.T) {
+func TestV1_HasColumn_IncludesConst(t *testing.T) {
 	events := generateTestEvents(20)
 
 	var buf bytes.Buffer
@@ -1872,7 +1872,7 @@ func TestV4_HasColumn_IncludesConst(t *testing.T) {
 	}
 }
 
-func TestV4_ColumnarFiltered_ConstColumn(t *testing.T) {
+func TestV1_ColumnarFiltered_ConstColumn(t *testing.T) {
 	// Verify columnar filtered read works with const column predicates.
 	events := generateTestEvents(100)
 

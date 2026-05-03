@@ -41,6 +41,9 @@ func TestManifestStore_WriteAndLoad(t *testing.T) {
 	if got.ID != m.ID {
 		t.Errorf("ID: got %q, want %q", got.ID, m.ID)
 	}
+	if got.FormatVersion != 1 {
+		t.Errorf("FormatVersion: got %d, want 1", got.FormatVersion)
+	}
 
 	if got.Index != m.Index {
 		t.Errorf("Index: got %q, want %q", got.Index, m.Index)
@@ -66,6 +69,28 @@ func TestManifestStore_WriteAndLoad(t *testing.T) {
 
 	if !got.StartedAt.Equal(m.StartedAt) {
 		t.Errorf("StartedAt: got %v, want %v", got.StartedAt, m.StartedAt)
+	}
+}
+
+func TestManifestStore_LoadSkipsWrongFormatVersion(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewManifestStoreWithFormatVersion(dir, 1)
+	if err != nil {
+		t.Fatalf("NewManifestStoreWithFormatVersion: %v", err)
+	}
+
+	mismatch := []byte(`{"format_version":99,"id":"compact-old","index":"main","input_ids":["a"],"output_level":1,"started_at":"2026-03-19T12:00:00Z"}`)
+	path := filepath.Join(store.pendingDir, "compact-old.json")
+	if err := os.WriteFile(path, mismatch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := store.LoadPending()
+	if err != nil {
+		t.Fatalf("LoadPending: %v", err)
+	}
+	if len(loaded) != 0 {
+		t.Fatalf("LoadPending got %d manifests, want 0", len(loaded))
 	}
 }
 

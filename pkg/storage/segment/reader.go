@@ -23,7 +23,7 @@ type QueryHints struct {
 	SearchTerms []string // bloom filter terms for row group pruning
 }
 
-// Reader reads .lsg V4 segment files.
+// Reader reads .lsg segment files.
 type Reader struct {
 	data         []byte
 	footer       *Footer
@@ -40,23 +40,88 @@ type Reader struct {
 
 // OpenSegment opens a segment from raw bytes.
 func OpenSegment(data []byte) (*Reader, error) {
-	if len(data) < HeaderSize+8 {
+	if len(data) < LSG_MIN_FILE_SIZE {
 		return nil, fmt.Errorf("%w: file too small", ErrCorruptSegment)
 	}
 
-	// Verify header magic.
-	if string(data[0:4]) != MagicBytes {
-		return nil, ErrInvalidMagic
+	header, err := validateHeader(data)
+	if err != nil {
+		return nil, err
+	}
+
+	switch header.major {
+	case LSG_FORMAT_MAJOR_V1:
+		return openV1(data, header)
+	default:
+		return nil, fmt.Errorf("%w: unsupported format major version %d (this binary supports %d..%d)",
+			ErrUnsupportedMajor, header.major, LSG_BINARY_MIN_MAJOR, LSG_BINARY_MAX_MAJOR)
+	}
+}
+
+func ValidateSegmentHeader(data []byte, fileSize int64) error {
+	if fileSize < LSG_MIN_FILE_SIZE {
+		return fmt.Errorf("%w: file too small", ErrCorruptSegment)
+	}
+	if len(data) < LSG_HEADER_SIZE {
+		return fmt.Errorf("%w: file too small", ErrCorruptSegment)
+	}
+	_, err := validateHeader(data)
+	return err
+}
+
+func SegmentHeaderMajor(data []byte, fileSize int64) (uint16, error) {
+	if err := ValidateSegmentHeader(data, fileSize); err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint16(data[4:6]), nil
+}
+
+type headerV1 struct {
+	major        uint16
+	requiredCaps uint64
+	optionalCaps uint64
+}
+
+func validateHeader(data []byte) (headerV1, error) {
+	magicMajor, ok := magicMajor(data[0:4])
+	if !ok {
+		return headerV1{}, fmt.Errorf("%w: invalid magic bytes (got %q, expected one of: LSG1)",
+			ErrInvalidMagic, string(data[0:4]))
 	}
 
 	version := binary.LittleEndian.Uint16(data[4:6])
-	if version != FormatV4 {
-		return nil, fmt.Errorf("%w: unsupported version %d", ErrCorruptSegment, version)
+	if version != magicMajor {
+		return headerV1{}, fmt.Errorf("%w: file magic %q encodes major %d but version field is %d",
+			ErrInvalidMagic, string(data[0:4]), magicMajor, version)
+	}
+	if version < LSG_BINARY_MIN_MAJOR || version > LSG_BINARY_MAX_MAJOR {
+		return headerV1{}, fmt.Errorf("%w: unsupported format major version %d (this binary supports %d..%d)",
+			ErrUnsupportedMajor, version, LSG_BINARY_MIN_MAJOR, LSG_BINARY_MAX_MAJOR)
+	}
+	if data[6] != 0 {
+		return headerV1{}, fmt.Errorf("%w: header revision %d not supported", ErrUnsupportedHeaderRev, data[6])
+	}
+	if data[7] != 0 {
+		return headerV1{}, fmt.Errorf("%w: reserved header byte 7 is %#x (must be 0)", ErrCorruptSegment, data[7])
 	}
 
+	requiredCaps := binary.LittleEndian.Uint64(data[8:16])
+	optionalCaps := binary.LittleEndian.Uint64(data[16:24])
+	if unsupported := requiredCaps &^ LSG_REQUIRED_CAPS_KNOWN; unsupported != 0 {
+		return headerV1{}, fmt.Errorf("%w: required capability bit %d not supported by this binary",
+			ErrUnsupportedCapability, lowestSetBit(unsupported))
+	}
+
+	return headerV1{major: version, requiredCaps: requiredCaps, optionalCaps: optionalCaps}, nil
+}
+
+func openV1(data []byte, header headerV1) (*Reader, error) {
 	footer, err := decodeFooter(data)
 	if err != nil {
 		return nil, fmt.Errorf("segment: parse footer: %w", err)
+	}
+	if footer.RequiredCaps != header.requiredCaps || footer.OptionalCaps != header.optionalCaps {
+		return nil, fmt.Errorf("%w: header capability summary does not match footer", ErrCorruptSegment)
 	}
 
 	// Build column index from catalog for O(1) presence bitmap lookups.
@@ -281,9 +346,13 @@ func (r *Reader) readChunk(cc *ColumnChunkMeta) ([]byte, error) {
 	case CompressionLZ4:
 		return decompressLZ4Block(chunkData)
 	case CompressionZSTD:
+		if r.footer.RequiredCaps&CapBit_ColumnZSTD == 0 {
+			return nil, fmt.Errorf("%w: column %q uses ZSTD without required capability bit", ErrCorruptSegment, cc.Name)
+		}
 		return decompressZSTDBlock(chunkData)
 	default:
-		return nil, fmt.Errorf("%w: unsupported compression %d", ErrCorruptSegment, cc.Compression)
+		return nil, fmt.Errorf("%w: required capability bit for compression %d not supported by this binary",
+			ErrUnsupportedCapability, cc.Compression)
 	}
 }
 
@@ -1258,9 +1327,16 @@ func (r *Reader) loadPerColumnBlooms(rgIdx int) (map[string]*index.BloomFilter, 
 	section := r.data[start:end]
 	pos := 0
 
-	if pos+2 > len(section) {
+	if pos+8 > len(section) {
 		return nil, fmt.Errorf("%w: per-column bloom section truncated", ErrCorruptSegment)
 	}
+	if string(section[0:4]) != LSG_BLOOM_MAGIC {
+		return nil, fmt.Errorf("%w: bloom region magic mismatch (got %q, expected %q)", ErrCorruptRegion, string(section[0:4]), LSG_BLOOM_MAGIC)
+	}
+	if section[4] != 0 || section[5] != 0 || section[6] != 0 || section[7] != 0 {
+		return nil, fmt.Errorf("%w: bloom region revision or reserved byte set", ErrCorruptRegion)
+	}
+	pos = 8
 	bloomCount := binary.LittleEndian.Uint16(section[pos : pos+2])
 	pos += 2
 
@@ -1443,7 +1519,11 @@ func (r *Reader) PrimaryIndex() (*PrimaryIndex, error) {
 		return nil, fmt.Errorf("%w: primary index offset out of range", ErrCorruptSegment)
 	}
 
-	return DecodePrimaryIndex(r.data[start:end])
+	idx, err := DecodePrimaryIndex(r.data[start:end])
+	if err != nil {
+		return nil, fmt.Errorf("%w: primary region magic mismatch", ErrCorruptRegion)
+	}
+	return idx, nil
 }
 
 // SeekBySortKey performs a binary search on the sparse primary index to find
@@ -1523,7 +1603,11 @@ func (r *Reader) InvertedIndex() (*index.SerializedIndex, error) {
 		return nil, fmt.Errorf("%w: inverted index offset out of range", ErrCorruptSegment)
 	}
 
-	return index.DecodeInvertedIndex(r.data[start:end])
+	idx, err := index.DecodeInvertedIndex(r.data[start:end])
+	if err != nil {
+		return nil, fmt.Errorf("%w: inverted region magic mismatch: %v", ErrCorruptRegion, err)
+	}
+	return idx, nil
 }
 
 func evalStringPredicate(val, op, target string) bool {
