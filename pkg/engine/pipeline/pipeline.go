@@ -380,12 +380,12 @@ func (qc *queryContext) buildSourceIterator(source *spl2.SourceClause) (Iterator
 	// Only applies to the basic IndexStore path (CLI mode). Streaming/batch
 	// stores handle multi-source at the server layer via source scope.
 	if len(source.Indices) > 0 {
-			if st, isStreaming := qc.store.(StreamingIndexStore); isStreaming {
-				// Server mode: create one iterator per source and union them.
-				// For single-source, return directly (no union overhead).
-				if len(source.Indices) == 1 {
-					return st.GetEventIterator(source.Indices[0]), nil
-				}
+		if st, isStreaming := qc.store.(StreamingIndexStore); isStreaming {
+			// Server mode: create one iterator per source and union them.
+			// For single-source, return directly (no union overhead).
+			if len(source.Indices) == 1 {
+				return st.GetEventIterator(source.Indices[0]), nil
+			}
 			iters := make([]Iterator, 0, len(source.Indices))
 			for _, idx := range source.Indices {
 				iters = append(iters, st.GetEventIterator(idx))
