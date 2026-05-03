@@ -1204,6 +1204,7 @@ type TailIterator struct {
 	child     Iterator
 	count     int
 	ring      []map[string]event.Value // fixed-size circular buffer of size `count`
+	ringBytes []int64                  // tracked bytes for each ring slot
 	totalSeen int                      // total rows written (for ring position and fill tracking)
 	emitted   bool
 	result    []map[string]event.Value // linearized output after accumulation
@@ -1222,6 +1223,7 @@ func NewTailIterator(child Iterator, count, batchSize int) *TailIterator {
 		child:     child,
 		count:     count,
 		ring:      make([]map[string]event.Value, count),
+		ringBytes: make([]int64, count),
 		batchSize: batchSize,
 		acct:      memgov.NopAccount(),
 	}
@@ -1264,14 +1266,26 @@ func (t *TailIterator) Next(ctx context.Context) (*Batch, error) {
 					break
 				}
 				for i := 0; i < batch.Len; i++ {
+					row := batch.Row(i)
+					rowBytes := EstimateRowBytes(row)
+					slot := t.totalSeen % t.count
 					// Track memory: only Grow for new slots (first fill of ring).
-					// Replacements are memory-neutral (one row in, one row out).
 					if t.totalSeen < t.count {
-						if err := t.acct.Grow(estimatedRowBytes); err != nil {
+						if err := t.acct.Grow(rowBytes); err != nil {
 							return nil, fmt.Errorf("tail: memory budget exceeded: %w", err)
 						}
+					} else {
+						oldBytes := t.ringBytes[slot]
+						if rowBytes > oldBytes {
+							if err := t.acct.Grow(rowBytes - oldBytes); err != nil {
+								return nil, fmt.Errorf("tail: memory budget exceeded: %w", err)
+							}
+						} else if oldBytes > rowBytes {
+							t.acct.Shrink(oldBytes - rowBytes)
+						}
 					}
-					t.ring[t.totalSeen%t.count] = batch.Row(i)
+					t.ring[slot] = row
+					t.ringBytes[slot] = rowBytes
 					t.totalSeen++
 				}
 			}

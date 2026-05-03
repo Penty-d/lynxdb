@@ -37,6 +37,7 @@ type EventStatsIterator struct {
 	spilled         bool                 // true after rows started going to disk
 	spilledRows     int64                // total rows written to spill file
 	spillBytesTotal int64                // persisted spill bytes (survives Close)
+	rowBytesInMem   int64                // bytes tracked for e.rows
 	groups          map[string]*aggGroup // agg state (stays in memory in both modes)
 }
 
@@ -198,7 +199,8 @@ func (e *EventStatsIterator) materialize(ctx context.Context) error {
 				e.spilledRows++
 			} else {
 				// In-memory mode: try to grow budget.
-				if growErr := e.acct.Grow(estimatedRowBytes); growErr != nil {
+				rowBytes := EstimateRowBytes(row)
+				if growErr := e.acct.Grow(rowBytes); growErr != nil {
 					// Budget exceeded — try to spill if SpillManager is available.
 					if e.spillMgr != nil {
 						if spillErr := e.transitionToSpill(row); spillErr != nil {
@@ -210,6 +212,7 @@ func (e *EventStatsIterator) materialize(ctx context.Context) error {
 					}
 				} else {
 					e.rows = append(e.rows, row)
+					e.rowBytesInMem += rowBytes
 				}
 			}
 
@@ -299,8 +302,7 @@ func (e *EventStatsIterator) transitionToSpill(currentRow map[string]event.Value
 	e.spilledRows++
 
 	// Release row memory from budget (group memory stays tracked).
-	rowMem := int64(len(e.rows)) * estimatedRowBytes
-	e.acct.Shrink(rowMem)
+	e.acct.Shrink(e.rowBytesInMem)
 
 	// Notify coordinator that this operator has spilled, allowing rebalancing.
 	if sn, ok := e.acct.(SpillNotifier); ok {
@@ -309,6 +311,7 @@ func (e *EventStatsIterator) transitionToSpill(currentRow map[string]event.Value
 
 	// Clear in-memory rows.
 	e.rows = nil
+	e.rowBytesInMem = 0
 
 	return nil
 }

@@ -110,7 +110,8 @@ func (t *TopNIterator) buildTopN(ctx context.Context) error {
 			batch.RowInto(i, scratch) // fills scratch, reuses map — zero alloc
 			if t.h.Len() < t.limit {
 				// Growing the heap: track memory for the new row.
-				if growErr := t.acct.Grow(estimatedRowBytes); growErr != nil {
+				rowBytes := EstimateRowBytes(scratch)
+				if growErr := t.acct.Grow(rowBytes); growErr != nil {
 					// TopN is bounded by limit, so budget exceeded is unusual.
 					// Continue without tracking rather than failing the query.
 					break
@@ -121,6 +122,15 @@ func (t *TopNIterator) buildTopN(ctx context.Context) error {
 				// The heap keeps the worst element at top (min-heap by reverse sort order).
 				// Replacement is memory-neutral (swap one row for another).
 				if t.isBetter(scratch, t.h.rows[0]) {
+					oldBytes := EstimateRowBytes(t.h.rows[0])
+					newBytes := EstimateRowBytes(scratch)
+					if newBytes > oldBytes {
+						if growErr := t.acct.Grow(newBytes - oldBytes); growErr != nil {
+							continue
+						}
+					} else if oldBytes > newBytes {
+						t.acct.Shrink(oldBytes - newBytes)
+					}
 					t.h.rows[0] = cloneRow(scratch)
 					heap.Fix(t.h, 0)
 				}

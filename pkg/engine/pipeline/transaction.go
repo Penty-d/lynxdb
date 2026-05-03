@@ -101,12 +101,18 @@ func (t *TransactionIterator) materialize(ctx context.Context) error {
 		if batch == nil {
 			break
 		}
-		// Track memory for accumulated rows.
-		if err := t.acct.Grow(int64(batch.Len) * estimatedRowBytes); err != nil {
-			return fmt.Errorf("transaction.materialize: %w", err)
-		}
+		// Track memory for accumulated rows using actual payload sizes.
+		batchRows := make([]map[string]event.Value, batch.Len)
+		var batchBytes int64
 		for i := 0; i < batch.Len; i++ {
 			row := batch.Row(i)
+			batchRows[i] = row
+			batchBytes += EstimateRowBytes(row)
+		}
+		if err := t.acct.Grow(batchBytes); err != nil {
+			return fmt.Errorf("transaction.materialize: %w", err)
+		}
+		for _, row := range batchRows {
 			key := ""
 			if v, ok := row[t.field]; ok {
 				key = v.String()

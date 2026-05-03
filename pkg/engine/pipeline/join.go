@@ -266,7 +266,14 @@ func (j *JoinIterator) buildHashTable(ctx context.Context) error {
 		if batch == nil {
 			break
 		}
-		if err := j.acct.Grow(int64(batch.Len) * estimatedRowBytes); err != nil {
+		rows := make([]map[string]event.Value, batch.Len)
+		var batchBytes int64
+		for i := 0; i < batch.Len; i++ {
+			row := batch.Row(i)
+			rows[i] = row
+			batchBytes += EstimateRowBytes(row)
+		}
+		if err := j.acct.Grow(batchBytes); err != nil {
 			// Budget exceeded — fall back to grace hash join if SpillManager is configured.
 			if j.spillMgr != nil {
 				return j.graceHashJoin(ctx, batch)
@@ -274,8 +281,7 @@ func (j *JoinIterator) buildHashTable(ctx context.Context) error {
 
 			return fmt.Errorf("join.buildHashTable: %w", err)
 		}
-		for i := 0; i < batch.Len; i++ {
-			row := batch.Row(i)
+		for _, row := range rows {
 			key := ""
 			if v, ok := row[j.field]; ok {
 				key = v.String()
@@ -610,7 +616,7 @@ func (j *JoinIterator) loadPartition(idx int) error {
 			return fmt.Errorf("join.loadPartition: read right %d: %w", idx, readErr)
 		}
 		// Track memory for partition hash table.
-		if growErr := j.acct.Grow(estimatedRowBytes); growErr != nil {
+		if growErr := j.acct.Grow(EstimateRowBytes(row)); growErr != nil {
 			return fmt.Errorf("join.loadPartition: partition %d too large for memory: %w", idx, growErr)
 		}
 		key := ""
