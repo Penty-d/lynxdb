@@ -34,6 +34,7 @@ func TestCapabilityRegistryStatic(t *testing.T) {
 func TestMagicRegistryStatic(t *testing.T) {
 	magics := []string{
 		LSG_MAGIC_V1,
+		"LSG2",
 		LSG_FOOTER_MAGIC,
 		LSG_INVERTED_MAGIC,
 		LSG_PRIMARY_MAGIC,
@@ -58,9 +59,50 @@ func TestMagicRegistryStatic(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, magic := range magics {
+	for _, magic := range []string{LSG_MAGIC_V1, LSG_FOOTER_MAGIC, LSG_INVERTED_MAGIC, LSG_PRIMARY_MAGIC, LSG_BLOOM_MAGIC} {
 		if strings.Count(text, "magic: "+magic) != 1 {
 			t.Fatalf("docs magic registry should contain %s exactly once", magic)
 		}
+	}
+}
+
+func TestMagicRegistryFileDatabaseCollision(t *testing.T) {
+	dbRoot := "/usr/share/file/magic"
+	if _, err := os.Stat(dbRoot); err != nil {
+		if os.IsNotExist(err) {
+			t.Skip("file(1) magic database not available")
+		}
+		t.Fatal(err)
+	}
+
+	magics := []string{
+		LSG_MAGIC_V1,
+		"LSG2",
+		LSG_FOOTER_MAGIC,
+		LSG_INVERTED_MAGIC,
+		LSG_PRIMARY_MAGIC,
+		LSG_BLOOM_MAGIC,
+	}
+	err := filepath.WalkDir(dbRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(data)
+		for _, magic := range magics {
+			if strings.Contains(text, magic) {
+				t.Fatalf("magic %s collides with file(1) database entry %s", magic, path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
