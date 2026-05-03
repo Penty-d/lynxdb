@@ -34,10 +34,11 @@ type PrometheusMetrics struct {
 	spillBytesTotal         prometheus.Counter
 
 	// Ingestion metrics.
-	ingestEventsTotal  prometheus.Counter
-	ingestBatchesTotal prometheus.Counter
-	ingestBytesTotal   prometheus.Counter
-	ingestErrorsTotal  prometheus.Counter
+	ingestEventsTotal          prometheus.Counter
+	ingestBatchesTotal         prometheus.Counter
+	ingestBytesTotal           prometheus.Counter
+	ingestErrorsTotal          prometheus.Counter
+	decompressionRejectedTotal *prometheus.CounterVec
 
 	// Compaction metrics.
 	compactionRunsTotal     prometheus.Counter
@@ -168,6 +169,10 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		Name: "lynxdb_ingest_errors_total",
 		Help: "Total ingest errors.",
 	})
+	decompressionRejected := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_decompression_rejected_total",
+		Help: "Total shipper ingest requests rejected by compressed or decompressed body limits.",
+	}, []string{"stage", "encoding"})
 
 	// Compaction metrics.
 	compactionRuns := prometheus.NewCounter(prometheus.CounterOpts{
@@ -274,6 +279,7 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		ingestBatches,
 		ingestBytes,
 		ingestErrors,
+		decompressionRejected,
 		compactionRuns,
 		compactionDuration,
 		compactionInput,
@@ -297,45 +303,53 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 	)
 
 	return &PrometheusMetrics{
-		registry:                  reg,
-		queryDuration:             queryDuration,
-		queryScanDuration:         &scanDur,
-		queryPipelineDuration:     &pipelineDur,
-		queryPeakMemory:           &peakMem,
-		queryRowsScanned:          &rowsScanned,
-		segmentsSkippedBloom:      skippedBloom,
-		segmentsSkippedColStats:   skippedColStats,
-		segmentsSkippedTime:       skippedTime,
-		segmentsScannedTotal:      scannedTotal,
-		querySlowTotal:            slowTotal,
-		queryErrorsTotal:          errorsTotal,
-		querySpilledTotal:         querySpilled,
-		spillBytesTotal:           spillBytes,
-		ingestEventsTotal:         ingestEvents,
-		ingestBatchesTotal:        ingestBatches,
-		ingestBytesTotal:          ingestBytes,
-		ingestErrorsTotal:         ingestErrors,
-		compactionRunsTotal:       compactionRuns,
-		compactionDurationTotal:   compactionDuration,
-		compactionInputBytes:      compactionInput,
-		compactionOutputBytes:     compactionOutput,
-		compactionErrorsTotal:     compactionErrors,
-		compactionQueueDepth:      compactionQueue,
-		tieringUploadsTotal:       tieringUploads,
-		tieringUploadBytesTotal:   tieringUploadBytes,
-		tieringDownloadsTotal:     tieringDownloads,
-		tieringDownloadBytesTotal: tieringDownloadBytes,
-		cacheHitsTotal:            cacheHits,
-		cacheMissesTotal:          cacheMisses,
-		cacheEvictionsTotal:       cacheEvictions,
-		cacheSizeBytes:            cacheSize,
-		memgovClassBytes:          memgovClassBytes,
-		memgovClassPeakBytes:      memgovClassPeakBytes,
-		memgovPressureEvents:      memgovPressureEvents,
-		memgovRevocationFreed:     memgovRevocationFreed,
-		spillFilesActive:          spillFilesActive,
-		spillBytesActive:          spillBytesActive,
+		registry:                   reg,
+		queryDuration:              queryDuration,
+		queryScanDuration:          &scanDur,
+		queryPipelineDuration:      &pipelineDur,
+		queryPeakMemory:            &peakMem,
+		queryRowsScanned:           &rowsScanned,
+		segmentsSkippedBloom:       skippedBloom,
+		segmentsSkippedColStats:    skippedColStats,
+		segmentsSkippedTime:        skippedTime,
+		segmentsScannedTotal:       scannedTotal,
+		querySlowTotal:             slowTotal,
+		queryErrorsTotal:           errorsTotal,
+		querySpilledTotal:          querySpilled,
+		spillBytesTotal:            spillBytes,
+		ingestEventsTotal:          ingestEvents,
+		ingestBatchesTotal:         ingestBatches,
+		ingestBytesTotal:           ingestBytes,
+		ingestErrorsTotal:          ingestErrors,
+		decompressionRejectedTotal: decompressionRejected,
+		compactionRunsTotal:        compactionRuns,
+		compactionDurationTotal:    compactionDuration,
+		compactionInputBytes:       compactionInput,
+		compactionOutputBytes:      compactionOutput,
+		compactionErrorsTotal:      compactionErrors,
+		compactionQueueDepth:       compactionQueue,
+		tieringUploadsTotal:        tieringUploads,
+		tieringUploadBytesTotal:    tieringUploadBytes,
+		tieringDownloadsTotal:      tieringDownloads,
+		tieringDownloadBytesTotal:  tieringDownloadBytes,
+		cacheHitsTotal:             cacheHits,
+		cacheMissesTotal:           cacheMisses,
+		cacheEvictionsTotal:        cacheEvictions,
+		cacheSizeBytes:             cacheSize,
+		memgovClassBytes:           memgovClassBytes,
+		memgovClassPeakBytes:       memgovClassPeakBytes,
+		memgovPressureEvents:       memgovPressureEvents,
+		memgovRevocationFreed:      memgovRevocationFreed,
+		spillFilesActive:           spillFilesActive,
+		spillBytesActive:           spillBytesActive,
 	}
+}
+
+func (pm *PrometheusMetrics) OnReject(stage, encoding string) {
+	if encoding == "" {
+		encoding = "identity"
+	}
+	pm.decompressionRejectedTotal.WithLabelValues(stage, encoding).Inc()
 }
 
 // Handler returns the HTTP handler that serves the Prometheus metrics endpoint.

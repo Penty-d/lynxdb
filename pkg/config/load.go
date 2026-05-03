@@ -477,6 +477,28 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Ingest.MaxLineBytes) }},
+	{"LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "ingest.limits.max_compressed_body_bytes",
+		func(c *Config, v string) error {
+			b, err := ParseByteSize(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Limits.MaxCompressedBodyBytes = b
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Limits.MaxCompressedBodyBytes.String() }},
+	{"LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES", "ingest.limits.max_decompressed_body_bytes",
+		func(c *Config, v string) error {
+			b, err := ParseByteSize(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Limits.MaxDecompressedBodyBytes = b
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Limits.MaxDecompressedBodyBytes.String() }},
 	{"LYNXDB_INGEST_MODE", "ingest.mode",
 		func(c *Config, v string) error {
 			c.Ingest.Mode = v

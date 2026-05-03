@@ -208,9 +208,10 @@ type QueryConfig struct {
 
 // IngestConfig holds ingestion parameters.
 type IngestConfig struct {
-	MaxBodySize  ByteSize `yaml:"max_body_size"  json:"max_body_size"`
-	MaxBatchSize int      `yaml:"max_batch_size" json:"max_batch_size"`
-	MaxLineBytes int      `yaml:"max_line_bytes" json:"max_line_bytes"`
+	MaxBodySize  ByteSize           `yaml:"max_body_size"  json:"max_body_size"`
+	MaxBatchSize int                `yaml:"max_batch_size" json:"max_batch_size"`
+	MaxLineBytes int                `yaml:"max_line_bytes" json:"max_line_bytes"`
+	Limits       IngestLimitsConfig `yaml:"limits" json:"limits"`
 
 	// Mode controls how much parsing happens at ingest time.
 	// "full" (default): extract all JSON fields into columns.
@@ -237,6 +238,11 @@ type IngestConfig struct {
 	// longer window but use more memory (~16 bytes per entry).
 	// Default: 100,000.
 	DedupCapacity int `yaml:"dedup_capacity" json:"dedup_capacity"`
+}
+
+type IngestLimitsConfig struct {
+	MaxCompressedBodyBytes   ByteSize `yaml:"max_compressed_body_bytes" json:"max_compressed_body_bytes"`
+	MaxDecompressedBodyBytes ByteSize `yaml:"max_decompressed_body_bytes" json:"max_decompressed_body_bytes"`
 }
 
 // SyslogConfig configures the native syslog TCP/UDP receiver.
@@ -420,6 +426,10 @@ func DefaultConfig() *Config {
 			MaxBatchSize:  1000,
 			MaxLineBytes:  1 << 20, // 1 MB
 			DedupCapacity: 100_000,
+			Limits: IngestLimitsConfig{
+				MaxCompressedBodyBytes:   32 * MB,
+				MaxDecompressedBodyBytes: 256 * MB,
+			},
 		},
 
 		HTTP: HTTPConfig{

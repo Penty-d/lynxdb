@@ -143,6 +143,8 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("ingest.max_body_size", cfg.Ingest.MaxBodySize.String(), dflt.Ingest.MaxBodySize.String(), fileCfg.Ingest.MaxBodySize.String(), "LYNXDB_INGEST_MAX_BODY_SIZE")
 	add("ingest.max_batch_size", fmt.Sprintf("%d", cfg.Ingest.MaxBatchSize), fmt.Sprintf("%d", dflt.Ingest.MaxBatchSize), fmt.Sprintf("%d", fileCfg.Ingest.MaxBatchSize), "LYNXDB_INGEST_MAX_BATCH_SIZE")
 	add("ingest.max_line_bytes", fmt.Sprintf("%d", cfg.Ingest.MaxLineBytes), fmt.Sprintf("%d", dflt.Ingest.MaxLineBytes), fmt.Sprintf("%d", fileCfg.Ingest.MaxLineBytes), "LYNXDB_INGEST_MAX_LINE_BYTES")
+	add("ingest.limits.max_compressed_body_bytes", cfg.Ingest.Limits.MaxCompressedBodyBytes.String(), dflt.Ingest.Limits.MaxCompressedBodyBytes.String(), fileCfg.Ingest.Limits.MaxCompressedBodyBytes.String(), "LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES")
+	add("ingest.limits.max_decompressed_body_bytes", cfg.Ingest.Limits.MaxDecompressedBodyBytes.String(), dflt.Ingest.Limits.MaxDecompressedBodyBytes.String(), fileCfg.Ingest.Limits.MaxDecompressedBodyBytes.String(), "LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES")
 	add("ingest.mode", cfg.Ingest.Mode, dflt.Ingest.Mode, fileCfg.Ingest.Mode, "LYNXDB_INGEST_MODE")
 	add("ingest.fsync", formatBoolPtr(cfg.Ingest.FSync), formatBoolPtr(dflt.Ingest.FSync), formatBoolPtr(fileCfg.Ingest.FSync), "LYNXDB_INGEST_FSYNC")
 	add("ingest.dedup_enabled", strconv.FormatBool(cfg.Ingest.DedupEnabled), strconv.FormatBool(dflt.Ingest.DedupEnabled), strconv.FormatBool(fileCfg.Ingest.DedupEnabled), "LYNXDB_INGEST_DEDUP_ENABLED")

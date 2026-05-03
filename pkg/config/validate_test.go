@@ -126,6 +126,13 @@ func TestValidateIngest(t *testing.T) {
 	}{
 		{"small body size", func(i *IngestConfig) { i.MaxBodySize = 100 }, "ingest.max_body_size"},
 		{"zero batch size", func(i *IngestConfig) { i.MaxBatchSize = 0 }, "ingest.max_batch_size"},
+		{"small compressed body limit", func(i *IngestConfig) {
+			i.Limits.MaxCompressedBodyBytes = 100
+		}, "ingest.limits.max_compressed_body_bytes"},
+		{"decompressed below compressed", func(i *IngestConfig) {
+			i.Limits.MaxCompressedBodyBytes = 2 * MB
+			i.Limits.MaxDecompressedBodyBytes = 1 * MB
+		}, "must be >= limits.max_compressed_body_bytes"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

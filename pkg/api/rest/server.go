@@ -17,6 +17,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
 	syslogrecv "github.com/lynxbase/lynxdb/pkg/ingest/receiver/syslog"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
@@ -352,9 +353,13 @@ func NewServer(cfg Config) (*Server, error) {
 	idleTimeout := cfg.HTTP.IdleTimeout
 	idleTimeout = defaultIdleTimeout(idleTimeout)
 	// Build middleware chain (execution order, outer → inner):
-	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → mux.
+	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → DualLimit → mux.
 	// Auth runs before rate limiting so unauthenticated requests don't consume quota.
 	var handler http.Handler = mux
+	handler = limits.DualLimitMiddleware(limits.Config{
+		MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
+		MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
+	}, promMetrics)(handler)
 	handler = MaxBodyMiddleware(int64(cfg.Ingest.MaxBodySize), handler)
 	if cfg.HTTP.RateLimit > 0 {
 		s.rateLimiter = NewRateLimiter(cfg.HTTP.RateLimit, int(cfg.HTTP.RateLimit)*2)

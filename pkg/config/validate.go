@@ -270,6 +270,16 @@ func (i *IngestConfig) validate() error {
 	if i.MaxLineBytes < 1024 {
 		return validationErr("ingest", "max_line_bytes", fmt.Sprintf("%d", i.MaxLineBytes), "must be at least 1024 bytes")
 	}
+	if i.Limits.MaxCompressedBodyBytes < 1*KB {
+		return validationErr("ingest", "limits.max_compressed_body_bytes", i.Limits.MaxCompressedBodyBytes.String(), "must be at least 1kb")
+	}
+	if i.Limits.MaxDecompressedBodyBytes < 1*KB {
+		return validationErr("ingest", "limits.max_decompressed_body_bytes", i.Limits.MaxDecompressedBodyBytes.String(), "must be at least 1kb")
+	}
+	if i.Limits.MaxDecompressedBodyBytes < i.Limits.MaxCompressedBodyBytes {
+		return validationErr("ingest", "limits.max_decompressed_body_bytes", i.Limits.MaxDecompressedBodyBytes.String(),
+			fmt.Sprintf("must be >= limits.max_compressed_body_bytes (%s)", i.Limits.MaxCompressedBodyBytes.String()))
+	}
 
 	switch i.Mode {
 	case "", "full", "lightweight":

@@ -28,6 +28,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Ingest.MaxBatchSize != 1000 {
 		t.Errorf("expected 1000, got %d", cfg.Ingest.MaxBatchSize)
 	}
+	if cfg.Ingest.Limits.MaxCompressedBodyBytes != 32*MB {
+		t.Errorf("expected compressed body limit 32mb, got %s", cfg.Ingest.Limits.MaxCompressedBodyBytes)
+	}
+	if cfg.Ingest.Limits.MaxDecompressedBodyBytes != 256*MB {
+		t.Errorf("expected decompressed body limit 256mb, got %s", cfg.Ingest.Limits.MaxDecompressedBodyBytes)
+	}
 	if cfg.HTTP.IdleTimeout != 120*time.Second {
 		t.Errorf("expected 120s, got %v", cfg.HTTP.IdleTimeout)
 	}

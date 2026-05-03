@@ -68,6 +68,9 @@
 #   max_body_size: 100mb             # Max HTTP request body size
 #   max_batch_size: 1000             # Max events per streaming batch
 #   max_line_bytes: 1048576          # Max bytes per single line in streaming ingest (1 MiB)
+#   limits:
+#     max_compressed_body_bytes: 32mb   # Max compressed shipper request body
+#     max_decompressed_body_bytes: 256mb # Max decoded shipper request body
 #   mode:                            # Ingest mode (empty = auto)
 #   dedup_enabled: false             # Enable dedup of identical consecutive events
 #   dedup_capacity: 100000           # Dedup LRU capacity (per index)

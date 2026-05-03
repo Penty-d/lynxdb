@@ -16,6 +16,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 )
 
@@ -401,6 +402,26 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		if len(batch) >= batchSize {
 			commitBatch()
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		if limits.IsTooLarge(err) {
+			respondJSON(w, http.StatusRequestEntityTooLarge, map[string]interface{}{
+				"error": map[string]interface{}{
+					"type":   "request_entity_too_large",
+					"reason": err.Error(),
+				},
+				"status": http.StatusRequestEntityTooLarge,
+			})
+			return
+		}
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "mapper_parsing_exception",
+				"reason": err.Error(),
+			},
+			"status": http.StatusBadRequest,
+		})
+		return
 	}
 
 	// Flush remaining batch.

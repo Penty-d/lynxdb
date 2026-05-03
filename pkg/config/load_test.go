@@ -96,6 +96,8 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_LOG_LEVEL", "debug")
 	t.Setenv("LYNXDB_QUERY_MAX_CONCURRENT", "50")
 	t.Setenv("LYNXDB_STORAGE_COMPRESSION", "zstd")
+	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "16mb")
+	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES", "64mb")
 
 	cfg, _, err := Load("")
 	if err != nil {
@@ -112,6 +114,12 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg.Storage.Compression != "zstd" {
 		t.Errorf("Compression: got %q", cfg.Storage.Compression)
+	}
+	if cfg.Ingest.Limits.MaxCompressedBodyBytes != 16*MB {
+		t.Errorf("MaxCompressedBodyBytes: got %s", cfg.Ingest.Limits.MaxCompressedBodyBytes)
+	}
+	if cfg.Ingest.Limits.MaxDecompressedBodyBytes != 64*MB {
+		t.Errorf("MaxDecompressedBodyBytes: got %s", cfg.Ingest.Limits.MaxDecompressedBodyBytes)
 	}
 }
 

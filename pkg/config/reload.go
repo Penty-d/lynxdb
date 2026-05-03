@@ -13,19 +13,21 @@ type ReloadChanges struct {
 }
 
 var hotReloadableExactFields = map[string]struct{}{
-	"log_level":                        {},
-	"retention":                        {},
-	"storage.compaction_rate_limit_mb": {},
-	"ingest.mode":                      {},
-	"ingest.max_batch_size":            {},
-	"ingest.max_line_bytes":            {},
-	"http.shutdown_timeout":            {},
-	"syslog.index":                     {},
-	"syslog.sourcetype":                {},
-	"syslog.default_timezone":          {},
-	"syslog.default_hostname":          {},
-	"syslog.batch_size":                {},
-	"syslog.batch_timeout":             {},
+	"log_level":                                 {},
+	"retention":                                 {},
+	"storage.compaction_rate_limit_mb":          {},
+	"ingest.mode":                               {},
+	"ingest.max_batch_size":                     {},
+	"ingest.max_line_bytes":                     {},
+	"ingest.limits.max_compressed_body_bytes":   {},
+	"ingest.limits.max_decompressed_body_bytes": {},
+	"http.shutdown_timeout":                     {},
+	"syslog.index":                              {},
+	"syslog.sourcetype":                         {},
+	"syslog.default_timezone":                   {},
+	"syslog.default_hostname":                   {},
+	"syslog.batch_size":                         {},
+	"syslog.batch_timeout":                      {},
 }
 
 var hotReloadablePrefixes = []string{

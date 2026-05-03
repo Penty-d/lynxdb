@@ -112,6 +112,16 @@ func TestPrometheusMetrics_Handler(t *testing.T) {
 	}
 }
 
+func TestPrometheusMetrics_DecompressionRejectCounter(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	pm.OnReject("decompressed", "gzip")
+
+	families := gatherMetrics(t, pm)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_decompression_rejected_total", "stage", "decompressed", 1)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_decompression_rejected_total", "encoding", "gzip", 1)
+}
+
 func TestPrometheusMetrics_ZeroSkipsNotRecorded(t *testing.T) {
 	pm := NewPrometheusMetrics()
 
