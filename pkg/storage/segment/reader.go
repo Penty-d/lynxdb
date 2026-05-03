@@ -69,6 +69,13 @@ func ValidateSegmentHeader(data []byte, fileSize int64) error {
 	return err
 }
 
+func SegmentHeaderMajor(data []byte, fileSize int64) (uint16, error) {
+	if err := ValidateSegmentHeader(data, fileSize); err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint16(data[4:6]), nil
+}
+
 type headerV1 struct {
 	major        uint16
 	requiredCaps uint64
