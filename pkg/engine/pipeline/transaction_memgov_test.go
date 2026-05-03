@@ -86,7 +86,11 @@ func TestTransactionSpillsPartitionedGroups(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("rows: got %d, want 0 because every group exceeds maxspan", len(got))
 	}
-	if iter.ResourceStats().SpilledRows == 0 {
+	rs := iter.ResourceStats()
+	if rs.SpilledRows == 0 {
 		t.Fatal("expected transaction spill path to write rows")
+	}
+	if rs.SpillBytes == 0 {
+		t.Fatal("expected transaction spill bytes to be reported")
 	}
 }

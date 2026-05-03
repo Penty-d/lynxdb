@@ -183,6 +183,20 @@ type BuildResult struct {
 	GovBudget   *memgov.BudgetAdapter // non-nil when built via BuildProgramWithGovernor
 }
 
+type revocationRegistrationIterator struct {
+	Iterator
+	unregister func()
+}
+
+func (r *revocationRegistrationIterator) Close() error {
+	if r.unregister != nil {
+		r.unregister()
+		r.unregister = nil
+	}
+
+	return r.Iterator.Close()
+}
+
 // Option configures optional components of the pipeline build.
 type Option func(*queryContext)
 
@@ -286,7 +300,8 @@ func BuildProgramWithGovernor(ctx context.Context, prog *spl2.Program, store Ind
 
 	if qc.coordinator != nil {
 		qc.coordinator.Finalize()
-		gov.OnPressure(memgov.ClassSpillable, qc.coordinator.HandleRevocation)
+		unregister := RegisterRevocationCoordinator(gov, qc.coordinator)
+		iter = &revocationRegistrationIterator{Iterator: iter, unregister: unregister}
 	}
 
 	return &BuildResult{
@@ -1040,7 +1055,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return NewUnionIterator(children), nil
 
 	case *spl2.XYSeriesCommand:
-		return NewXYSeriesIteratorWithBudget(child, c.XField, c.YField, c.ValueField, qc.batchSize, qc.newAccount("xyseries")), nil
+		return NewXYSeriesIteratorWithSpill(child, c.XField, c.YField, c.ValueField, qc.batchSize, qc.newCoordinatedAccount("xyseries", reservationAggregate), qc.spillMgr), nil
 
 	case *spl2.TransactionCommand:
 		dur := parseDuration(c.MaxSpan)
@@ -1075,10 +1090,10 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return NewTraceIteratorWithBudget(child, c.TraceIDField, c.SpanIDField, c.ParentIDField, qc.newAccount("trace")), nil
 
 	case *spl2.RollupCommand:
-		return NewRollupIteratorWithBudget(child, c.Spans, c.GroupBy, qc.batchSize, qc.newAccount("rollup")), nil
+		return NewRollupIteratorWithSpill(child, c.Spans, c.GroupBy, qc.batchSize, qc.newCoordinatedAccount("rollup", reservationAggregate), qc.spillMgr), nil
 
 	case *spl2.CorrelateCommand:
-		return NewCorrelateIterator(child, c.Field1, c.Field2, c.Method), nil
+		return NewCorrelateIteratorWithBudget(child, c.Field1, c.Field2, c.Method, qc.newAccount("correlate")), nil
 
 	case *spl2.SessionizeCommand:
 		return NewSessionizeIteratorWithBudget(

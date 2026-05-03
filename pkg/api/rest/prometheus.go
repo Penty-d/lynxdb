@@ -2,11 +2,13 @@ package rest
 
 import (
 	"net/http"
+	"sync/atomic"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/storage"
 )
@@ -28,6 +30,8 @@ type PrometheusMetrics struct {
 	segmentsScannedTotal    prometheus.Counter
 	querySlowTotal          prometheus.Counter
 	queryErrorsTotal        *prometheus.CounterVec
+	querySpilledTotal       *prometheus.CounterVec
+	spillBytesTotal         prometheus.Counter
 
 	// Ingestion metrics.
 	ingestEventsTotal  prometheus.Counter
@@ -54,6 +58,16 @@ type PrometheusMetrics struct {
 	cacheMissesTotal    prometheus.Counter
 	cacheEvictionsTotal prometheus.Counter
 	cacheSizeBytes      prometheus.Gauge
+
+	// Memory-governance metrics.
+	memgovClassBytes        *prometheus.GaugeVec
+	memgovClassPeakBytes    *prometheus.GaugeVec
+	memgovPressureEvents    prometheus.Counter
+	memgovRevocationFreed   *prometheus.CounterVec
+	spillFilesActive        prometheus.Gauge
+	spillBytesActive        prometheus.Gauge
+	lastMemgovPressureEvent atomic.Int64
+	lastRevocationFreed     atomic.Int64
 }
 
 // NewPrometheusMetrics creates and registers all LynxDB Prometheus metrics.
@@ -128,6 +142,14 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		Name: "lynxdb_query_errors_total",
 		Help: "Total query errors by type.",
 	}, []string{"type"})
+	querySpilled := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_query_spilled_total",
+		Help: "Total completed queries that spilled to disk by operator.",
+	}, []string{"operator"})
+	spillBytes := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_spill_bytes_total",
+		Help: "Total bytes written to query spill files by completed queries.",
+	})
 
 	// Ingestion metrics.
 	ingestEvents := prometheus.NewCounter(prometheus.CounterOpts{
@@ -209,6 +231,31 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		Help: "Current query cache size in bytes.",
 	})
 
+	memgovClassBytes := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "lynxdb_memgov_class_bytes",
+		Help: "Current bytes allocated by memory-governance class.",
+	}, []string{"class"})
+	memgovClassPeakBytes := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "lynxdb_memgov_class_peak_bytes",
+		Help: "Peak bytes allocated by memory-governance class.",
+	}, []string{"class"})
+	memgovPressureEvents := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_memgov_pressure_events_total",
+		Help: "Total memory-governance pressure events.",
+	})
+	memgovRevocationFreed := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_memgov_revocation_freed_bytes_total",
+		Help: "Total bytes freed by memory-governance revocation callbacks.",
+	}, []string{"class"})
+	spillFilesActive := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "lynxdb_spill_files_active",
+		Help: "Current number of tracked query spill files.",
+	})
+	spillBytesActive := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "lynxdb_spill_bytes_active",
+		Help: "Current bytes held in tracked query spill files.",
+	})
+
 	reg.MustRegister(
 		queryDuration,
 		scanDur,
@@ -221,6 +268,8 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		scannedTotal,
 		slowTotal,
 		errorsTotal,
+		querySpilled,
+		spillBytes,
 		ingestEvents,
 		ingestBatches,
 		ingestBytes,
@@ -239,6 +288,12 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		cacheMisses,
 		cacheEvictions,
 		cacheSize,
+		memgovClassBytes,
+		memgovClassPeakBytes,
+		memgovPressureEvents,
+		memgovRevocationFreed,
+		spillFilesActive,
+		spillBytesActive,
 	)
 
 	return &PrometheusMetrics{
@@ -254,6 +309,8 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		segmentsScannedTotal:      scannedTotal,
 		querySlowTotal:            slowTotal,
 		queryErrorsTotal:          errorsTotal,
+		querySpilledTotal:         querySpilled,
+		spillBytesTotal:           spillBytes,
 		ingestEventsTotal:         ingestEvents,
 		ingestBatchesTotal:        ingestBatches,
 		ingestBytesTotal:          ingestBytes,
@@ -272,6 +329,12 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		cacheMissesTotal:          cacheMisses,
 		cacheEvictionsTotal:       cacheEvictions,
 		cacheSizeBytes:            cacheSize,
+		memgovClassBytes:          memgovClassBytes,
+		memgovClassPeakBytes:      memgovClassPeakBytes,
+		memgovPressureEvents:      memgovPressureEvents,
+		memgovRevocationFreed:     memgovRevocationFreed,
+		spillFilesActive:          spillFilesActive,
+		spillBytesActive:          spillBytesActive,
 	}
 }
 
@@ -335,11 +398,63 @@ func (pm *PrometheusMetrics) RecordQuery(ss *server.SearchStats) {
 	if ss.ErrorType != "" {
 		pm.queryErrorsTotal.WithLabelValues(ss.ErrorType).Inc()
 	}
+
+	if ss.SpillBytes > 0 {
+		pm.spillBytesTotal.Add(float64(ss.SpillBytes))
+	}
+	if ss.SpilledToDisk {
+		recorded := false
+		for _, stage := range ss.PipelineStages {
+			if stage.SpilledRows > 0 || stage.SpillBytes > 0 {
+				pm.querySpilledTotal.WithLabelValues(stage.Name).Inc()
+				recorded = true
+			}
+		}
+		if !recorded {
+			pm.querySpilledTotal.WithLabelValues("unknown").Inc()
+		}
+	}
 }
 
 // Registry returns the underlying Prometheus registry for testing.
 func (pm *PrometheusMetrics) Registry() *prometheus.Registry {
 	return pm.registry
+}
+
+// RecordGovernorStats updates memory-governance metrics from the latest engine
+// snapshot. Gauges are set directly; pressure events are emitted as a monotonic
+// counter by adding only the snapshot delta since the previous scrape.
+func (pm *PrometheusMetrics) RecordGovernorStats(stats *memgov.TotalStats) {
+	if stats == nil {
+		return
+	}
+
+	for i := range stats.ByClass {
+		class := memgov.MemoryClass(i).String()
+		cs := stats.ByClass[i]
+		pm.memgovClassBytes.WithLabelValues(class).Set(float64(cs.Allocated))
+		pm.memgovClassPeakBytes.WithLabelValues(class).Set(float64(cs.Peak))
+	}
+
+	previous := pm.lastMemgovPressureEvent.Swap(stats.PressureEvents)
+	if delta := stats.PressureEvents - previous; delta > 0 {
+		pm.memgovPressureEvents.Add(float64(delta))
+	}
+}
+
+// RecordSpillStats updates scrape-time spill-manager gauges.
+func (pm *PrometheusMetrics) RecordSpillStats(fileCount int, totalBytes int64) {
+	pm.spillFilesActive.Set(float64(fileCount))
+	pm.spillBytesActive.Set(float64(totalBytes))
+}
+
+// RecordRevocationStats updates cumulative revocation metrics from the latest
+// engine snapshot.
+func (pm *PrometheusMetrics) RecordRevocationStats(spillableFreedBytes int64) {
+	previous := pm.lastRevocationFreed.Swap(spillableFreedBytes)
+	if delta := spillableFreedBytes - previous; delta > 0 {
+		pm.memgovRevocationFreed.WithLabelValues(memgov.ClassSpillable.String()).Add(float64(delta))
+	}
 }
 
 // RecordStorageMetrics reads from the storage engine metrics and updates

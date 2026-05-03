@@ -313,6 +313,24 @@ func (mc *MemoryCoordinator) Stats() []CoordinatorSlotStats {
 	return result
 }
 
+func (mc *MemoryCoordinator) RevocableUsage() int64 {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	var total int64
+	for _, s := range mc.slots {
+		if s.onRevoke == nil || s.spilled.Load() {
+			continue
+		}
+		if OperatorPhase(s.phase.Load()) == PhaseComplete {
+			continue
+		}
+		total += s.acct.used
+	}
+
+	return total
+}
+
 // Grow requests n bytes. First checks the coordinator-managed sub-limit
 // (fast atomic load, no lock). If the sub-limit would be exceeded, returns
 // a *memgov.BudgetExceededError. Otherwise delegates to the inner account
@@ -511,6 +529,10 @@ func countSpillableInQuery(query *spl2.Query) int {
 		case *spl2.TopCommand:
 			count++
 		case *spl2.RareCommand:
+			count++
+		case *spl2.XYSeriesCommand:
+			count++
+		case *spl2.RollupCommand:
 			count++
 		case *spl2.SessionizeCommand:
 			count++

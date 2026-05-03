@@ -6,6 +6,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/bufmgr"
 	"github.com/lynxbase/lynxdb/pkg/cache"
+	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/model"
@@ -22,6 +23,22 @@ func (e *Engine) GovernorStats() *memgov.TotalStats {
 	s := e.governor.TotalUsage()
 
 	return &s
+}
+
+// SpillStats returns active spill file count and bytes currently tracked by
+// the query spill manager.
+func (e *Engine) SpillStats() (fileCount int, totalBytes int64) {
+	if e.spillMgr == nil {
+		return 0, 0
+	}
+
+	return e.spillMgr.Stats()
+}
+
+// RevocationFreedSpillableBytes returns cumulative bytes freed by
+// governor-driven spillable revocation callbacks.
+func (e *Engine) RevocationFreedSpillableBytes() int64 {
+	return enginepipeline.RevocationFreedSpillableBytes()
 }
 
 // BufMgrStats returns buffer manager v2 frame stats, or nil if not enabled.

@@ -34,19 +34,20 @@ type transactionOutput struct {
 
 // TransactionIterator groups events by a field with maxspan/startswith/endswith.
 type TransactionIterator struct {
-	child       Iterator
-	field       string
-	maxSpan     time.Duration
-	startsWith  string
-	endsWith    string
-	rows        []map[string]event.Value
-	emitted     bool
-	offset      int
-	batchSize   int
-	acct        memgov.MemoryAccount // per-operator memory tracking
-	spillMgr    *SpillManager
-	spillPaths  []string
-	spilledRows int64
+	child           Iterator
+	field           string
+	maxSpan         time.Duration
+	startsWith      string
+	endsWith        string
+	rows            []map[string]event.Value
+	emitted         bool
+	offset          int
+	batchSize       int
+	acct            memgov.MemoryAccount // per-operator memory tracking
+	spillMgr        *SpillManager
+	spillPaths      []string
+	spilledRows     int64
+	spillBytesTotal int64
 }
 
 // NewTransactionIterator creates a transaction grouping operator.
@@ -109,6 +110,7 @@ func (t *TransactionIterator) Next(ctx context.Context) (*Batch, error) {
 func (t *TransactionIterator) Close() error {
 	t.acct.Close()
 	if t.spillMgr != nil {
+		t.spillBytesTotal = sumSpillPathBytes(t.spillPaths)
 		for _, path := range t.spillPaths {
 			t.spillMgr.Release(path)
 		}
@@ -125,9 +127,15 @@ func (t *TransactionIterator) MemoryUsed() int64 {
 
 // ResourceStats implements ResourceReporter for per-operator spill metrics.
 func (t *TransactionIterator) ResourceStats() OperatorResourceStats {
+	spillBytes := t.spillBytesTotal
+	if spillBytes == 0 {
+		spillBytes = sumSpillPathBytes(t.spillPaths)
+	}
+
 	return OperatorResourceStats{
 		PeakBytes:   t.acct.MaxUsed(),
 		SpilledRows: t.spilledRows,
+		SpillBytes:  spillBytes,
 	}
 }
 

@@ -118,6 +118,7 @@ func (t *TopIterator) Next(ctx context.Context) (*Batch, error) {
 func (t *TopIterator) Close() error {
 	t.acct.Close()
 	if t.spillMgr != nil {
+		t.spillBytesTotal = sumSpillPathBytes(t.spillPaths)
 		for _, path := range t.spillPaths {
 			t.spillMgr.Release(path)
 		}
@@ -134,10 +135,15 @@ func (t *TopIterator) MemoryUsed() int64 {
 
 // ResourceStats implements ResourceReporter for per-operator spill metrics.
 func (t *TopIterator) ResourceStats() OperatorResourceStats {
+	spillBytes := t.spillBytesTotal
+	if spillBytes == 0 {
+		spillBytes = sumSpillPathBytes(t.spillPaths)
+	}
+
 	return OperatorResourceStats{
 		PeakBytes:   t.acct.MaxUsed(),
 		SpilledRows: t.spilledRows,
-		SpillBytes:  t.spillBytesTotal,
+		SpillBytes:  spillBytes,
 	}
 }
 

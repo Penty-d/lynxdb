@@ -61,3 +61,45 @@ func TestRollupBudgetExceededOnHighCardinalityGroups(t *testing.T) {
 		t.Fatal("expected rollup group state to exceed tiny budget")
 	}
 }
+
+func TestRollupSpillsHighCardinalityGroups(t *testing.T) {
+	base := time.Unix(3600, 0).UTC()
+	rows := make([]map[string]event.Value, 0, 120)
+	for i := 0; i < 120; i++ {
+		rows = append(rows, rollupRow(base.Add(time.Duration(i)*time.Second), "host"))
+	}
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	acct := memgov.NewTestBudget("rollup", 4*1024).NewAccount("rollup")
+	iter := NewRollupIteratorWithSpill(NewRowScanIterator(rows, 10), []string{"1s", "1m"}, []string{"host"}, 20, acct, mgr)
+
+	got, err := CollectAll(context.Background(), iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 122 {
+		t.Fatalf("rows: got %d, want 122", len(got))
+	}
+	rs := iter.ResourceStats()
+	if rs.SpilledRows == 0 {
+		t.Fatal("expected rollup spill path to write rows")
+	}
+	if rs.SpillBytes == 0 {
+		t.Fatal("expected rollup spill bytes to be reported")
+	}
+
+	var oneMinuteCount int64
+	for _, row := range got {
+		if row["_resolution"].String() == "1m" {
+			oneMinuteCount += row["count"].AsInt()
+		}
+	}
+	if oneMinuteCount != 120 {
+		t.Fatalf("1m count: got %d, want 120", oneMinuteCount)
+	}
+}

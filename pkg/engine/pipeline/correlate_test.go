@@ -3,9 +3,11 @@ package pipeline
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func TestCorrelatePearsonStreaming(t *testing.T) {
@@ -53,5 +55,22 @@ func TestCorrelateSpearmanStillWorks(t *testing.T) {
 	}
 	if got[0]["_correlation"].IsNull() {
 		t.Fatal("spearman correlation should not be null")
+	}
+}
+
+func TestCorrelateSpearmanAccountsRankMaterialization(t *testing.T) {
+	rows := []map[string]event.Value{
+		{"x": event.IntValue(10), "y": event.IntValue(100)},
+		{"x": event.IntValue(20), "y": event.IntValue(300)},
+	}
+	acct := memgov.NewTestBudget("correlate", estimatedCorrelationPairBytes).NewAccount("correlate")
+	iter := NewCorrelateIteratorWithBudget(NewRowScanIterator(rows, 2), "x", "y", "spearman", acct)
+
+	_, err := CollectAll(context.Background(), iter)
+	if err == nil {
+		t.Fatal("expected memory budget error")
+	}
+	if !strings.Contains(err.Error(), "correlate: memory budget exceeded") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

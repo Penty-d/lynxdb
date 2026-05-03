@@ -194,9 +194,12 @@ func (g *globalGovernor) TotalUsage() TotalStats {
 	defer g.mu.Unlock()
 
 	ts := TotalStats{
-		Allocated: g.totalAllocated,
-		Peak:      g.totalPeak,
-		Limit:     g.limit,
+		Allocated:      g.totalAllocated,
+		Peak:           g.totalPeak,
+		Limit:          g.limit,
+		ReserveEvents:  g.reserveCount.Load(),
+		ReleaseEvents:  g.releaseCount.Load(),
+		PressureEvents: g.pressureCount.Load(),
 	}
 	for i := MemoryClass(0); i < numClasses; i++ {
 		ts.ByClass[i] = ClassStats{

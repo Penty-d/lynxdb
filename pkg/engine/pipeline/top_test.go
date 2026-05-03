@@ -208,7 +208,11 @@ func TestTopIterator_SpillsHighCardinalityCounters(t *testing.T) {
 	if math.Abs(got[0]["percent"].AsFloat()-wantPercent) > 0.0001 {
 		t.Fatalf("hot percent = %f, want %f", got[0]["percent"].AsFloat(), wantPercent)
 	}
-	if top.ResourceStats().SpilledRows == 0 {
+	rs := top.ResourceStats()
+	if rs.SpilledRows == 0 {
 		t.Fatal("expected top spill path to write rows")
+	}
+	if rs.SpillBytes == 0 {
+		t.Fatal("expected top spill bytes to be reported")
 	}
 }

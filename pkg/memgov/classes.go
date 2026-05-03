@@ -61,8 +61,11 @@ type ClassStats struct {
 
 // TotalStats reports aggregate stats across all memory classes.
 type TotalStats struct {
-	Allocated int64                  `json:"allocated"`
-	Peak      int64                  `json:"peak"`
-	Limit     int64                  `json:"limit"`
-	ByClass   [numClasses]ClassStats `json:"by_class"`
+	Allocated      int64                  `json:"allocated"`
+	Peak           int64                  `json:"peak"`
+	Limit          int64                  `json:"limit"`
+	ReserveEvents  int64                  `json:"reserve_events"`
+	ReleaseEvents  int64                  `json:"release_events"`
+	PressureEvents int64                  `json:"pressure_events"`
+	ByClass        [numClasses]ClassStats `json:"by_class"`
 }

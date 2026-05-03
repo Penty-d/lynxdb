@@ -190,6 +190,10 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.engine != nil {
 			promMetrics.RecordStorageMetrics(s.engine.Metrics())
+			promMetrics.RecordGovernorStats(s.engine.GovernorStats())
+			spillFiles, spillBytes := s.engine.SpillStats()
+			promMetrics.RecordSpillStats(spillFiles, spillBytes)
+			promMetrics.RecordRevocationStats(s.engine.RevocationFreedSpillableBytes())
 		}
 		promHandler.ServeHTTP(w, r)
 	}))

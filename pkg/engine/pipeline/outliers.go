@@ -54,7 +54,7 @@ func NewOutliersIterator(child Iterator, field, method string, threshold float64
 // NewOutliersIteratorWithBudget creates an outliers iterator with row-buffer
 // accounting and optional columnar spill support.
 func NewOutliersIteratorWithBudget(child Iterator, field, method string, threshold float64, acct memgov.MemoryAccount, mgr *SpillManager) *OutliersIterator {
-	return &OutliersIterator{
+	o := &OutliersIterator{
 		child:     child,
 		field:     field,
 		method:    method,
@@ -62,6 +62,25 @@ func NewOutliersIteratorWithBudget(child Iterator, field, method string, thresho
 		acct:      memgov.EnsureAccount(acct),
 		spillMgr:  mgr,
 	}
+	if ca, ok := o.acct.(*CoordinatedAccount); ok && mgr != nil {
+		ca.SetOnRevoke(func(target int64) int64 {
+			if o.spilled || len(o.rows) == 0 {
+				return 0
+			}
+			before := o.acct.Used()
+			if err := o.spillBufferedRows(); err != nil {
+				return 0
+			}
+			freed := before - o.acct.Used()
+			if freed < 0 {
+				return 0
+			}
+
+			return freed
+		})
+	}
+
+	return o
 }
 
 func (o *OutliersIterator) Init(ctx context.Context) error {
@@ -219,6 +238,18 @@ func (o *OutliersIterator) materialize(ctx context.Context) error {
 }
 
 func (o *OutliersIterator) transitionToSpill(currentRow map[string]event.Value) error {
+	if err := o.spillBufferedRows(); err != nil {
+		return err
+	}
+	if err := o.spillWriter.WriteRow(currentRow); err != nil {
+		return fmt.Errorf("outliers: write current row: %w", err)
+	}
+	o.spilledRows++
+
+	return nil
+}
+
+func (o *OutliersIterator) spillBufferedRows() error {
 	sw, err := NewColumnarSpillWriter(o.spillMgr, "outliers")
 	if err != nil {
 		return fmt.Errorf("outliers: create spill file: %w", err)
@@ -233,10 +264,6 @@ func (o *OutliersIterator) transitionToSpill(currentRow map[string]event.Value) 
 		}
 	}
 	o.spilledRows = int64(len(o.rows))
-	if err := sw.WriteRow(currentRow); err != nil {
-		return fmt.Errorf("outliers: write current row: %w", err)
-	}
-	o.spilledRows++
 
 	o.acct.Shrink(o.rowBytesMem)
 	o.rows = nil

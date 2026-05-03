@@ -2,12 +2,16 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
+
+const estimatedCorrelationPairBytes int64 = 16
 
 // CorrelateIterator computes correlation between two numeric fields and emits
 // a single result row. Pearson correlation is streaming; Spearman still needs
@@ -21,15 +25,23 @@ type CorrelateIterator struct {
 	done   bool
 	output *Batch
 	offset int
+	acct   memgov.MemoryAccount
 }
 
 // NewCorrelateIterator creates a new correlate iterator.
 func NewCorrelateIterator(child Iterator, field1, field2, method string) *CorrelateIterator {
+	return NewCorrelateIteratorWithBudget(child, field1, field2, method, memgov.NopAccount())
+}
+
+// NewCorrelateIteratorWithBudget creates a correlate iterator with memory
+// accounting for rank materialization used by Spearman correlation.
+func NewCorrelateIteratorWithBudget(child Iterator, field1, field2, method string, acct memgov.MemoryAccount) *CorrelateIterator {
 	return &CorrelateIterator{
 		child:  child,
 		field1: field1,
 		field2: field2,
 		method: method,
+		acct:   memgov.EnsureAccount(acct),
 	}
 }
 
@@ -77,6 +89,9 @@ func (c *CorrelateIterator) materialize(ctx context.Context) error {
 			v1, ok1 := getNumeric(batch.Columns[c.field1], i)
 			v2, ok2 := getNumeric(batch.Columns[c.field2], i)
 			if ok1 && ok2 {
+				if err := c.acct.Grow(estimatedCorrelationPairBytes); err != nil {
+					return fmt.Errorf("correlate: memory budget exceeded for spearman ranks: %w", err)
+				}
 				x = append(x, v1)
 				y = append(y, v2)
 			}
@@ -226,6 +241,8 @@ func getNumeric(col []event.Value, i int) (float64, bool) {
 }
 
 func (c *CorrelateIterator) Close() error {
+	c.acct.Close()
+
 	return c.child.Close()
 }
 

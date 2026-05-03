@@ -230,6 +230,70 @@ func TestCoordinatorRevokesAggregateBySpillingGroups(t *testing.T) {
 	}
 }
 
+func TestCoordinatorRevokesJoinBySpillingBuildHash(t *testing.T) {
+	budget := int64(100 << 20)
+	mc := NewMemoryCoordinator(budget, 0.10)
+	mon := memgov.NewTestBudget("test", budget)
+	acct := mc.RegisterOperator("join", mon.NewAccount("join"), reservationJoin)
+	_ = mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
+	mc.Finalize()
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	iter := NewJoinIteratorWithSpill(
+		NewRowScanIterator(nil, 10),
+		NewRowScanIterator(nil, 10),
+		"key",
+		"inner",
+		acct,
+		mgr,
+	)
+	defer iter.Close()
+
+	rows := []map[string]event.Value{
+		{"key": event.StringValue("a"), "right": event.StringValue("r1")},
+		{"key": event.StringValue("b"), "right": event.StringValue("r2")},
+	}
+	for _, row := range rows {
+		key := row["key"].String()
+		iter.hashMap[key] = append(iter.hashMap[key], row)
+		if err := acct.Grow(EstimateRowBytes(row)); err != nil {
+			t.Fatalf("grow join account: %v", err)
+		}
+	}
+	used := acct.Used()
+	if used == 0 {
+		t.Fatal("expected join account to hold memory before revocation")
+	}
+
+	freed := mc.HandleRevocation(used)
+	if freed != used {
+		t.Fatalf("freed bytes = %d, want %d", freed, used)
+	}
+	if acct.Used() != 0 {
+		t.Fatalf("join account used = %d, want 0", acct.Used())
+	}
+	if iter.hashMap != nil {
+		t.Fatalf("join hashMap retained after revocation spill")
+	}
+	if !iter.graceRightOpen {
+		t.Fatal("expected join right-side grace partition writers to stay open")
+	}
+	if len(iter.rightPartWriters) != defaultGracePartitions {
+		t.Fatalf("right partition writers = %d, want %d", len(iter.rightPartWriters), defaultGracePartitions)
+	}
+	if iter.spilledRows != int64(len(rows)) {
+		t.Fatalf("spilled rows = %d, want %d", iter.spilledRows, len(rows))
+	}
+	if !mc.Stats()[0].Spilled {
+		t.Fatal("expected join slot to be marked spilled")
+	}
+}
+
 func TestCoordinatorRevokesEventStatsBySpillingRows(t *testing.T) {
 	budget := int64(100 << 20)
 	mc := NewMemoryCoordinator(budget, 0.10)
@@ -333,6 +397,61 @@ func TestCoordinatorRevokesDedupByMigratingSeenSet(t *testing.T) {
 	}
 	if !mc.Stats()[0].Spilled {
 		t.Fatal("expected dedup slot to be marked spilled")
+	}
+}
+
+func TestCoordinatorRevokesOutliersBySpillingRows(t *testing.T) {
+	budget := int64(100 << 20)
+	mc := NewMemoryCoordinator(budget, 0.10)
+	mon := memgov.NewTestBudget("test", budget)
+	acct := mc.RegisterOperator("outliers", mon.NewAccount("outliers"), reservationEventStats)
+	_ = mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
+	mc.Finalize()
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("create spill manager: %v", err)
+	}
+	defer mgr.CleanupAll()
+
+	iter := NewOutliersIteratorWithBudget(NewRowScanIterator(nil, 10), "value", "iqr", 1.5, acct, mgr)
+	defer iter.Close()
+
+	rows := []map[string]event.Value{
+		{"value": event.IntValue(1), "_raw": event.StringValue("first")},
+		{"value": event.IntValue(2), "_raw": event.StringValue("second")},
+	}
+	for _, row := range rows {
+		rowBytes := EstimateRowBytes(row)
+		iter.rows = append(iter.rows, row)
+		iter.rowBytesMem += rowBytes
+		if err := acct.Grow(rowBytes); err != nil {
+			t.Fatalf("grow outliers account: %v", err)
+		}
+	}
+	used := acct.Used()
+	if used == 0 {
+		t.Fatal("expected outliers account to hold memory before revocation")
+	}
+
+	freed := mc.HandleRevocation(used)
+	if freed != used {
+		t.Fatalf("freed bytes = %d, want %d", freed, used)
+	}
+	if acct.Used() != 0 {
+		t.Fatalf("outliers account used = %d, want 0", acct.Used())
+	}
+	if !iter.spilled {
+		t.Fatal("expected outliers to enter spilled mode")
+	}
+	if len(iter.rows) != 0 {
+		t.Fatalf("outliers rows retained = %d, want 0", len(iter.rows))
+	}
+	if iter.spillPath == "" {
+		t.Fatal("expected outliers spill path")
+	}
+	if !mc.Stats()[0].Spilled {
+		t.Fatal("expected outliers slot to be marked spilled")
 	}
 }
 
@@ -578,6 +697,28 @@ func TestCountSpillableOps(t *testing.T) {
 				},
 			},
 			expected: 2,
+		},
+		{
+			name: "xyseries",
+			prog: &spl2.Program{
+				Main: &spl2.Query{
+					Commands: []spl2.Command{
+						&spl2.XYSeriesCommand{XField: "x", YField: "y", ValueField: "v"},
+					},
+				},
+			},
+			expected: 1,
+		},
+		{
+			name: "rollup",
+			prog: &spl2.Program{
+				Main: &spl2.Query{
+					Commands: []spl2.Command{
+						&spl2.RollupCommand{Spans: []string{"1m"}, GroupBy: []string{"host"}},
+					},
+				},
+			},
+			expected: 1,
 		},
 		{
 			name: "CTE with stats + main with sort",

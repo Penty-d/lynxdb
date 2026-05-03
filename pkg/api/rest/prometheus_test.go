@@ -9,6 +9,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/server"
 )
 
@@ -214,6 +215,46 @@ func TestPrometheusMetrics_ErrorCounter(t *testing.T) {
 	assertCounterValue(t, families, "lynxdb_query_errors_total", 3)
 }
 
+func TestPrometheusMetrics_QuerySpillCounters(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	pm.RecordQuery(&server.SearchStats{
+		ElapsedMS:     100,
+		SpilledToDisk: true,
+		SpillBytes:    4096,
+		PipelineStages: []server.PipelineStage{
+			{Name: "sort", SpilledRows: 10, SpillBytes: 4096},
+		},
+	})
+
+	families := gatherMetrics(t, pm)
+	assertCounterVecLabelValue(t, families, "lynxdb_query_spilled_total", "operator", "sort", 1)
+	assertCounterValue(t, families, "lynxdb_spill_bytes_total", 4096)
+}
+
+func TestPrometheusMetrics_GovernorAndSpillGauges(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	stats := &memgov.TotalStats{PressureEvents: 2}
+	stats.ByClass[memgov.ClassSpillable] = memgov.ClassStats{Allocated: 1024, Peak: 2048}
+	pm.RecordGovernorStats(stats)
+	pm.RecordSpillStats(3, 8192)
+	pm.RecordRevocationStats(10)
+
+	stats.PressureEvents = 5
+	stats.ByClass[memgov.ClassSpillable] = memgov.ClassStats{Allocated: 512, Peak: 4096}
+	pm.RecordGovernorStats(stats)
+	pm.RecordRevocationStats(25)
+
+	families := gatherMetrics(t, pm)
+	assertGaugeVecValue(t, families, "lynxdb_memgov_class_bytes", "class", "spillable", 512)
+	assertGaugeVecValue(t, families, "lynxdb_memgov_class_peak_bytes", "class", "spillable", 4096)
+	assertCounterValue(t, families, "lynxdb_memgov_pressure_events_total", 5)
+	assertCounterVecLabelValue(t, families, "lynxdb_memgov_revocation_freed_bytes_total", "class", "spillable", 25)
+	assertGaugeValue(t, families, "lynxdb_spill_files_active", 3)
+	assertGaugeValue(t, families, "lynxdb_spill_bytes_active", 8192)
+}
+
 func TestPrometheusMetrics_ResultTypeLabel(t *testing.T) {
 	pm := NewPrometheusMetrics()
 
@@ -382,6 +423,12 @@ func assertCounterValue(t *testing.T, families map[string]*dto.MetricFamily, nam
 func assertCounterVecValue(t *testing.T, families map[string]*dto.MetricFamily, name, labelValue string, expectedValue float64) {
 	t.Helper()
 
+	assertCounterVecLabelValue(t, families, name, "type", labelValue, expectedValue)
+}
+
+func assertCounterVecLabelValue(t *testing.T, families map[string]*dto.MetricFamily, name, labelName, labelValue string, expectedValue float64) {
+	t.Helper()
+
 	mf, ok := families[name]
 	if !ok {
 		if expectedValue == 0 {
@@ -394,10 +441,10 @@ func assertCounterVecValue(t *testing.T, families map[string]*dto.MetricFamily, 
 
 	for _, m := range mf.GetMetric() {
 		for _, lp := range m.GetLabel() {
-			if lp.GetName() == "type" && lp.GetValue() == labelValue {
+			if lp.GetName() == labelName && lp.GetValue() == labelValue {
 				got := m.GetCounter().GetValue()
 				if got != expectedValue {
-					t.Errorf("metric %q{type=%q}: expected %f, got %f", name, labelValue, expectedValue, got)
+					t.Errorf("metric %q{%s=%q}: expected %f, got %f", name, labelName, labelValue, expectedValue, got)
 				}
 
 				return
@@ -408,5 +455,52 @@ func assertCounterVecValue(t *testing.T, families map[string]*dto.MetricFamily, 
 	if expectedValue == 0 {
 		return // label not found and expected 0 — OK
 	}
-	t.Errorf("metric %q: label type=%q not found", name, labelValue)
+	t.Errorf("metric %q: label %s=%q not found", name, labelName, labelValue)
+}
+
+func assertGaugeValue(t *testing.T, families map[string]*dto.MetricFamily, name string, expectedValue float64) {
+	t.Helper()
+
+	mf, ok := families[name]
+	if !ok {
+		t.Errorf("metric %q not found", name)
+
+		return
+	}
+
+	var total float64
+	for _, m := range mf.GetMetric() {
+		if g := m.GetGauge(); g != nil {
+			total += g.GetValue()
+		}
+	}
+	if total != expectedValue {
+		t.Errorf("metric %q: expected gauge %f, got %f", name, expectedValue, total)
+	}
+}
+
+func assertGaugeVecValue(t *testing.T, families map[string]*dto.MetricFamily, name, labelName, labelValue string, expectedValue float64) {
+	t.Helper()
+
+	mf, ok := families[name]
+	if !ok {
+		t.Errorf("metric %q not found", name)
+
+		return
+	}
+
+	for _, m := range mf.GetMetric() {
+		for _, lp := range m.GetLabel() {
+			if lp.GetName() == labelName && lp.GetValue() == labelValue {
+				got := m.GetGauge().GetValue()
+				if got != expectedValue {
+					t.Errorf("metric %q{%s=%q}: expected %f, got %f", name, labelName, labelValue, expectedValue, got)
+				}
+
+				return
+			}
+		}
+	}
+
+	t.Errorf("metric %q: label %s=%q not found", name, labelName, labelValue)
 }

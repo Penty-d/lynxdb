@@ -17,15 +17,19 @@ type systemTableResolver struct {
 }
 
 // ResolveSystemTable returns rows for the given system table.
-// Supported tables: "parts", "columns".
+// Supported tables: "parts", "columns", "queries", "query_operators".
 func (r *systemTableResolver) ResolveSystemTable(ctx context.Context, table string) ([]map[string]event.Value, error) {
 	switch table {
 	case "parts":
 		return r.resolveParts(ctx)
 	case "columns":
 		return r.resolveColumns(ctx)
+	case "queries":
+		return r.resolveQueries(ctx)
+	case "query_operators":
+		return r.resolveQueryOperators(ctx)
 	default:
-		return nil, fmt.Errorf("unknown system table %q (available: system.parts, system.columns)", table)
+		return nil, fmt.Errorf("unknown system table %q (available: system.parts, system.columns, system.queries, system.query_operators)", table)
 	}
 }
 
@@ -167,6 +171,84 @@ func (r *systemTableResolver) resolveColumns(_ context.Context) ([]map[string]ev
 			"coverage_pct": event.StringValue(strconv.FormatFloat(coveragePct, 'f', 1, 64)),
 		})
 	}
+
+	return rows, nil
+}
+
+func (r *systemTableResolver) resolveQueries(_ context.Context) ([]map[string]event.Value, error) {
+	rows := make([]map[string]event.Value, 0)
+	r.engine.jobs.Range(func(_, value any) bool {
+		job := value.(*SearchJob)
+		job.mu.Lock()
+		defer job.mu.Unlock()
+
+		var doneAt event.Value
+		if !job.DoneAt.IsZero() {
+			doneAt = event.TimestampValue(job.DoneAt)
+		} else {
+			doneAt = event.NullValue()
+		}
+
+		var spilledRows int64
+		for _, stage := range job.Stats.PipelineStages {
+			spilledRows += stage.SpilledRows
+		}
+
+		rows = append(rows, map[string]event.Value{
+			"id":                event.StringValue(job.ID),
+			"query":             event.StringValue(job.Query),
+			"status":            event.StringValue(job.Status),
+			"created_at":        event.TimestampValue(job.CreatedAt),
+			"done_at":           doneAt,
+			"peak_memory_bytes": event.IntValue(job.Stats.PeakMemoryBytes),
+			"spilled_to_disk":   event.BoolValue(job.Stats.SpilledToDisk),
+			"spilled_rows":      event.IntValue(spilledRows),
+			"spill_bytes":       event.IntValue(job.Stats.SpillBytes),
+			"rows_scanned":      event.IntValue(job.Stats.RowsScanned),
+			"rows_returned":     event.IntValue(job.Stats.RowsReturned),
+			"error_type":        event.StringValue(job.Stats.ErrorType),
+		})
+
+		return true
+	})
+
+	return rows, nil
+}
+
+func (r *systemTableResolver) resolveQueryOperators(_ context.Context) ([]map[string]event.Value, error) {
+	rows := make([]map[string]event.Value, 0)
+	r.engine.jobs.Range(func(_, value any) bool {
+		job := value.(*SearchJob)
+		job.mu.Lock()
+		defer job.mu.Unlock()
+
+		for _, stage := range job.Stats.PipelineStages {
+			rows = append(rows, map[string]event.Value{
+				"query_id":     event.StringValue(job.ID),
+				"operator":     event.StringValue(stage.Name),
+				"input_rows":   event.IntValue(stage.InputRows),
+				"output_rows":  event.IntValue(stage.OutputRows),
+				"duration_ms":  event.FloatValue(stage.DurationMS),
+				"exclusive_ms": event.FloatValue(stage.ExclusiveMS),
+				"memory_bytes": event.IntValue(stage.MemoryBytes),
+				"spilled_rows": event.IntValue(stage.SpilledRows),
+				"spill_bytes":  event.IntValue(stage.SpillBytes),
+			})
+		}
+
+		for _, budget := range job.Stats.OperatorBudgets {
+			rows = append(rows, map[string]event.Value{
+				"query_id":     event.StringValue(job.ID),
+				"operator":     event.StringValue(budget.Label),
+				"soft_limit":   event.IntValue(budget.SoftLimit),
+				"peak_bytes":   event.IntValue(budget.PeakBytes),
+				"spilled":      event.BoolValue(budget.Spilled),
+				"budget_phase": event.StringValue(budget.Phase),
+			})
+		}
+
+		return true
+	})
 
 	return rows, nil
 }
