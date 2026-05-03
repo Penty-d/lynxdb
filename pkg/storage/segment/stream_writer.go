@@ -61,7 +61,7 @@ type bloomSectionData struct {
 // default LZ4 layer 2 compression.
 func NewStreamWriter(w io.Writer, compression CompressionType) *StreamWriter {
 	return &StreamWriter{
-		w:        NewWriterWithCompression(w, compression),
+		w:        newStreamBackingWriter(w, compression),
 		fieldSet: make(map[string]event.FieldType),
 		inv:      index.NewInvertedIndex(),
 	}
@@ -353,6 +353,18 @@ func (sw *StreamWriter) Finalize() (int64, error) {
 		return sw.w.w.written, fmt.Errorf("segment: write footer: %w", err)
 	}
 
+	header := makeHeader(LSG_FORMAT_MAJOR_V1, footer.RequiredCaps, footer.OptionalCaps)
+	if sw.w.direct {
+		n, err := sw.w.writerAt.WriteAt(header, 0)
+		if err != nil {
+			return sw.w.w.written, err
+		}
+		if n != len(header) {
+			return sw.w.w.written, io.ErrShortWrite
+		}
+		return sw.w.w.written, nil
+	}
+
 	patchHeader(sw.w.buf.Bytes(), LSG_FORMAT_MAJOR_V1, footer.RequiredCaps, footer.OptionalCaps)
 	n, err := sw.w.out.Write(sw.w.buf.Bytes())
 	if err != nil {
@@ -361,6 +373,5 @@ func (sw *StreamWriter) Finalize() (int64, error) {
 	if n != sw.w.buf.Len() {
 		return int64(n), io.ErrShortWrite
 	}
-
 	return int64(n), nil
 }

@@ -78,13 +78,17 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 
 // Writer creates .lsg segment files from a batch of events.
 type Writer struct {
-	out         io.Writer
+	out      io.Writer
+	writerAt interface {
+		WriteAt([]byte, int64) (int, error)
+	}
 	buf         bytes.Buffer
 	w           *countingWriter
 	compression CompressionType // layer 2 compression (default: LZ4)
-	sortKey     []string        // sort key fields for sparse primary index (MV segments)
-	rgSize      int             // row group size override (0 = use DefaultRowGroupSize)
-	maxColumns  int             // max user-defined columns per segment (0 = unlimited)
+	direct      bool
+	sortKey     []string // sort key fields for sparse primary index (MV segments)
+	rgSize      int      // row group size override (0 = use DefaultRowGroupSize)
+	maxColumns  int      // max user-defined columns per segment (0 = unlimited)
 }
 
 // SetSortKey configures the sort key fields used to build a sparse primary index.
@@ -118,6 +122,20 @@ func NewWriter(w io.Writer) *Writer {
 // NewWriterWithCompression creates a writer with a specific layer 2 compression.
 func NewWriterWithCompression(w io.Writer, compression CompressionType) *Writer {
 	sw := &Writer{out: w, compression: compression}
+	sw.resetBuffer()
+	return sw
+}
+
+func newStreamBackingWriter(w io.Writer, compression CompressionType) *Writer {
+	sw := &Writer{out: w, compression: compression}
+	if writerAt, ok := w.(interface {
+		WriteAt([]byte, int64) (int, error)
+	}); ok {
+		sw.writerAt = writerAt
+		sw.direct = true
+		sw.w = &countingWriter{w: w}
+		return sw
+	}
 	sw.resetBuffer()
 	return sw
 }
