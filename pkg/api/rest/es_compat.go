@@ -300,6 +300,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 
 	ingestCfg := s.currentIngestConfig()
 	pathIndex := r.PathValue("index")
+	dataStreamName := r.PathValue("data_stream")
 
 	// Decompress gzip body if Content-Encoding: gzip (Filebeat default).
 	body, err := decompressBody(r)
@@ -431,7 +432,10 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		indexName := meta.Index
+		indexName := dataStreamName
+		if indexName == "" {
+			indexName = meta.Index
+		}
 		if indexName == "" {
 			indexName = pathIndex
 		}

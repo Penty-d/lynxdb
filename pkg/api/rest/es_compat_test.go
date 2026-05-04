@@ -131,6 +131,30 @@ func TestESBulk_PathIndexFallback(t *testing.T) {
 	}
 }
 
+func TestESBulk_DataStreamRouteUsesPathName(t *testing.T) {
+	ingestCfg := config.DefaultConfig().Ingest
+	ingestCfg.OTLP.HTTPListen = ""
+	ingestCfg.OTLP.GRPCListen = ""
+	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
+	defer cleanup()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/_data_stream/logs-generic-default/_bulk", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader("{\"index\":{\"_index\":\"ignored-meta\"}}\n{\"message\":\"from data stream\"}\n"),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	result := decodeESBulkResponse(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if result.Items[0].Index.Index != "logs-generic-default" {
+		t.Fatalf("_index = %q, want logs-generic-default", result.Items[0].Index.Index)
+	}
+}
+
 func TestESBulk_CreateAction(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
