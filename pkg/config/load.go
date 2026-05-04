@@ -502,6 +502,17 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.ESCompat.ClusterName }},
+	{"LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX", "ingest.es_compat.strip_logstash_date_suffix",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.ESCompat.StripLogstashDateSuffix = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Ingest.ESCompat.StripLogstashDateSuffix) }},
 	{"LYNXDB_INGEST_OTLP_HTTP_LISTEN", "ingest.otlp.http_listen",
 		func(c *Config, v string) error {
 			c.Ingest.OTLP.HTTPListen = v

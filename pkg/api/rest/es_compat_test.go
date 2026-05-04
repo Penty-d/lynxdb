@@ -387,6 +387,35 @@ func TestESBulk_IndexMapping(t *testing.T) {
 	}
 }
 
+func TestESBulk_LogstashFormat_DateStripped(t *testing.T) {
+	ev := esDocToEventWithMapping(
+		map[string]interface{}{"message": "logstash format"},
+		"fluent-bit-2026.05.04",
+		esFieldMapping{TimeField: "@timestamp", StripLogstashDateSuffix: true},
+	)
+	if ev.Source != "fluent-bit" {
+		t.Fatalf("Source = %q, want fluent-bit", ev.Source)
+	}
+}
+
+func TestESBulk_LogstashFormat_NoStripWhenDisabled(t *testing.T) {
+	ev := esDocToEventWithMapping(
+		map[string]interface{}{"message": "logstash format"},
+		"fluent-bit-2026.05.04",
+		esFieldMapping{TimeField: "@timestamp"},
+	)
+	if ev.Source != "fluent-bit-2026.05.04" {
+		t.Fatalf("Source = %q, want fluent-bit-2026.05.04", ev.Source)
+	}
+}
+
+func TestESBulk_LogstashFormat_NonDateSuffixUnchanged(t *testing.T) {
+	got := stripLogstashDateSuffix("fluent-bit-2026.99")
+	if got != "fluent-bit-2026.99" {
+		t.Fatalf("stripLogstashDateSuffix = %q, want original", got)
+	}
+}
+
 func TestESBulk_NestedHost(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

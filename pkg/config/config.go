@@ -250,9 +250,10 @@ type IngestLimitsConfig struct {
 }
 
 type ESCompatConfig struct {
-	Enabled           bool   `yaml:"enabled" json:"enabled"`
-	AdvertisedVersion string `yaml:"advertised_version" json:"advertised_version"`
-	ClusterName       string `yaml:"cluster_name" json:"cluster_name"`
+	Enabled                 bool   `yaml:"enabled" json:"enabled"`
+	AdvertisedVersion       string `yaml:"advertised_version" json:"advertised_version"`
+	ClusterName             string `yaml:"cluster_name" json:"cluster_name"`
+	StripLogstashDateSuffix bool   `yaml:"strip_logstash_date_suffix" json:"strip_logstash_date_suffix"`
 }
 
 type OTLPConfig struct {
@@ -457,9 +458,10 @@ func DefaultConfig() *Config {
 			MaxLineBytes:  1 << 20, // 1 MB
 			DedupCapacity: 100_000,
 			ESCompat: ESCompatConfig{
-				Enabled:           true,
-				AdvertisedVersion: "8.15.0",
-				ClusterName:       "lynxdb",
+				Enabled:                 true,
+				AdvertisedVersion:       "8.15.0",
+				ClusterName:             "lynxdb",
+				StripLogstashDateSuffix: true,
 			},
 			OTLP: OTLPConfig{
 				HTTPListen:       "0.0.0.0:4318",

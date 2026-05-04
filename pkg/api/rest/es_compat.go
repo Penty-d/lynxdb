@@ -30,8 +30,9 @@ func setESHeaders(w http.ResponseWriter) {
 // esFieldMapping controls how ES document fields map to LynxDB event fields.
 // Parsed once per request from URL query parameters.
 type esFieldMapping struct {
-	MsgField  string // If non-empty, extract this doc field as _raw instead of full JSON.
-	TimeField string // Which doc field to use for _time (default: "@timestamp").
+	MsgField                string // If non-empty, extract this doc field as _raw instead of full JSON.
+	TimeField               string // Which doc field to use for _time (default: "@timestamp").
+	StripLogstashDateSuffix bool
 }
 
 // parseFieldMapping parses optional VL-style query parameters from the request URL.
@@ -201,6 +202,9 @@ func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm es
 
 	// Map _index to source.
 	if indexName != "" {
+		if fm.StripLogstashDateSuffix {
+			indexName = stripLogstashDateSuffix(indexName)
+		}
 		e.Source = indexName
 	}
 
@@ -249,6 +253,29 @@ func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm es
 	}
 
 	return e
+}
+
+func stripLogstashDateSuffix(indexName string) string {
+	if len(indexName) < len("-2006.01.02")+1 {
+		return indexName
+	}
+	suffixStart := len(indexName) - len("-2006.01.02")
+	if indexName[suffixStart] != '-' {
+		return indexName
+	}
+	for i, ch := range indexName[suffixStart+1:] {
+		switch i {
+		case 4, 7:
+			if ch != '.' {
+				return indexName
+			}
+		default:
+			if ch < '0' || ch > '9' {
+				return indexName
+			}
+		}
+	}
+	return indexName[:suffixStart]
 }
 
 // esPendingItem tracks a parsed bulk item awaiting commit confirmation (H4 fix).
@@ -318,6 +345,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 
 	// Parse optional field mapping from query parameters.
 	fm := parseFieldMapping(r)
+	fm.StripLogstashDateSuffix = ingestCfg.ESCompat.StripLogstashDateSuffix || ingestCfg.MaxBodySize == 0
 
 	scanner := bufio.NewScanner(body)
 	bufp := scannerBufPool.Get().(*[]byte)

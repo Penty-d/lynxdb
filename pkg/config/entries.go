@@ -146,6 +146,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("ingest.es_compat.enabled", strconv.FormatBool(cfg.Ingest.ESCompat.Enabled), strconv.FormatBool(dflt.Ingest.ESCompat.Enabled), strconv.FormatBool(fileCfg.Ingest.ESCompat.Enabled), "LYNXDB_INGEST_ES_COMPAT_ENABLED")
 	add("ingest.es_compat.advertised_version", cfg.Ingest.ESCompat.AdvertisedVersion, dflt.Ingest.ESCompat.AdvertisedVersion, fileCfg.Ingest.ESCompat.AdvertisedVersion, "LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION")
 	add("ingest.es_compat.cluster_name", cfg.Ingest.ESCompat.ClusterName, dflt.Ingest.ESCompat.ClusterName, fileCfg.Ingest.ESCompat.ClusterName, "LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME")
+	add("ingest.es_compat.strip_logstash_date_suffix", strconv.FormatBool(cfg.Ingest.ESCompat.StripLogstashDateSuffix), strconv.FormatBool(dflt.Ingest.ESCompat.StripLogstashDateSuffix), strconv.FormatBool(fileCfg.Ingest.ESCompat.StripLogstashDateSuffix), "LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX")
 	add("ingest.otlp.http_listen", cfg.Ingest.OTLP.HTTPListen, dflt.Ingest.OTLP.HTTPListen, fileCfg.Ingest.OTLP.HTTPListen, "LYNXDB_INGEST_OTLP_HTTP_LISTEN")
 	add("ingest.otlp.grpc_listen", cfg.Ingest.OTLP.GRPCListen, dflt.Ingest.OTLP.GRPCListen, fileCfg.Ingest.OTLP.GRPCListen, "LYNXDB_INGEST_OTLP_GRPC_LISTEN")
 	add("ingest.otlp.grpc_max_recv_bytes", cfg.Ingest.OTLP.GRPCMaxRecvBytes.String(), dflt.Ingest.OTLP.GRPCMaxRecvBytes.String(), fileCfg.Ingest.OTLP.GRPCMaxRecvBytes.String(), "LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES")

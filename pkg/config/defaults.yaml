@@ -72,6 +72,7 @@
 #     enabled: true                  # Enable drop-in Elasticsearch shipper endpoints
 #     advertised_version: 8.15.0     # Version shown to Filebeat/Fluent Bit/Vector
 #     cluster_name: lynxdb           # Cluster name in Elasticsearch handshake
+#     strip_logstash_date_suffix: true # Map Fluent Bit Logstash_Format indexes to one source
 #   otlp:
 #     http_listen: 0.0.0.0:4318      # Canonical OTLP/HTTP listen address (empty = disabled)
 #     grpc_listen:                   # OTLP/gRPC listen address (empty = disabled)
