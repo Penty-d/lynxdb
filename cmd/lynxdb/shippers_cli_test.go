@@ -75,3 +75,14 @@ func TestShippersList_WithServer_PrintsTable(t *testing.T) {
 		}
 	}
 }
+
+func TestShippersTest_Filebeat_RoundTrip(t *testing.T) {
+	baseURL := newTestServer(t)
+	stdout, _, err := runCmd(t, "--server", baseURL, "shippers", "test", "filebeat")
+	if err != nil {
+		t.Fatalf("runCmd: %v", err)
+	}
+	if !strings.Contains(stdout, "OK filebeat roundtrip succeeded") {
+		t.Fatalf("unexpected output:\n%s", stdout)
+	}
+}
