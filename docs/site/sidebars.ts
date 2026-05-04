@@ -216,6 +216,7 @@ const sidebars: SidebarsConfig = {
         'architecture/segment-format',
         'architecture/query-engine',
         'architecture/indexing',
+        'architecture/es-stubs',
         'architecture/distributed',
         'architecture/design-decisions',
       ],
