@@ -63,6 +63,7 @@ type Server struct {
 	esStubs            *eshttp.Stubs
 	promMetrics        *PrometheusMetrics
 	shipperRegistry    *shipperstats.Registry
+	splunkAckStore     *splunkhec.AckStore
 	levelVar           *slog.LevelVar
 	logger             *slog.Logger
 }
@@ -167,6 +168,7 @@ func NewServer(cfg Config) (*Server, error) {
 		tailCfg:         cfg.Tail,
 		tlsConfig:       cfg.TLSConfig,
 		shipperRegistry: shipperstats.NewRegistry(shipperstats.DefaultRegistrySize),
+		splunkAckStore:  splunkhec.NewAckStore(10000),
 		levelVar:        cfg.LevelVar,
 		logger:          cfg.Logger,
 	}
@@ -330,6 +332,7 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /services/collector/event", s.handleSplunkHECEvent)
 	mux.HandleFunc("POST /services/collector", s.handleSplunkHECEvent)
 	mux.HandleFunc("POST /services/collector/raw", s.handleSplunkHECRaw)
+	mux.HandleFunc("POST /services/collector/ack", s.handleSplunkHECAck)
 	mux.HandleFunc("GET /services/collector/health", s.handleSplunkHECHealth)
 	// Field catalog.
 	mux.HandleFunc("GET /api/v1/fields", s.handleListFields)
@@ -781,6 +784,7 @@ func (s *Server) splunkHECHandler(requireSplunkAuth bool) *splunkhec.Handler {
 		Auth:               authCfg,
 		MaxBatchSize:       ingestCfg.MaxBatchSize,
 		MaxLineBytes:       ingestCfg.MaxLineBytes,
+		AckStore:           s.splunkAckStore,
 		RespondIngestError: func(w http.ResponseWriter, err error) { respondIngestError(w, err) },
 	}, s.submitPipelineEvents)
 }
@@ -807,6 +811,14 @@ func (s *Server) handleSplunkHECHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.splunkHECHandler(false).HandleHealth(w, r)
+}
+
+func (s *Server) handleSplunkHECAck(w http.ResponseWriter, r *http.Request) {
+	if !s.currentIngestConfig().SplunkHEC.Enabled {
+		respondJSON(w, http.StatusNotFound, map[string]interface{}{"text": "HEC is disabled", "code": 4})
+		return
+	}
+	s.splunkHECHandler(true).HandleAck(w, r)
 }
 
 func (s *Server) startStagingBuffer() {

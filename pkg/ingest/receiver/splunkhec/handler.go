@@ -17,6 +17,7 @@ type Config struct {
 	Auth               AuthConfig
 	MaxBatchSize       int
 	MaxLineBytes       int
+	AckStore           *AckStore
 	RespondIngestError func(http.ResponseWriter, error)
 }
 
@@ -52,6 +53,9 @@ func (h *Handler) HandleEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]interface{}{"text": "Success", "code": 0}
+	if ackID := h.recordAck(r, true); ackID > 0 {
+		resp["ackId"] = ackID
+	}
 	if skipped > 0 {
 		resp["skipped_lines"] = skipped
 	}
@@ -74,11 +78,37 @@ func (h *Handler) HandleRaw(w http.ResponseWriter, r *http.Request) {
 		h.respondIngestError(w, err)
 		return
 	}
-	respond(w, http.StatusOK, "Success", 0)
+	resp := map[string]interface{}{"text": "Success", "code": 0}
+	if ackID := h.recordAck(r, true); ackID > 0 {
+		resp["ackId"] = ackID
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, "HEC is healthy", 17)
+}
+
+func (h *Handler) HandleAck(w http.ResponseWriter, r *http.Request) {
+	if err := h.cfg.Auth.Authorize(r); err != nil {
+		respondAuthError(w, err)
+		return
+	}
+	var req struct {
+		Acks []int `json:"acks"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond(w, http.StatusBadRequest, "Invalid ack request", 5)
+		return
+	}
+	channel := r.Header.Get("X-Splunk-Request-Channel")
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"acks": h.cfg.AckStore.Check(channel, req.Acks),
+	})
+}
+
+func (h *Handler) recordAck(r *http.Request, ok bool) int {
+	return h.cfg.AckStore.Record(r.Header.Get("X-Splunk-Request-Channel"), ok)
 }
 
 func (h *Handler) scan(r *http.Request, build func(string) (*event.Event, bool)) (int, error) {

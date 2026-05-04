@@ -17,7 +17,8 @@ func TestE2E_Shipper_SplunkHEC(t *testing.T) {
 	rig := StartLynxDB(t)
 	fixture := writeHECFixture(t, 100)
 	cmd := fmt.Sprintf(
-		`curl -fsS -H 'Authorization: Splunk token' -H 'Content-Type: application/json' --data-binary @/tmp/hec.jsonl http://host.docker.internal:%d/services/collector/event && echo hec-success`,
+		`resp=$(curl -fsS -H 'Authorization: Splunk token' -H 'X-Splunk-Request-Channel: e2e-channel' -H 'Content-Type: application/json' --data-binary @/tmp/hec.jsonl http://host.docker.internal:%d/services/collector/event) && ack=$(echo "$resp" | sed -n 's/.*"ackId":\([0-9][0-9]*\).*/\1/p') && test -n "$ack" && curl -fsS -H 'Authorization: Splunk token' -H 'X-Splunk-Request-Channel: e2e-channel' -H 'Content-Type: application/json' --data-binary "{\"acks\":[${ack}]}" http://host.docker.internal:%d/services/collector/ack && echo hec-success`,
+		rig.ESPort,
 		rig.ESPort,
 	)
 

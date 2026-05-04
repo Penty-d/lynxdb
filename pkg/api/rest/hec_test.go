@@ -147,3 +147,59 @@ func TestIntegration_HEC_LegacyAlias_StillWorksWithoutSplunkToken(t *testing.T) 
 		t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
 	}
 }
+
+func TestIntegration_HEC_AckMode_RoundTrip(t *testing.T) {
+	srv, cleanup := startHECTestServer(t)
+	defer cleanup()
+
+	req, _ := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("http://%s/services/collector/event", srv.Addr()),
+		bytes.NewBufferString(`{"event":"ack hello","index":"splunk-main"}`),
+	)
+	req.Header.Set("Authorization", "Splunk token")
+	req.Header.Set("X-Splunk-Request-Channel", "channel-a")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
+	}
+	var eventBody map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&eventBody); err != nil {
+		t.Fatalf("decode event response: %v", err)
+	}
+	ackID, ok := eventBody["ackId"].(float64)
+	if !ok || ackID == 0 {
+		t.Fatalf("ackId = %#v, want positive number", eventBody["ackId"])
+	}
+
+	ackReq, _ := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("http://%s/services/collector/ack", srv.Addr()),
+		bytes.NewBufferString(fmt.Sprintf(`{"acks":[%d]}`, int(ackID))),
+	)
+	ackReq.Header.Set("Authorization", "Splunk token")
+	ackReq.Header.Set("X-Splunk-Request-Channel", "channel-a")
+	ackReq.Header.Set("Content-Type", "application/json")
+	ackResp, err := http.DefaultClient.Do(ackReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ackResp.Body.Close()
+	if ackResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(ackResp.Body)
+		t.Fatalf("ack status = %d, want 200, body=%s", ackResp.StatusCode, body)
+	}
+	var ackBody struct {
+		Acks map[string]bool `json:"acks"`
+	}
+	if err := json.NewDecoder(ackResp.Body).Decode(&ackBody); err != nil {
+		t.Fatalf("decode ack response: %v", err)
+	}
+	if !ackBody.Acks[fmt.Sprint(int(ackID))] {
+		t.Fatalf("ack %d = false, want true", int(ackID))
+	}
+}
