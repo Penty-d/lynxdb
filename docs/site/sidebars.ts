@@ -19,7 +19,18 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Guides',
       items: [
-        'guides/ingest-data',
+        {
+          type: 'category',
+          label: 'Ingest Data',
+          link: {type: 'doc', id: 'guides/ingest-data'},
+          items: [
+            'guides/ingest-data/filebeat',
+            'guides/ingest-data/fluent-bit',
+            'guides/ingest-data/vector',
+            'guides/ingest-data/opentelemetry',
+            'guides/ingest-data/splunk-hec',
+          ],
+        },
         'guides/search-and-filter',
         'guides/aggregations',
         'guides/field-extraction',
