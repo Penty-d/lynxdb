@@ -72,6 +72,11 @@ jobs:
           cache: "npm"
           cache-dependency-path: docs/site/package-lock.json
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install docs dependencies
         working-directory: docs/site
         run: npm ci
@@ -79,6 +84,9 @@ jobs:
       - name: Build docs
         working-directory: docs/site
         run: npm run build
+
+      - name: Build Web UI
+        run: make webui
 
       - name: Check shipper docs
         run: make docs-check-shippers
