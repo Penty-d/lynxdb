@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -394,6 +395,8 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.Handle("GET /_xpack/license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
 	mux.Handle("GET /_license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
 	mux.Handle("GET /_cat/templates", s.esCompatibilityHandler("templates", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("GET /_cat/indices", s.esCompatibilityHandler("cat_indices", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("GET /_cluster/health", s.esCompatibilityHandler("cluster_health", http.HandlerFunc(esStubs.ClusterHealth)))
 	mux.Handle("PUT /_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.Acknowledged)))
 	mux.Handle("GET /_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.IndexTemplates)))
 	mux.Handle("GET /_ilm/policy/{name...}", s.esCompatibilityHandler("ilm", http.HandlerFunc(esStubs.NotFound)))
@@ -401,6 +404,9 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.Handle("GET /_nodes/{path...}", s.esCompatibilityHandler("nodes", http.HandlerFunc(esStubs.NodesHTTP)))
 	mux.Handle("GET /_alias", s.esCompatibilityHandler("alias", http.HandlerFunc(esStubs.EmptyAliases)))
 	mux.Handle("GET /_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.EmptyDataStreams)))
+	mux.Handle("PUT /_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.Acknowledged)))
+	mux.Handle("GET /_search", s.esCompatibilityHandler("search", http.HandlerFunc(esStubs.EmptySearch)))
+	mux.Handle("POST /_security/user/_authenticate", s.esCompatibilityHandler("security", http.HandlerFunc(esStubs.Authenticated)))
 	mux.HandleFunc("POST /_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /{index}/_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /api/v1/es/_bulk", s.handleESBulk)
@@ -414,6 +420,8 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.Handle("GET /api/v1/es/_xpack/license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
 	mux.Handle("GET /api/v1/es/_license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
 	mux.Handle("GET /api/v1/es/_cat/templates", s.esCompatibilityHandler("templates", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("GET /api/v1/es/_cat/indices", s.esCompatibilityHandler("cat_indices", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("GET /api/v1/es/_cluster/health", s.esCompatibilityHandler("cluster_health", http.HandlerFunc(esStubs.ClusterHealth)))
 	mux.Handle("GET /api/v1/es/_ilm/policy/{name...}", s.esCompatibilityHandler("ilm", http.HandlerFunc(esStubs.NotFound)))
 	mux.HandleFunc("PUT /api/v1/es/_ilm/policy/{name...}", esStub)
 	mux.Handle("GET /api/v1/es/_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.IndexTemplates)))
@@ -422,8 +430,11 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("PUT /api/v1/es/_ingest/pipeline/{name...}", esStub)
 	mux.Handle("GET /api/v1/es/_nodes/{path...}", s.esCompatibilityHandler("nodes", http.HandlerFunc(esStubs.NodesHTTP)))
 	mux.Handle("GET /api/v1/es/_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.EmptyDataStreams)))
+	mux.Handle("PUT /api/v1/es/_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.Acknowledged)))
 	mux.Handle("GET /api/v1/es/_alias", s.esCompatibilityHandler("alias", http.HandlerFunc(esStubs.EmptyAliases)))
-	// PUT/HEAD /{index} must be registered after underscore-prefixed paths
+	mux.Handle("GET /api/v1/es/_search", s.esCompatibilityHandler("search", http.HandlerFunc(esStubs.EmptySearch)))
+	mux.Handle("POST /api/v1/es/_security/user/_authenticate", s.esCompatibilityHandler("security", http.HandlerFunc(esStubs.Authenticated)))
+	// PUT /{index} must be registered after underscore-prefixed paths
 	// to avoid Go 1.22+ ServeMux wildcard-vs-specific conflicts.
 	mux.HandleFunc("PUT /api/v1/es/{index}", esStub)
 
@@ -465,6 +476,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → DualLimit → ShipperFingerprint → mux.
 	// Auth runs before rate limiting so unauthenticated requests don't consume quota.
 	var handler http.Handler = mux
+	handler = s.esIndexHeadMiddleware(handler)
 	handler = ShipperFingerprintMiddleware(s.shipperRegistry, handler)
 	handler = limits.DualLimitMiddleware(limits.Config{
 		MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
@@ -491,6 +503,27 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	return s, nil
+}
+
+func (s *Server) esIndexHeadMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && isESIndexHeadProbe(r.URL.Path) {
+			s.esCompatibilityHandler("index_head", http.HandlerFunc(s.esStubs.HeadOK)).ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isESIndexHeadProbe(path string) bool {
+	if rest, ok := strings.CutPrefix(path, "/api/v1/es/"); ok {
+		return rest != "" && !strings.Contains(rest, "/") && !strings.HasPrefix(rest, "_")
+	}
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "health" || trimmed == "metrics" {
+		return false
+	}
+	return trimmed != "" && !strings.Contains(trimmed, "/") && !strings.HasPrefix(trimmed, "_")
 }
 
 func normalizedESCompatConfig(ingest config.IngestConfig) config.ESCompatConfig {

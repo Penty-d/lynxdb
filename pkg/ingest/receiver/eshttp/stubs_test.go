@@ -113,6 +113,67 @@ func TestStub_NodesHTTP_ReturnsNodeInfo(t *testing.T) {
 	}
 }
 
+func TestStub_ClusterHealth_ReturnsGreen(t *testing.T) {
+	stubs := newTestStubs(t)
+	resp, body := serveStub(t, http.HandlerFunc(stubs.ClusterHealth), http.MethodGet, "/_cluster/health")
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if body["status"] != "green" {
+		t.Fatalf("status = %#v, want green", body["status"])
+	}
+	if body["number_of_nodes"] != float64(1) {
+		t.Fatalf("number_of_nodes = %#v, want 1", body["number_of_nodes"])
+	}
+}
+
+func TestStub_EmptySearch_ReturnsNoHits(t *testing.T) {
+	stubs := newTestStubs(t)
+	resp, body := serveStub(t, http.HandlerFunc(stubs.EmptySearch), http.MethodGet, "/_search")
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	hits := body["hits"].(map[string]interface{})
+	total := hits["total"].(map[string]interface{})
+	if total["value"] != float64(0) {
+		t.Fatalf("hits.total.value = %#v, want 0", total["value"])
+	}
+	if len(hits["hits"].([]interface{})) != 0 {
+		t.Fatalf("hits.hits = %#v, want empty", hits["hits"])
+	}
+}
+
+func TestStub_Authenticated_ReturnsTrue(t *testing.T) {
+	stubs := newTestStubs(t)
+	resp, body := serveStub(t, http.HandlerFunc(stubs.Authenticated), http.MethodPost, "/_security/user/_authenticate")
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if body["authenticated"] != true {
+		t.Fatalf("authenticated = %#v, want true", body["authenticated"])
+	}
+}
+
+func TestStub_HeadOK_NoBody(t *testing.T) {
+	stubs := newTestStubs(t)
+	req := httptest.NewRequest(http.MethodHead, "/logs", nil)
+	rr := httptest.NewRecorder()
+
+	stubs.HeadOK(rr, req)
+
+	resp := rr.Result()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
+		t.Fatalf("X-Elastic-Product = %q", got)
+	}
+}
+
 func newTestStubs(t *testing.T) *Stubs {
 	t.Helper()
 	stubs, err := NewStubs(Config{

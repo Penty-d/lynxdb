@@ -870,6 +870,65 @@ func TestESStub_IndexTemplate(t *testing.T) {
 	}
 }
 
+func TestESStub_ExpandedProbeRoutes(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	tests := []struct {
+		method string
+		path   string
+		status int
+	}{
+		{http.MethodGet, "/_cluster/health", http.StatusOK},
+		{http.MethodGet, "/_search", http.StatusOK},
+		{http.MethodGet, "/_cat/indices", http.StatusOK},
+		{http.MethodPut, "/_data_stream/logs-generic-default", http.StatusOK},
+		{http.MethodHead, "/logs-generic-default", http.StatusOK},
+		{http.MethodPost, "/_security/user/_authenticate", http.StatusOK},
+		{http.MethodGet, "/api/v1/es/_cluster/health", http.StatusOK},
+		{http.MethodHead, "/api/v1/es/logs-generic-default", http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			req, _ := http.NewRequest(tt.method, fmt.Sprintf("http://%s%s", srv.Addr(), tt.path), nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.status {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.status)
+			}
+			if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
+				t.Fatalf("X-Elastic-Product = %q", got)
+			}
+		})
+	}
+}
+
+func TestESStub_IndexHeadProbe_DoesNotShadowTopLevelRoutes(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	for _, path := range []string{"/health", "/metrics"} {
+		t.Run(path, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodHead, fmt.Sprintf("http://%s%s", srv.Addr(), path), nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if got := resp.Header.Get("X-Elastic-Product"); got != "" {
+				t.Fatalf("X-Elastic-Product = %q, want empty", got)
+			}
+		})
+	}
+}
+
 func TestESStub_IngestPipeline(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

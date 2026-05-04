@@ -51,6 +51,11 @@ func (s *Stubs) Acknowledged(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Stubs) HeadOK(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Elastic-Product", "Elasticsearch")
+	w.WriteHeader(http.StatusOK)
+}
+
 func (s *Stubs) NotFound(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusNotFound, map[string]interface{}{})
 }
@@ -81,6 +86,53 @@ func (s *Stubs) EmptyAliases(w http.ResponseWriter, r *http.Request) {
 func (s *Stubs) EmptyDataStreams(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, map[string]interface{}{
 		"data_streams": []interface{}{},
+	})
+}
+
+func (s *Stubs) ClusterHealth(w http.ResponseWriter, r *http.Request) {
+	respond(w, http.StatusOK, map[string]interface{}{
+		"cluster_name":                    s.cfg.ClusterName,
+		"status":                          "green",
+		"timed_out":                       false,
+		"number_of_nodes":                 1,
+		"number_of_data_nodes":            1,
+		"active_primary_shards":           0,
+		"active_shards":                   0,
+		"relocating_shards":               0,
+		"initializing_shards":             0,
+		"unassigned_shards":               0,
+		"delayed_unassigned_shards":       0,
+		"number_of_pending_tasks":         0,
+		"active_shards_percent_as_number": 100.0,
+	})
+}
+
+func (s *Stubs) EmptySearch(w http.ResponseWriter, r *http.Request) {
+	respond(w, http.StatusOK, map[string]interface{}{
+		"took":      0,
+		"timed_out": false,
+		"_shards": map[string]interface{}{
+			"total":      1,
+			"successful": 1,
+			"skipped":    0,
+			"failed":     0,
+		},
+		"hits": map[string]interface{}{
+			"total": map[string]interface{}{
+				"value":    0,
+				"relation": "eq",
+			},
+			"max_score": nil,
+			"hits":      []interface{}{},
+		},
+	})
+}
+
+func (s *Stubs) Authenticated(w http.ResponseWriter, r *http.Request) {
+	respond(w, http.StatusOK, map[string]interface{}{
+		"username":      "lynxdb",
+		"authenticated": true,
+		"roles":         []interface{}{},
 	})
 }
 
