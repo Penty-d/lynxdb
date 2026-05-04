@@ -13,23 +13,9 @@ env:
 
 jobs:
   conformance:
-    name: ${{ matrix.shipper }}
+    name: e2e matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - shipper: filebeat-8.15
-            target: test-compat-filebeat
-          - shipper: fluent-bit-3.x
-            target: test-compat-fluentbit
-          - shipper: vector-0.40
-            target: test-compat-vector
-          - shipper: otelcol-0.105
-            target: test-compat-otelcol
-          - shipper: splunk-hec
-            target: test-compat-splunk-hec
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,5 +33,5 @@ jobs:
       - name: Build Web UI
         run: make webui
 
-      - name: Run conformance cell
-        run: make ${{ matrix.target }}
+      - name: Run conformance matrix
+        run: make test-conformance

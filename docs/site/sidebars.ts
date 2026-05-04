@@ -203,6 +203,7 @@ const sidebars: SidebarsConfig = {
         'operations/retention',
         'operations/rebalancing',
         'operations/performance-tuning',
+        'operations/shipper-conformance',
         'operations/troubleshooting',
         'operations/upgrading',
       ],
