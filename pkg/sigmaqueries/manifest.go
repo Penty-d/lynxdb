@@ -21,6 +21,11 @@ func ReadManifestFile(path string) (*Manifest, error) {
 	return ReadManifestReader(f)
 }
 
+// ReadManifest reads an rsigma sidecar manifest from path.
+func ReadManifest(path string) (*Manifest, error) {
+	return ReadManifestFile(path)
+}
+
 // ReadManifestReader decodes an rsigma sidecar manifest from r.
 func ReadManifestReader(r io.Reader) (*Manifest, error) {
 	dec := json.NewDecoder(r)
