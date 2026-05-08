@@ -32,6 +32,7 @@ type Writer struct {
 	fsync        bool // whether to fsync before rename (default: true)
 	maxColumns   int  // max user-defined columns per part (0 = unlimited)
 	disableBSI   bool // disables range BSI sections for this writer
+	formatMajor  uint16
 	logger       *slog.Logger
 }
 
@@ -71,6 +72,14 @@ func WithMaxColumns(n int) WriterOption {
 func WithDisableBSI(disabled bool) WriterOption {
 	return func(w *Writer) {
 		w.disableBSI = disabled
+	}
+}
+
+// WithFormatMajor selects the LSG format major emitted by this writer.
+// A zero value keeps the segment package default.
+func WithFormatMajor(major uint16) WriterOption {
+	return func(w *Writer) {
+		w.formatMajor = major
 	}
 }
 
@@ -155,6 +164,12 @@ func (w *Writer) Write(ctx context.Context, index string, events []*event.Event,
 	}
 
 	sw := segment.NewWriterWithCompression(f, w.compression)
+	if err := sw.SetFormatMajor(w.formatMajor); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+
+		return nil, fmt.Errorf("part.Writer.Write: format major: %w", err)
+	}
 	sw.SetRowGroupSize(w.rowGroupSize)
 	if w.maxColumns > 0 {
 		sw.SetMaxColumns(w.maxColumns)

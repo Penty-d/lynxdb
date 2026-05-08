@@ -1,5 +1,10 @@
 package segment
 
+import (
+	"fmt"
+	"sync"
+)
+
 const (
 	LSG_MAGIC_V1       = "LSG1"
 	LSG_FOOTER_MAGIC   = "LSGE"
@@ -18,6 +23,46 @@ const (
 )
 
 var defaultFormatMajor = LSG_FORMAT_MAJOR_V2
+
+var defaultFormatMajorMu sync.RWMutex
+
+// ValidateFormatMajor reports whether major is supported by this binary.
+func ValidateFormatMajor(major uint16) error {
+	if major < LSG_BINARY_MIN_MAJOR || major > LSG_BINARY_MAX_MAJOR {
+		return fmt.Errorf("%w: unsupported format major version %d (this binary supports %d..%d)",
+			ErrUnsupportedMajor, major, LSG_BINARY_MIN_MAJOR, LSG_BINARY_MAX_MAJOR)
+	}
+	return nil
+}
+
+// SetDefaultFormatMajorForProcess overrides the process-wide fallback format
+// major used by writers that do not have an explicit format major. The returned
+// function restores the previous value. Prefer per-writer SetFormatMajor for
+// normal production paths; this hook exists for CLI benchmarks and migration
+// fixture generation.
+func SetDefaultFormatMajorForProcess(major uint16) (func(), error) {
+	if err := ValidateFormatMajor(major); err != nil {
+		return nil, err
+	}
+
+	defaultFormatMajorMu.Lock()
+	previous := defaultFormatMajor
+	defaultFormatMajor = major
+	defaultFormatMajorMu.Unlock()
+
+	return func() {
+		defaultFormatMajorMu.Lock()
+		defaultFormatMajor = previous
+		defaultFormatMajorMu.Unlock()
+	}, nil
+}
+
+func currentDefaultFormatMajor() uint16 {
+	defaultFormatMajorMu.RLock()
+	major := defaultFormatMajor
+	defaultFormatMajorMu.RUnlock()
+	return major
+}
 
 func MagicForMajor(major uint16) string {
 	if major > 9 {

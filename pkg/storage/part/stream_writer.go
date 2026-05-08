@@ -38,6 +38,7 @@ type PartStreamWriter struct {
 	fsync        bool
 	maxColumns   int
 	disableBSI   bool
+	formatMajor  uint16
 	logger       *slog.Logger
 
 	// File state.
@@ -80,6 +81,7 @@ func NewPartStreamWriter(layout *Layout, index string, level int, opts ...Writer
 		fsync:        tmp.fsync,
 		maxColumns:   tmp.maxColumns,
 		disableBSI:   tmp.disableBSI,
+		formatMajor:  tmp.formatMajor,
 		logger:       tmp.logger,
 		columns:      make(map[string]struct{}),
 		startNow:     time.Now(),
@@ -134,6 +136,13 @@ func (psw *PartStreamWriter) initFile(events []*event.Event) error {
 	psw.file = f
 
 	psw.sw = segment.NewStreamWriter(f, psw.compression)
+	if err := psw.sw.SetFormatMajor(psw.formatMajor); err != nil {
+		f.Close()
+		os.Remove(psw.tmpPath)
+		psw.file = nil
+		psw.tmpPath = ""
+		return fmt.Errorf("part.PartStreamWriter: format major: %w", err)
+	}
 	psw.sw.SetRowGroupSize(psw.rowGroupSize)
 	if psw.maxColumns > 0 {
 		psw.sw.SetMaxColumns(psw.maxColumns)

@@ -128,7 +128,7 @@ func (f *Footer) computeStats() []ColumnStats {
 }
 
 func encodeFooter(f *Footer) []byte {
-	return encodeFooterForMajor(f, defaultFormatMajor)
+	return encodeFooterForMajor(f, currentDefaultFormatMajor())
 }
 
 func encodeFooterForMajor(f *Footer, major uint16) []byte {
@@ -256,11 +256,12 @@ func decodeFooter(data []byte) (*Footer, error) {
 		}
 	}
 
-	footer, err := decodeFooterForMajor(data, defaultFormatMajor)
+	formatMajor := currentDefaultFormatMajor()
+	footer, err := decodeFooterForMajor(data, formatMajor)
 	if err == nil {
 		return footer, nil
 	}
-	if defaultFormatMajor != LSG_FORMAT_MAJOR_V1 {
+	if formatMajor != LSG_FORMAT_MAJOR_V1 {
 		if footer, v1Err := decodeFooterForMajor(data, LSG_FORMAT_MAJOR_V1); v1Err == nil {
 			return footer, nil
 		}

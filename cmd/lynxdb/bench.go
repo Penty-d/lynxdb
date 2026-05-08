@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 var (
@@ -30,6 +33,12 @@ func init() {
 }
 
 func runBench(cmd *cobra.Command, args []string) error {
+	if restore, err := applyBenchFormatMajorEnv(); err != nil {
+		return err
+	} else if restore != nil {
+		defer restore()
+	}
+
 	n := flagBenchEvents
 	if n <= 0 {
 		return fmt.Errorf("--events must be a positive integer (got %d)", n)
@@ -96,6 +105,22 @@ func runBench(cmd *cobra.Command, args []string) error {
 	printSuccess("Done.")
 
 	return nil
+}
+
+func applyBenchFormatMajorEnv() (func(), error) {
+	raw := os.Getenv("LYNXDB_DEFAULT_FORMAT_MAJOR")
+	if raw == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseUint(raw, 10, 16)
+	if err != nil {
+		return nil, fmt.Errorf("LYNXDB_DEFAULT_FORMAT_MAJOR=%q: %w", raw, err)
+	}
+	restore, err := segment.SetDefaultFormatMajorForProcess(uint16(n))
+	if err != nil {
+		return nil, fmt.Errorf("LYNXDB_DEFAULT_FORMAT_MAJOR=%q: %w", raw, err)
+	}
+	return restore, nil
 }
 
 func generateBenchLines(n int) []string {

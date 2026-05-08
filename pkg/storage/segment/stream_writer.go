@@ -91,6 +91,13 @@ func (sw *StreamWriter) SetIndexConfig(cfg IndexConfig) {
 	sw.w.SetIndexConfig(cfg)
 }
 
+// SetFormatMajor configures the LSG format major emitted by this writer.
+// A zero value reverts to the package default. It must be called before the
+// first WriteRowGroup.
+func (sw *StreamWriter) SetFormatMajor(major uint16) error {
+	return sw.w.SetFormatMajor(major)
+}
+
 // WriteRowGroup writes a single row group of events to the segment.
 // Events within the row group should be sorted by timestamp.
 // The field set is accumulated progressively across row groups.
@@ -154,7 +161,7 @@ func (sw *StreamWriter) WriteRowGroup(events []*event.Event) error {
 
 	// Write header on first call; caps are patched at Finalize.
 	if !sw.headerWritten {
-		header := makeHeader(defaultFormatMajor, 0, 0)
+		header := makeHeader(sw.w.effectiveFormatMajor(), 0, 0)
 		if _, err := sw.w.w.Write(header); err != nil {
 			return fmt.Errorf("segment: write header: %w", err)
 		}
@@ -250,7 +257,7 @@ func (sw *StreamWriter) WriteRowGroup(events []*event.Event) error {
 		length: sw.w.w.written - bloomSectionOffset,
 	})
 
-	if defaultFormatMajor >= LSG_FORMAT_MAJOR_V2 && !sw.w.indexConfig.DisableBSI {
+	if sw.w.effectiveFormatMajor() >= LSG_FORMAT_MAJOR_V2 && !sw.w.indexConfig.DisableBSI {
 		rangeColumns := collectRangeBSIColumns(events, catalog, sw.w.indexConfig)
 		if len(rangeColumns) > 0 {
 			if sw.rangeCatalogColumns == nil {
@@ -367,7 +374,7 @@ func (sw *StreamWriter) Finalize() (int64, error) {
 		}
 	}
 
-	if defaultFormatMajor >= LSG_FORMAT_MAJOR_V2 && !sw.w.indexConfig.DisableBSI {
+	if sw.w.effectiveFormatMajor() >= LSG_FORMAT_MAJOR_V2 && !sw.w.indexConfig.DisableBSI {
 		for rgIdx, section := range sw.rangeSections {
 			if len(section) == 0 {
 				continue
@@ -401,7 +408,7 @@ func (sw *StreamWriter) Finalize() (int64, error) {
 		Catalog:        finalCatalog,
 	}
 	footer.RequiredCaps, footer.OptionalCaps = aggregateCapabilities(sw.rowGroups)
-	formatMajor := defaultFormatMajor
+	formatMajor := sw.w.effectiveFormatMajor()
 	footerBytes := encodeFooterForMajor(footer, formatMajor)
 	if _, err := sw.w.w.Write(footerBytes); err != nil {
 		return sw.w.w.written, fmt.Errorf("segment: write footer: %w", err)

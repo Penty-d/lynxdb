@@ -90,6 +90,7 @@ type Writer struct {
 	rgSize      int      // row group size override (0 = use DefaultRowGroupSize)
 	maxColumns  int      // max user-defined columns per segment (0 = unlimited)
 	indexConfig IndexConfig
+	formatMajor uint16 // 0 = package default
 }
 
 // SetSortKey configures the sort key fields used to build a sparse primary index.
@@ -154,6 +155,21 @@ func (sw *Writer) SetIndexConfig(cfg IndexConfig) {
 	sw.indexConfig = cfg
 }
 
+// SetFormatMajor configures the LSG format major emitted by this writer.
+// A zero value reverts to the package default. The writer must not have
+// started writing when this is called.
+func (sw *Writer) SetFormatMajor(major uint16) error {
+	if major == 0 {
+		sw.formatMajor = 0
+		return nil
+	}
+	if err := ValidateFormatMajor(major); err != nil {
+		return err
+	}
+	sw.formatMajor = major
+	return nil
+}
+
 // builtinColumns is the ordered list of builtin column names.
 // Used to compute catalog indices for presence bitmap.
 var builtinColumns = []string{"_time", "_raw", "_source", "_sourcetype", "host", "index"}
@@ -173,7 +189,7 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 	}
 	rgCount := (len(events) + rgSize - 1) / rgSize
 
-	formatMajor := defaultFormatMajor
+	formatMajor := sw.effectiveFormatMajor()
 	header := makeHeader(formatMajor, 0, 0)
 	if _, err := sw.w.Write(header); err != nil {
 		return sw.w.written, fmt.Errorf("segment: write header: %w", err)
@@ -428,6 +444,13 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 	}
 
 	return int64(n), nil
+}
+
+func (sw *Writer) effectiveFormatMajor() uint16 {
+	if sw.formatMajor != 0 {
+		return sw.formatMajor
+	}
+	return currentDefaultFormatMajor()
 }
 
 // writeRowGroup writes a single row group and returns its metadata.
