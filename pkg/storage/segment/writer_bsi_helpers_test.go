@@ -67,7 +67,7 @@ func writeRangeBSISegment(t *testing.T, events []*event.Event, configure func(*W
 	return append([]byte(nil), buf.Bytes()...)
 }
 
-func rangeSectionsFromFooter(t *testing.T, data []byte) (*Footer, [][]byte) {
+func rangeSectionsFromFooter(t testing.TB, data []byte) (*Footer, [][]byte) {
 	t.Helper()
 	footer, err := DecodeFooter(data)
 	if err != nil {
@@ -88,7 +88,7 @@ func rangeSectionsFromFooter(t *testing.T, data []byte) (*Footer, [][]byte) {
 	return footer, sections
 }
 
-func parseRangeSectionSegmentTest(t *testing.T, data []byte) parsedRangeSectionSegmentTest {
+func parseRangeSectionSegmentTest(t testing.TB, data []byte) parsedRangeSectionSegmentTest {
 	t.Helper()
 	if len(data) < index.RangeSectionHeaderSize {
 		t.Fatalf("range section length = %d, want at least %d", len(data), index.RangeSectionHeaderSize)
