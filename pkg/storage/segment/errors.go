@@ -13,4 +13,5 @@ var (
 	ErrUnsupportedHeaderRev  = errors.New("segment: unsupported header revision")
 	ErrCorruptRegion         = errors.New("segment: corrupt region")
 	ErrDowngradeForbidden    = errors.New("segment: downgrade forbidden")
+	ErrInvalidRGIndex        = errors.New("segment: invalid row group index")
 )

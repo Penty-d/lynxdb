@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"hash/crc32"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/RoaringBitmap/roaring"
+	bsi "github.com/RoaringBitmap/roaring/BitSliceIndexing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment/column"
@@ -25,17 +27,26 @@ type QueryHints struct {
 
 // Reader reads .lsg segment files.
 type Reader struct {
-	data         []byte
-	footer       *Footer
-	columnIndex  map[string]int                        // catalog name → index (built once on open)
-	perColBlooms map[int]map[string]*index.BloomFilter // lazily populated: rgIdx → colName → bloom
-	statsIndex   map[string]int                        // lazily built: column name → index in Stats()
+	data            []byte
+	footer          *Footer
+	columnIndex     map[string]int                        // catalog name → index (built once on open)
+	perColBlooms    map[int]map[string]*index.BloomFilter // lazily populated: rgIdx → colName → bloom
+	perColRangeBSIs map[int]map[string]*bsi.BSI           // lazily populated: rgIdx → colName → BSI
+	perColRangeMeta map[int]map[string]rangeMeta          // lazily populated alongside perColRangeBSIs
+	rangeMu         sync.Mutex                            // guards perColRangeBSIs and perColRangeMeta
+	statsIndex      map[string]int                        // lazily built: column name → index in Stats()
 
 	// Optional column cache for decoded column data. When set, column read
 	// methods check the cache before decompressing and store results after.
 	// Set via SetColumnCache; nil means no caching.
 	columnCache ColumnCache
 	segmentID   string
+}
+
+type rangeMeta struct {
+	ValueKind uint8
+	MinValue  int64
+	MaxValue  int64
 }
 
 // OpenSegment opens a segment from raw bytes.
@@ -252,6 +263,11 @@ func (r *Reader) HasColumn(name string) bool {
 	}
 
 	return false
+}
+
+// HasRangeBSI returns true when this segment advertises range BSI sections.
+func (r *Reader) HasRangeBSI() bool {
+	return r.footer.OptionalCaps&CapBit_RangeBSI != 0
 }
 
 // HasColumnInRowGroup returns true if the named column is present in the given
@@ -1312,6 +1328,116 @@ func (r *Reader) findColumnInAllRowGroups(name string) *ColumnChunkMeta {
 	}
 
 	return findChunk(&r.footer.RowGroups[0], name)
+}
+
+// LoadRangeBSI returns the decoded range BSI for a row-group column.
+// The returned BSI is owned by the Reader and must not be mutated.
+func (r *Reader) LoadRangeBSI(rgIdx int, columnName string) (*bsi.BSI, error) {
+	if rgIdx < 0 || rgIdx >= len(r.footer.RowGroups) {
+		return nil, fmt.Errorf("%w: %d", ErrInvalidRGIndex, rgIdx)
+	}
+	rg := &r.footer.RowGroups[rgIdx]
+	if rg.PerColumnRangeLength == 0 {
+		return nil, nil
+	}
+
+	section, err := r.rangeSectionBytes(rgIdx)
+	if err != nil {
+		return nil, err
+	}
+
+	r.rangeMu.Lock()
+	defer r.rangeMu.Unlock()
+
+	if r.perColRangeBSIs != nil {
+		if cached, ok := r.perColRangeBSIs[rgIdx]; ok {
+			if idx, ok := cached[columnName]; ok {
+				return idx, nil
+			}
+		}
+	}
+
+	entry, err := index.DecodeRangeSectionEntry(section, columnName)
+	if err != nil {
+		return nil, fmt.Errorf("segment: decode range BSI %q rg%d: %w", columnName, rgIdx, err)
+	}
+
+	r.ensureRangeCacheLocked(rgIdx)
+	if entry == nil {
+		r.perColRangeBSIs[rgIdx][columnName] = nil
+		return nil, nil
+	}
+
+	r.perColRangeBSIs[rgIdx][columnName] = entry.BSI
+	r.perColRangeMeta[rgIdx][columnName] = rangeMeta{
+		ValueKind: entry.ValueKind,
+		MinValue:  entry.MinValue,
+		MaxValue:  entry.MaxValue,
+	}
+
+	return entry.BSI, nil
+}
+
+// LoadRangeMeta returns range BSI metadata for a row-group column.
+func (r *Reader) LoadRangeMeta(rgIdx int, columnName string) (rangeMeta, bool, error) {
+	idx, err := r.LoadRangeBSI(rgIdx, columnName)
+	if err != nil {
+		return rangeMeta{}, false, err
+	}
+	if idx == nil {
+		return rangeMeta{}, false, nil
+	}
+
+	r.rangeMu.Lock()
+	defer r.rangeMu.Unlock()
+
+	meta, ok := r.perColRangeMeta[rgIdx][columnName]
+	return meta, ok, nil
+}
+
+// VerifyAllRangeBSIs decodes every range BSI section and validates checksums.
+func (r *Reader) VerifyAllRangeBSIs() error {
+	for rgIdx := range r.footer.RowGroups {
+		rg := &r.footer.RowGroups[rgIdx]
+		if rg.PerColumnRangeLength == 0 {
+			continue
+		}
+		section, err := r.rangeSectionBytes(rgIdx)
+		if err != nil {
+			return err
+		}
+		if _, err := index.DecodeRangeSection(section); err != nil {
+			return fmt.Errorf("segment: verify range BSI rg%d: %w", rgIdx, err)
+		}
+	}
+
+	return nil
+}
+
+func (r *Reader) ensureRangeCacheLocked(rgIdx int) {
+	if r.perColRangeBSIs == nil {
+		r.perColRangeBSIs = make(map[int]map[string]*bsi.BSI)
+		r.perColRangeMeta = make(map[int]map[string]rangeMeta)
+	}
+	if r.perColRangeBSIs[rgIdx] == nil {
+		r.perColRangeBSIs[rgIdx] = make(map[string]*bsi.BSI)
+		r.perColRangeMeta[rgIdx] = make(map[string]rangeMeta)
+	}
+}
+
+func (r *Reader) rangeSectionBytes(rgIdx int) ([]byte, error) {
+	if rgIdx < 0 || rgIdx >= len(r.footer.RowGroups) {
+		return nil, fmt.Errorf("%w: %d", ErrInvalidRGIndex, rgIdx)
+	}
+	rg := &r.footer.RowGroups[rgIdx]
+	start := rg.PerColumnRangeOffset
+	length := rg.PerColumnRangeLength
+	end := start + length
+	if start < 0 || length < 0 || end < start || end > int64(len(r.data)) {
+		return nil, fmt.Errorf("%w: range BSI offset out of range for rg %d", ErrCorruptSegment, rgIdx)
+	}
+
+	return r.data[start:end], nil
 }
 
 // Per-column bloom filter access.
