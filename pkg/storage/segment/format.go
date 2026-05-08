@@ -44,6 +44,20 @@ func (f *Footer) Stats() []ColumnStats {
 	return f.cachedStats
 }
 
+// RangeBSIStats returns the number of catalog columns marked as range BSI
+// and the total bytes occupied by row-group range BSI sections.
+func (f *Footer) RangeBSIStats() (columns int, sectionBytes int64) {
+	for _, cat := range f.Catalog {
+		if cat.IndexProfile == IndexProfileRangeBSI {
+			columns++
+		}
+	}
+	for _, rg := range f.RowGroups {
+		sectionBytes += rg.PerColumnRangeLength
+	}
+	return columns, sectionBytes
+}
+
 // computeStats aggregates column stats across all row groups.
 func (f *Footer) computeStats() []ColumnStats {
 	if len(f.RowGroups) == 0 {

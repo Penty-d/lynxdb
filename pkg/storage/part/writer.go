@@ -31,6 +31,7 @@ type Writer struct {
 	rowGroupSize int
 	fsync        bool // whether to fsync before rename (default: true)
 	maxColumns   int  // max user-defined columns per part (0 = unlimited)
+	disableBSI   bool // disables range BSI sections for this writer
 	logger       *slog.Logger
 }
 
@@ -63,6 +64,13 @@ func WithLogger(logger *slog.Logger) WriterOption {
 func WithMaxColumns(n int) WriterOption {
 	return func(w *Writer) {
 		w.maxColumns = n
+	}
+}
+
+// WithDisableBSI controls range BSI emission for written segments.
+func WithDisableBSI(disabled bool) WriterOption {
+	return func(w *Writer) {
+		w.disableBSI = disabled
 	}
 }
 
@@ -151,6 +159,9 @@ func (w *Writer) Write(ctx context.Context, index string, events []*event.Event,
 	if w.maxColumns > 0 {
 		sw.SetMaxColumns(w.maxColumns)
 	}
+	if w.disableBSI {
+		sw.SetIndexConfig(segment.IndexConfig{DisableBSI: true})
+	}
 	written, err := sw.Write(events)
 	if err != nil {
 		f.Close()
@@ -189,6 +200,13 @@ func (w *Writer) Write(ctx context.Context, index string, events []*event.Event,
 		os.Remove(tmpPath)
 
 		return nil, fmt.Errorf("part.Writer.Write: close: %w", err)
+	}
+
+	formatMajor, bsiColumns, bsiSectionBytes, err := verifySegmentBeforePromote(tmpPath)
+	if err != nil {
+		os.Remove(tmpPath)
+
+		return nil, fmt.Errorf("part.Writer.Write: %w", err)
 	}
 
 	// Atomic rename: the part becomes visible only after this succeeds.
@@ -232,6 +250,10 @@ func (w *Writer) Write(ctx context.Context, index string, events []*event.Event,
 		Columns:    columns,
 		Tier:       "hot",
 		Partition:  partitionKey,
+
+		FormatMajor:     formatMajor,
+		BSIColumns:      bsiColumns,
+		BSISectionBytes: bsiSectionBytes,
 	}
 
 	return meta, nil

@@ -266,6 +266,15 @@ func readPartMeta(path, index, partition string) (*Meta, error) {
 
 	size := fi.Size()
 
+	header, err := readSegmentHeader(path)
+	if err != nil {
+		return nil, err
+	}
+	formatMajor, err := segment.SegmentHeaderMajor(header, size)
+	if err != nil {
+		return nil, fmt.Errorf("segment header: %w", err)
+	}
+
 	tail, err := readTail(path, size)
 	if err != nil {
 		return nil, err
@@ -301,6 +310,7 @@ func readPartMeta(path, index, partition string) (*Meta, error) {
 	// Extract time range from _time column stats in the footer directly,
 	// avoiding the overhead of creating a full segment.Reader.
 	minTime, maxTime := extractTimeRange(footer)
+	bsiColumns, bsiSectionBytes := footer.RangeBSIStats()
 
 	// Parse level from filename: part-<index>-L<level>-<tsNano>.lsg.
 	base := filepath.Base(path)
@@ -320,7 +330,25 @@ func readPartMeta(path, index, partition string) (*Meta, error) {
 		Columns:    columns,
 		Tier:       "hot",
 		Partition:  partition,
+
+		FormatMajor:     formatMajor,
+		BSIColumns:      bsiColumns,
+		BSISectionBytes: bsiSectionBytes,
 	}, nil
+}
+
+func readSegmentHeader(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+
+	header := make([]byte, segment.LSG_HEADER_SIZE)
+	if _, err := io.ReadFull(f, header); err != nil {
+		return nil, fmt.Errorf("read header: %w", err)
+	}
+	return header, nil
 }
 
 // readTail reads the last tailReadSize bytes from a file (or the entire file

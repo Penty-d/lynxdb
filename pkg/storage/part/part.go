@@ -5,7 +5,7 @@
 // rename (write to tmp_* -> os.Rename to final path). This eliminates WAL encoding
 // overhead, memtable lock contention, and flush blocking.
 //
-// Each part is a standard .lsg format-major v1 segment file readable by the existing
+// Each part is a standard .lsg segment file readable by the existing
 // segment.Reader. Parts are organized in time-partitioned directories and tracked
 // by a filesystem-scanned registry (no separate metadata files).
 //
@@ -64,4 +64,13 @@ type Meta struct {
 
 	// Partition is the time partition key (e.g., "2026-03-02").
 	Partition string
+
+	// FormatMajor is the LSG format major version on disk.
+	FormatMajor uint16
+
+	// BSIColumns is the number of catalog columns marked as range BSI.
+	BSIColumns int
+
+	// BSISectionBytes is the total bytes occupied by range BSI sections.
+	BSISectionBytes int64
 }

@@ -37,6 +37,7 @@ type PartStreamWriter struct {
 	rowGroupSize int
 	fsync        bool
 	maxColumns   int
+	disableBSI   bool
 	logger       *slog.Logger
 
 	// File state.
@@ -78,6 +79,7 @@ func NewPartStreamWriter(layout *Layout, index string, level int, opts ...Writer
 		rowGroupSize: DefaultRowGroupSize,
 		fsync:        tmp.fsync,
 		maxColumns:   tmp.maxColumns,
+		disableBSI:   tmp.disableBSI,
 		logger:       tmp.logger,
 		columns:      make(map[string]struct{}),
 		startNow:     time.Now(),
@@ -135,6 +137,9 @@ func (psw *PartStreamWriter) initFile(events []*event.Event) error {
 	psw.sw.SetRowGroupSize(psw.rowGroupSize)
 	if psw.maxColumns > 0 {
 		psw.sw.SetMaxColumns(psw.maxColumns)
+	}
+	if psw.disableBSI {
+		psw.sw.SetIndexConfig(segment.IndexConfig{DisableBSI: true})
 	}
 
 	return nil
@@ -232,6 +237,12 @@ func (psw *PartStreamWriter) Finalize(ctx context.Context) (*Meta, error) {
 	}
 	psw.file = nil // mark as closed
 
+	formatMajor, bsiColumns, bsiSectionBytes, err := verifySegmentBeforePromote(psw.tmpPath)
+	if err != nil {
+		os.Remove(psw.tmpPath)
+		return nil, fmt.Errorf("part.PartStreamWriter: %w", err)
+	}
+
 	// Atomic rename.
 	now := psw.startNow
 	finalName := Filename(psw.index, psw.level, now)
@@ -275,6 +286,10 @@ func (psw *PartStreamWriter) Finalize(ctx context.Context) (*Meta, error) {
 		Columns:    columns,
 		Tier:       "hot",
 		Partition:  psw.partKey,
+
+		FormatMajor:     formatMajor,
+		BSIColumns:      bsiColumns,
+		BSISectionBytes: bsiSectionBytes,
 	}, nil
 }
 

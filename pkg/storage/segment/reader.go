@@ -28,6 +28,7 @@ type QueryHints struct {
 // Reader reads .lsg segment files.
 type Reader struct {
 	data            []byte
+	major           uint16
 	footer          *Footer
 	columnIndex     map[string]int                        // catalog name → index (built once on open)
 	perColBlooms    map[int]map[string]*index.BloomFilter // lazily populated: rgIdx → colName → bloom
@@ -157,6 +158,7 @@ func openWithFooterMajor(data []byte, header headerV1, major uint16) (*Reader, e
 
 	return &Reader{
 		data:         data,
+		major:        major,
 		footer:       footer,
 		columnIndex:  colIdx,
 		perColBlooms: make(map[int]map[string]*index.BloomFilter),
@@ -268,6 +270,17 @@ func (r *Reader) HasColumn(name string) bool {
 // HasRangeBSI returns true when this segment advertises range BSI sections.
 func (r *Reader) HasRangeBSI() bool {
 	return r.footer.OptionalCaps&CapBit_RangeBSI != 0
+}
+
+// FormatMajor returns the LSG format major version used by this segment.
+func (r *Reader) FormatMajor() uint16 {
+	return r.major
+}
+
+// RangeBSIStats returns the number of catalog columns marked as range BSI
+// and the total bytes occupied by row-group range BSI sections.
+func (r *Reader) RangeBSIStats() (columns int, sectionBytes int64) {
+	return r.footer.RangeBSIStats()
 }
 
 // HasColumnInRowGroup returns true if the named column is present in the given
