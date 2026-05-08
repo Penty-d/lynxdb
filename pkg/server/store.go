@@ -213,6 +213,9 @@ func (s *StreamingServerStore) AggregatedStats() *enginepipeline.SegmentStreamSt
 		agg.ScopeSkips += st.ScopeSkips
 		agg.EmptyBitmapSkips += st.EmptyBitmapSkips
 		agg.RGBloomsChecked += st.RGBloomsChecked
+		agg.RGRangeBSIChecks += st.RGRangeBSIChecks
+		agg.RGRangeBSISkips += st.RGRangeBSISkips
+		agg.RGRangeBSIMaskBytes += st.RGRangeBSIMaskBytes
 		if st.PeakMemoryBytes > agg.PeakMemoryBytes {
 			agg.PeakMemoryBytes = st.PeakMemoryBytes
 		}

@@ -116,6 +116,9 @@ type metaStats struct {
 	SegmentsSkippedRange int                 `json:"segments_skipped_range,omitempty"`
 	BufferedEvents       int                 `json:"buffered_events,omitempty"`
 	InvertedIndexHits    int                 `json:"inverted_index_hits,omitempty"`
+	RangeBSIChecks       int                 `json:"range_bsi_checks,omitempty"`
+	RangeBSISkips        int                 `json:"range_bsi_skips,omitempty"`
+	RangeBSIMaskBytes    int64               `json:"range_bsi_mask_bytes,omitempty"`
 	IndexesUsed          []string            `json:"indexes_used,omitempty"`
 	CountStarOptimized   bool                `json:"count_star_optimized,omitempty"`
 	PartialAggUsed       bool                `json:"partial_agg_used,omitempty"`

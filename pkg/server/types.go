@@ -102,6 +102,9 @@ type SearchStats struct {
 	BufferedEvents       int             `json:"buffered_events"`
 	InvertedIndexHits    int             `json:"inverted_index_hits"`
 	BloomsChecked        int             `json:"blooms_checked"`
+	RangeBSIChecks       int             `json:"range_bsi_checks,omitempty"`
+	RangeBSISkips        int             `json:"range_bsi_skips,omitempty"`
+	RangeBSIMaskBytes    int64           `json:"range_bsi_mask_bytes,omitempty"`
 	CountStarOptimized   bool            `json:"count_star_optimized"`
 	PartialAggUsed       bool            `json:"partial_agg_used"`
 	TopKUsed             bool            `json:"topk_used"`
@@ -259,6 +262,9 @@ type storeStats struct {
 	PrefetchUsed         bool
 	DictFilterUsed       bool // at least one segment used dict-encoded filter
 	BloomsChecked        int  // total bloom filter consultations (from RG filter evaluator)
+	RangeBSIChecks       int
+	RangeBSISkips        int
+	RangeBSIMaskBytes    int64
 	// TotalBytesRead is the sum of SizeBytes for all scanned segments.
 	// Always accumulated (not trace-only) to support ClickHouse-style throughput display.
 	TotalBytesRead int64

@@ -184,6 +184,27 @@ func buildExplainResponse(result *usecases.ExplainResult) map[string]interface{}
 		}
 		parsed["source_scope"] = scope
 	}
+	if len(result.Parsed.RangePredicates) > 0 {
+		preds := make([]map[string]interface{}, 0, len(result.Parsed.RangePredicates))
+		for _, pred := range result.Parsed.RangePredicates {
+			p := map[string]interface{}{
+				"field":              pred.Field,
+				"rg_filter_strategy": pred.RGFilterStrategy,
+				"row_vm_strategy":    pred.RowVMStrategy,
+			}
+			if pred.Min != "" {
+				p["min"] = pred.Min
+			}
+			if pred.Max != "" {
+				p["max"] = pred.Max
+			}
+			if pred.LoweredToBSI {
+				p["lowered_to_bsi"] = true
+			}
+			preds = append(preds, p)
+		}
+		parsed["range_predicates"] = preds
+	}
 
 	if len(result.Parsed.OptimizerMessages) > 0 {
 		parsed["optimizer_messages"] = result.Parsed.OptimizerMessages

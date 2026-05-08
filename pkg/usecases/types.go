@@ -81,16 +81,17 @@ type ExplainError struct {
 
 // ExplainParsed holds the breakdown of a successfully parsed query.
 type ExplainParsed struct {
-	Pipeline       []PipelineStage
-	ResultType     string
-	EstimatedCost  string
-	UsesFullScan   bool
-	FieldsRead     []string
-	SearchTerms    []string
-	HasTimeBounds  bool
-	OptimizerStats map[string]int
-	PhysicalPlan   *PhysicalPlan // physical plan with optimizer annotations
-	SourceScope    *ExplainSourceScope
+	Pipeline        []PipelineStage
+	ResultType      string
+	EstimatedCost   string
+	UsesFullScan    bool
+	FieldsRead      []string
+	SearchTerms     []string
+	HasTimeBounds   bool
+	OptimizerStats  map[string]int
+	PhysicalPlan    *PhysicalPlan // physical plan with optimizer annotations
+	SourceScope     *ExplainSourceScope
+	RangePredicates []ExplainRangePredicate
 
 	// Planner timing and optimizer rule details.
 	ParseMS     float64
@@ -101,6 +102,16 @@ type ExplainParsed struct {
 	// Optimizer diagnostic messages and warnings.
 	OptimizerMessages []string
 	OptimizerWarnings []string
+}
+
+// ExplainRangePredicate describes range predicate handling in EXPLAIN output.
+type ExplainRangePredicate struct {
+	Field            string `json:"field"`
+	Min              string `json:"min,omitempty"`
+	Max              string `json:"max,omitempty"`
+	LoweredToBSI     bool   `json:"lowered_to_bsi,omitempty"`
+	RGFilterStrategy string `json:"rg_filter_strategy"`
+	RowVMStrategy    string `json:"row_vm_strategy"`
 }
 
 // ExplainSourceScope describes the resolved source scope in an explain response.

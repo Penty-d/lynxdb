@@ -143,6 +143,7 @@ func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainR
 			OptimizerStats:    plan.OptimizerStats,
 			PhysicalPlan:      physPlan,
 			SourceScope:       sourceScope,
+			RangePredicates:   explainRangePredicates(plan.Hints.RangePredicates),
 			ParseMS:           float64(plan.ParseDuration.Microseconds()) / 1000,
 			OptimizeMS:        float64(plan.OptimizeDuration.Microseconds()) / 1000,
 			RuleDetails:       ruleDetails,
@@ -152,6 +153,31 @@ func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainR
 		},
 		HasMVAccel: false,
 	}, nil
+}
+
+func explainRangePredicates(preds []spl2.RangePredicate) []ExplainRangePredicate {
+	if len(preds) == 0 {
+		return nil
+	}
+	out := make([]ExplainRangePredicate, 0, len(preds))
+	for _, pred := range preds {
+		rgStrategy := "zone-map"
+		rowStrategy := "per-row"
+		if pred.LoweredToBSI {
+			rgStrategy = "bsi"
+			rowStrategy = "handled_by=bsi"
+		}
+		out = append(out, ExplainRangePredicate{
+			Field:            pred.Field,
+			Min:              pred.Min,
+			Max:              pred.Max,
+			LoweredToBSI:     pred.LoweredToBSI,
+			RGFilterStrategy: rgStrategy,
+			RowVMStrategy:    rowStrategy,
+		})
+	}
+
+	return out
 }
 
 // commandName returns a human-readable name for a pipeline command.

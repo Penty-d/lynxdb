@@ -16,6 +16,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/optimizer"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
@@ -427,6 +428,9 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		BufferedEvents:       qr.ss.BufferedEvents,
 		InvertedIndexHits:    qr.ss.InvertedIndexHits,
 		BloomsChecked:        qr.ss.BloomsChecked,
+		RangeBSIChecks:       qr.ss.RangeBSIChecks,
+		RangeBSISkips:        qr.ss.RangeBSISkips,
+		RangeBSIMaskBytes:    qr.ss.RangeBSIMaskBytes,
 		PrefetchUsed:         qr.ss.PrefetchUsed,
 		PartialAggUsed:       aggSpec != nil || hasTransformPartialAgg(prog),
 		TopKUsed:             qr.topKUsed,
@@ -1055,6 +1059,12 @@ func (e *Engine) runStreamingPipeline(
 	ss.SegmentsTotal = len(segs)
 	ss.BufferedEvents = len(memEvents)
 	sources := e.buildSegmentSources(ctx, segs, segFilterHints, &ss)
+	if prog.Main != nil {
+		if _, changed := optimizer.LowerRangeToBSI(prog.Main, segmentSourceSet(sources)); changed {
+			applyLoweredRangePredicates(hints, prog.Main)
+			applyLoweredRangePredicates(segFilterHints, prog.Main)
+		}
+	}
 
 	// Propagate segment skip counts to global pruning metrics.
 	e.recordPruningMetrics(&ss)
@@ -1127,6 +1137,9 @@ func (e *Engine) runStreamingPipeline(
 		ss.InvertedIndexHits += int(aggSt.BitmapHits)
 		ss.TotalBytesRead += aggSt.BytesRead
 		ss.BloomsChecked += aggSt.RGBloomsChecked
+		ss.RangeBSIChecks += aggSt.RGRangeBSIChecks
+		ss.RangeBSISkips += aggSt.RGRangeBSISkips
+		ss.RangeBSIMaskBytes += aggSt.RGRangeBSIMaskBytes
 		qr.rowsScanned = aggSt.EventsScanned + int64(len(memEvents))
 	}
 
@@ -1155,6 +1168,34 @@ func (e *Engine) runStreamingPipeline(
 	qr.pipelineMS = float64(time.Since(pipelineStart).Milliseconds())
 
 	return qr, nil
+}
+
+type segmentSourceSet []*enginepipeline.SegmentSource
+
+func (s segmentSourceSet) Segments() []*segment.Reader {
+	readers := make([]*segment.Reader, 0, len(s))
+	for _, src := range s {
+		if src != nil && src.Reader != nil {
+			readers = append(readers, src.Reader)
+		}
+	}
+
+	return readers
+}
+
+func applyLoweredRangePredicates(hints *spl2.QueryHints, q *spl2.Query) {
+	if hints == nil || q == nil {
+		return
+	}
+	ann, ok := q.GetAnnotation("rangePredicates")
+	if !ok {
+		return
+	}
+	preds, ok := ann.([]spl2.RangePredicate)
+	if !ok {
+		return
+	}
+	hints.RangePredicates = append(hints.RangePredicates[:0], preds...)
 }
 
 // parallelConfig constructs a ParallelConfig from the server's query config.
