@@ -89,6 +89,7 @@ type Writer struct {
 	sortKey     []string // sort key fields for sparse primary index (MV segments)
 	rgSize      int      // row group size override (0 = use DefaultRowGroupSize)
 	maxColumns  int      // max user-defined columns per segment (0 = unlimited)
+	indexConfig IndexConfig
 }
 
 // SetSortKey configures the sort key fields used to build a sparse primary index.
@@ -114,20 +115,20 @@ func (sw *Writer) SetMaxColumns(n int) {
 
 // NewWriter creates a writer that outputs to w with default LZ4 layer 2 compression.
 func NewWriter(w io.Writer) *Writer {
-	sw := &Writer{out: w, compression: CompressionLZ4}
+	sw := &Writer{out: w, compression: CompressionLZ4, indexConfig: defaultIndexConfig()}
 	sw.resetBuffer()
 	return sw
 }
 
 // NewWriterWithCompression creates a writer with a specific layer 2 compression.
 func NewWriterWithCompression(w io.Writer, compression CompressionType) *Writer {
-	sw := &Writer{out: w, compression: compression}
+	sw := &Writer{out: w, compression: compression, indexConfig: defaultIndexConfig()}
 	sw.resetBuffer()
 	return sw
 }
 
 func newStreamBackingWriter(w io.Writer, compression CompressionType) *Writer {
-	sw := &Writer{out: w, compression: compression}
+	sw := &Writer{out: w, compression: compression, indexConfig: defaultIndexConfig()}
 	if writerAt, ok := w.(interface {
 		WriteAt([]byte, int64) (int, error)
 	}); ok {
@@ -138,6 +139,19 @@ func newStreamBackingWriter(w io.Writer, compression CompressionType) *Writer {
 	}
 	sw.resetBuffer()
 	return sw
+}
+
+// SetIndexConfig configures optional indexes selected while writing segments.
+// It must be called before Write.
+func (sw *Writer) SetIndexConfig(cfg IndexConfig) {
+	if cfg.ProfileOverrides != nil {
+		overrides := make(map[string]IndexProfile, len(cfg.ProfileOverrides))
+		for name, profile := range cfg.ProfileOverrides {
+			overrides[name] = profile
+		}
+		cfg.ProfileOverrides = overrides
+	}
+	sw.indexConfig = cfg
 }
 
 // builtinColumns is the ordered list of builtin column names.
@@ -207,6 +221,11 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 
 	// Build column catalog early so we know bit positions for the presence bitmap.
 	catalog := buildCatalog(fieldSet, fieldNames)
+	var rangeColumns []RangeBSICandidate
+	if formatMajor >= LSG_FORMAT_MAJOR_V2 {
+		rangeColumns = collectRangeBSIColumns(events, catalog, sw.indexConfig)
+		markRangeBSICatalog(catalog, rangeColumns)
+	}
 	catalogIndex := make(map[string]int, len(catalog))
 	for i, cat := range catalog {
 		catalogIndex[cat.Name] = i
@@ -341,6 +360,12 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 		// Build inverted index (global, with absolute row offsets).
 		for i, e := range rgEvents {
 			inv.Add(uint32(start+i), e.Raw)
+		}
+	}
+
+	if formatMajor >= LSG_FORMAT_MAJOR_V2 && !sw.indexConfig.DisableBSI {
+		if err := sw.writeRangeBSISections(events, rowGroups, rgSize, constInRG, rangeColumns); err != nil {
+			return sw.w.written, err
 		}
 	}
 
@@ -569,6 +594,82 @@ func requiredCapsForRowGroup(rg RowGroupMeta) uint64 {
 		caps |= requiredCapsForCompression(c.Compression)
 	}
 	return caps
+}
+
+type rangeBSIValue struct {
+	Present bool
+	Raw     int64
+}
+
+func (sw *Writer) writeRangeBSISections(events []*event.Event, rowGroups []RowGroupMeta, rgSize int, constInRG []map[string]bool, rangeColumns []RangeBSICandidate) error {
+	for rg := range rowGroups {
+		start := rg * rgSize
+		end := start + rgSize
+		if end > len(events) {
+			end = len(events)
+		}
+		rgEvents := events[start:end]
+
+		enc := index.NewRangeSectionEncoder(sw.w, sw.w.written)
+		for _, cand := range rangeColumns {
+			if constInRG[rg][cand.Name] {
+				continue
+			}
+			kind, minV, maxV, vals, ok := scanColumnForBSI(rgEvents, cand)
+			if !ok {
+				continue
+			}
+			bitCount := bitCountForSpread(minV, maxV)
+			if sw.indexConfig.BSIMaxBitCount > 0 && bitCount > sw.indexConfig.BSIMaxBitCount {
+				continue
+			}
+
+			builder := index.NewBSIBuilder(kind, minV, maxV)
+			for rowID, val := range vals {
+				if val.Present {
+					builder.Set(uint32(rowID), val.Raw)
+				}
+			}
+			if err := enc.AddColumn(cand.Name, kind, minV, maxV, builder.Build()); err != nil {
+				return fmt.Errorf("segment: encode range BSI column %q rg%d: %w", cand.Name, rg, err)
+			}
+		}
+
+		off, length, err := enc.Finalize()
+		if err != nil {
+			return fmt.Errorf("segment: write range BSI section rg%d: %w", rg, err)
+		}
+		rowGroups[rg].PerColumnRangeOffset = off
+		rowGroups[rg].PerColumnRangeLength = length
+	}
+	return nil
+}
+
+func scanColumnForBSI(events []*event.Event, cand RangeBSICandidate) (uint8, int64, int64, []rangeBSIValue, bool) {
+	vals := make([]rangeBSIValue, len(events))
+	var minV, maxV int64
+	found := false
+	for i, e := range events {
+		raw, ok := rawRangeBSIValue(e, cand.Name, cand.ValueKind)
+		if !ok {
+			continue
+		}
+		vals[i] = rangeBSIValue{Present: true, Raw: raw}
+		if !found {
+			minV, maxV, found = raw, raw, true
+			continue
+		}
+		if raw < minV {
+			minV = raw
+		}
+		if raw > maxV {
+			maxV = raw
+		}
+	}
+	if !found || minV == maxV || !spreadFitsInt64(minV, maxV) {
+		return cand.ValueKind, 0, 0, nil, false
+	}
+	return cand.ValueKind, minV, maxV, vals, true
 }
 
 // isConstString returns true if all values in the slice are identical and non-empty.

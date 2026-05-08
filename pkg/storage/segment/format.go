@@ -6,6 +6,8 @@ import (
 	"hash/crc32"
 	"math/bits"
 	"sync"
+
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 )
 
 // Footer holds the segment file footer data for LSG major v1.
@@ -555,7 +557,7 @@ func aggregateCapabilities(rowGroups []RowGroupMeta) (uint64, uint64) {
 	var optional uint64
 	for _, rg := range rowGroups {
 		required |= rg.RequiredCapabilities
-		if rg.PerColumnRangeLength > 0 {
+		if rg.PerColumnRangeLength > index.RangeSectionHeaderSize {
 			optional |= CapBit_RangeBSI
 		}
 	}
