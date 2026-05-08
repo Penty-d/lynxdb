@@ -624,6 +624,11 @@ type rangeBSIValue struct {
 	Raw     int64
 }
 
+const (
+	rangeBSIPackedMinRows     = 4096
+	rangeBSIPackedMinBitCount = 1
+)
+
 func (sw *Writer) writeRangeBSISections(events []*event.Event, rowGroups []RowGroupMeta, rgSize int, constInRG []map[string]bool, rangeColumns []RangeBSICandidate) error {
 	for rg := range rowGroups {
 		start := rg * rgSize
@@ -658,6 +663,22 @@ func writeRangeBSISection(w io.Writer, startOffset int64, rg int, events []*even
 			continue
 		}
 
+		if shouldPackRangeBSIValues(len(events), bitCount, vals) {
+			packed := make([]index.RangeSectionValue, 0, len(vals))
+			for rowID, val := range vals {
+				if val.Present {
+					packed = append(packed, index.RangeSectionValue{
+						RowID:  uint32(rowID),
+						Offset: uint64(val.Raw) - uint64(minV),
+					})
+				}
+			}
+			if err := enc.AddColumnPacked(cand.Name, kind, minV, maxV, bitCount, len(events), packed); err != nil {
+				return startOffset, 0, fmt.Errorf("segment: encode packed range BSI column %q rg%d: %w", cand.Name, rg, err)
+			}
+			continue
+		}
+
 		builder := index.NewBSIBuilder(kind, minV, maxV)
 		for rowID, val := range vals {
 			if val.Present {
@@ -674,6 +695,31 @@ func writeRangeBSISection(w io.Writer, startOffset int64, rg int, events []*even
 		return off, length, fmt.Errorf("segment: write range BSI section rg%d: %w", rg, err)
 	}
 	return off, length, nil
+}
+
+func shouldPackRangeBSIValues(rowCount, bitCount int, vals []rangeBSIValue) bool {
+	if rowCount < rangeBSIPackedMinRows || bitCount < rangeBSIPackedMinBitCount {
+		return false
+	}
+	present := 0
+	for _, val := range vals {
+		if val.Present {
+			present++
+		}
+	}
+	if present == 0 {
+		return false
+	}
+	if present*2 < rowCount {
+		return false
+	}
+
+	presenceBytes := (rowCount + 7) / 8
+	packedValueBytes := (present*bitCount + 7) / 8
+	// Dense Roaring slices generally serialize as bitmap containers. In that
+	// shape each bit-slice costs roughly one byte per possible row, while the
+	// packed layout stores only the value width plus one presence bit per row.
+	return 12+presenceBytes+packedValueBytes < (bitCount+1)*rowCount
 }
 
 func scanColumnForBSI(events []*event.Event, cand RangeBSICandidate) (uint8, int64, int64, []rangeBSIValue, bool) {

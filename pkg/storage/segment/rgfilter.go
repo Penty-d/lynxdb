@@ -381,23 +381,31 @@ func (e *RGFilterEvaluator) tryBSIFilter(rgIdx int, node *RGFilterNode) (*roarin
 		return nil, false, nil
 	}
 
-	idx, err := e.reader.LoadRangeBSI(rgIdx, node.Field)
-	if err != nil {
-		return nil, false, err
-	}
-	if idx == nil {
-		return nil, false, nil
-	}
-
-	op, valueOrStart, end, direct, ok, err := lowerBSIPredicate(node, meta, idx)
+	raw, ok, err := parseRangeBSIValue(meta.ValueKind, node.RangeVal, node.RangeOp)
 	if err != nil || !ok {
 		return nil, false, err
 	}
-	if direct != nil {
-		return direct, true, nil
+	op, ok := rangeBSICompareOp(node.RangeOp)
+	if !ok {
+		return nil, false, nil
 	}
 
-	return idx.CompareValue(0, op, valueOrStart, end, nil), true, nil
+	return e.reader.compareRangeBSI(rgIdx, node.Field, meta, op, raw)
+}
+
+func rangeBSICompareOp(op string) (bsi.Operation, bool) {
+	switch op {
+	case ">":
+		return bsi.GT, true
+	case ">=":
+		return bsi.GE, true
+	case "<":
+		return bsi.LT, true
+	case "<=":
+		return bsi.LE, true
+	default:
+		return 0, false
+	}
 }
 
 func (e *RGFilterEvaluator) attachRowMask(rgIdx int, field string, mask *roaring.Bitmap, stats *RGFilterStats) {

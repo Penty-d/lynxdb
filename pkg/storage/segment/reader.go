@@ -1402,19 +1402,114 @@ func (r *Reader) LoadRangeBSI(rgIdx int, columnName string) (*bsi.BSI, error) {
 
 // LoadRangeMeta returns range BSI metadata for a row-group column.
 func (r *Reader) LoadRangeMeta(rgIdx int, columnName string) (rangeMeta, bool, error) {
-	idx, err := r.LoadRangeBSI(rgIdx, columnName)
+	if rgIdx < 0 || rgIdx >= len(r.footer.RowGroups) {
+		return rangeMeta{}, false, fmt.Errorf("%w: %d", ErrInvalidRGIndex, rgIdx)
+	}
+	rg := &r.footer.RowGroups[rgIdx]
+	if rg.PerColumnRangeLength == 0 {
+		return rangeMeta{}, false, nil
+	}
+
+	r.rangeMu.Lock()
+	if r.perColRangeMeta != nil {
+		if cached, ok := r.perColRangeMeta[rgIdx]; ok {
+			if meta, ok := cached[columnName]; ok {
+				r.rangeMu.Unlock()
+				return meta, true, nil
+			}
+		}
+	}
+	r.rangeMu.Unlock()
+
+	section, err := r.rangeSectionBytes(rgIdx)
 	if err != nil {
 		return rangeMeta{}, false, err
 	}
-	if idx == nil {
+	entry, err := index.DecodeRangeSectionEntryMeta(section, columnName)
+	if err != nil {
+		return rangeMeta{}, false, fmt.Errorf("segment: decode range BSI metadata %q rg%d: %w", columnName, rgIdx, err)
+	}
+	if entry == nil {
 		return rangeMeta{}, false, nil
 	}
 
 	r.rangeMu.Lock()
 	defer r.rangeMu.Unlock()
 
-	meta, ok := r.perColRangeMeta[rgIdx][columnName]
-	return meta, ok, nil
+	r.ensureRangeCacheLocked(rgIdx)
+	meta := rangeMeta{
+		ValueKind: entry.ValueKind,
+		MinValue:  entry.MinValue,
+		MaxValue:  entry.MaxValue,
+	}
+	r.perColRangeMeta[rgIdx][columnName] = meta
+	return meta, true, nil
+}
+
+func (r *Reader) compareRangeBSI(rgIdx int, columnName string, meta rangeMeta, op bsi.Operation, raw int64) (*roaring.Bitmap, bool, error) {
+	if rgIdx < 0 || rgIdx >= len(r.footer.RowGroups) {
+		return nil, false, fmt.Errorf("%w: %d", ErrInvalidRGIndex, rgIdx)
+	}
+	rg := &r.footer.RowGroups[rgIdx]
+	if rg.PerColumnRangeLength == 0 {
+		return nil, false, nil
+	}
+	section, err := r.rangeSectionBytes(rgIdx)
+	if err != nil {
+		return nil, false, err
+	}
+	if mask, ok, err := index.ComparePackedRangeSectionEntry(section, columnName, op, raw); ok || err != nil {
+		if err != nil {
+			return nil, false, fmt.Errorf("segment: compare packed range BSI %q rg%d: %w", columnName, rgIdx, err)
+		}
+		return mask, true, nil
+	}
+
+	idx, err := r.LoadRangeBSI(rgIdx, columnName)
+	if err != nil {
+		return nil, false, err
+	}
+	if idx == nil {
+		return nil, false, nil
+	}
+
+	empty := func() *roaring.Bitmap { return roaring.New() }
+	all := func() *roaring.Bitmap { return idx.GetExistenceBitmap().Clone() }
+
+	switch op {
+	case bsi.GT:
+		if raw >= meta.MaxValue {
+			return empty(), true, nil
+		}
+		if raw < meta.MinValue {
+			return all(), true, nil
+		}
+	case bsi.GE:
+		if raw > meta.MaxValue {
+			return empty(), true, nil
+		}
+		if raw <= meta.MinValue {
+			return all(), true, nil
+		}
+	case bsi.LT:
+		if raw <= meta.MinValue {
+			return empty(), true, nil
+		}
+		if raw > meta.MaxValue {
+			return all(), true, nil
+		}
+	case bsi.LE:
+		if raw < meta.MinValue {
+			return empty(), true, nil
+		}
+		if raw >= meta.MaxValue {
+			return all(), true, nil
+		}
+	default:
+		return nil, false, nil
+	}
+
+	return idx.CompareValue(0, op, rangeBSIOffset(raw, meta.MinValue), 0, nil), true, nil
 }
 
 // VerifyAllRangeBSIs decodes every range BSI section and validates checksums.
