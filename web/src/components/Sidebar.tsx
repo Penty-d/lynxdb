@@ -11,17 +11,18 @@ import {
 import { theme, toggleTheme } from "../stores/ui";
 import { token, clearToken } from "../stores/auth";
 import { helpOverlayOpen, paletteOpen } from "../utils/keyboard";
+import { uiPath } from "../utils/base";
 import styles from "./Sidebar.module.css";
 
 const NAV_ITEMS = [
-  { path: "/", icon: Search, label: "Search" },
-  { path: "/queries", icon: BookmarkCheck, label: "Saved Queries" },
-  { path: "/settings", icon: Settings, label: "Settings" },
+  { path: uiPath("/"), icon: Search, label: "Search" },
+  { path: uiPath("/queries"), icon: BookmarkCheck, label: "Saved Queries" },
+  { path: uiPath("/settings"), icon: Settings, label: "Settings" },
 ] as const;
 
 function isActive(url: string, path: string): boolean {
   // Exact match for leaf routes
-  if (path === "/" || path === "/queries" || path === "/settings") {
+  if (NAV_ITEMS.some((item) => item.path === path)) {
     return url === path;
   }
   // Prefix match for routes with sub-paths
@@ -35,8 +36,8 @@ export function Sidebar() {
   return (
     <nav class={styles.sidebar}>
       <div class={styles.top}>
-        <a href="/" class={styles.logo}>
-          <img src="/lynxdb-icon.png" alt="LynxDB" class={styles.logoIcon} />
+        <a href={uiPath("/")} class={styles.logo}>
+          <img src={uiPath("/lynxdb-icon.png")} alt="LynxDB" class={styles.logoIcon} />
           <span class={styles.logoText}>LynxDB</span>
         </a>
         {NAV_ITEMS.map(({ path, icon: Icon, label }) => (

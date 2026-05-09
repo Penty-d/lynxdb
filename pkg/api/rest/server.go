@@ -472,9 +472,13 @@ func NewServer(cfg Config) (*Server, error) {
 	// Health.
 	mux.HandleFunc("GET /health", s.handleHealth)
 
-	// Embedded Web UI (SPA fallback — registered after all API routes).
+	// Embedded Web UI. Keep / reserved for Elasticsearch-compatible clients;
+	// the browser UI lives under /ui/.
 	if !cfg.NoUI && webui.Enabled() {
-		mux.Handle("/", webui.Handler())
+		mux.HandleFunc("GET "+webui.Path, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, webui.Path+"/", http.StatusMovedPermanently)
+		})
+		mux.Handle("GET "+webui.Path+"/", webui.Handler())
 	}
 
 	idleTimeout := cfg.HTTP.IdleTimeout

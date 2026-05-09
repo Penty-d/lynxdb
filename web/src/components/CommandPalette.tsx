@@ -23,6 +23,7 @@ import {
   helpOverlayOpen,
   paletteQuery,
 } from "../utils/keyboard";
+import { uiPath } from "../utils/base";
 import type { ShortcutDef } from "../utils/keyboard";
 import styles from "./CommandPalette.module.css";
 
@@ -76,21 +77,21 @@ export function CommandPalette() {
       section: "navigation",
       icon: Search,
       shortcut: SHORTCUTS.focusSearch,
-      action: () => route("/"),
+      action: () => route(uiPath("/")),
     },
     {
       id: "nav-queries",
       label: "Saved Queries",
       section: "navigation",
       icon: BookmarkCheck,
-      action: () => route("/queries"),
+      action: () => route(uiPath("/queries")),
     },
     {
       id: "nav-settings",
       label: "Settings",
       section: "navigation",
       icon: Settings,
-      action: () => route("/settings"),
+      action: () => route(uiPath("/settings")),
     },
   ];
 
@@ -101,7 +102,7 @@ export function CommandPalette() {
       section: "commands",
       icon: Play,
       shortcut: SHORTCUTS.runQuery,
-      action: () => route("/"),
+      action: () => route(uiPath("/")),
     },
     {
       id: "cmd-tail",
@@ -109,7 +110,7 @@ export function CommandPalette() {
       section: "commands",
       icon: Repeat,
       shortcut: SHORTCUTS.toggleTail,
-      action: () => route("/"),
+      action: () => route(uiPath("/")),
     },
     {
       id: "cmd-theme",
@@ -124,7 +125,7 @@ export function CommandPalette() {
       section: "commands",
       icon: PanelLeftClose,
       shortcut: SHORTCUTS.toggleSidebar,
-      action: () => route("/"),
+      action: () => route(uiPath("/")),
     },
     {
       id: "cmd-help",
@@ -149,7 +150,7 @@ export function CommandPalette() {
       icon: Clock,
       action: () => {
         paletteQuery.value = q;
-        route("/");
+        route(uiPath("/"));
       },
     }),
   );

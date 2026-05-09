@@ -5,6 +5,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { SearchView } from "./views/SearchView";
 import { lazy } from "./utils/lazy";
+import { uiPath } from "./utils/base";
 import styles from "./App.module.css";
 
 const QueriesView = lazy(() => import("./views/QueriesView"));
@@ -17,9 +18,9 @@ export function App() {
         <Sidebar />
         <main class={styles.content}>
           <Router>
-            <SearchView path="/" />
-            <QueriesView path="/queries" />
-            <SettingsView path="/settings" />
+            <SearchView path={uiPath("/")} />
+            <QueriesView path={uiPath("/queries")} />
+            <SettingsView path={uiPath("/settings")} />
           </Router>
         </main>
         <CommandPalette />

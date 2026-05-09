@@ -305,11 +305,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 	printNextSteps(
 		"lynxdb demo                      Generate sample data",
 		"lynxdb ingest access.log         Ingest a log file",
-		fmt.Sprintf("open %s://%s\t   Web UI", scheme, cfg.Listen),
+		fmt.Sprintf("open %s://%s/ui/\t   Web UI", scheme, cfg.Listen),
 	)
 
 	if flagOpenUI {
-		openUIAddr := fmt.Sprintf("%s://%s", scheme, cfg.Listen)
+		openUIAddr := fmt.Sprintf("%s://%s/ui/", scheme, cfg.Listen)
 		go func() {
 			// Brief delay to ensure server is accepting connections.
 			time.Sleep(300 * time.Millisecond)

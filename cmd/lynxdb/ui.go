@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -30,7 +31,7 @@ func newUICmd() *cobra.Command {
 }
 
 func runUI() error {
-	u := globalServer
+	u := webUIURL()
 	printHint("Opening %s in browser...", u)
 
 	if err := openBrowser(u); err != nil {
@@ -129,7 +130,11 @@ func buildSearchURL(query, since, from, to string) string {
 		params.Set("to", to)
 	}
 
-	return globalServer + "/search?" + params.Encode()
+	return webUIURL() + "#" + params.Encode()
+}
+
+func webUIURL() string {
+	return strings.TrimRight(globalServer, "/") + "/ui/"
 }
 
 // openBrowser opens the specified URL in the default browser.

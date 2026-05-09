@@ -7,10 +7,13 @@ package webui
 
 import (
 	"embed"
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
 )
+
+const Path = "/ui"
 
 //go:embed all:dist
 var distFS embed.FS
@@ -30,32 +33,52 @@ func Enabled() bool {
 	return false
 }
 
-// Handler returns an http.Handler that serves the embedded SPA.
+// Handler returns an http.Handler that serves the embedded SPA under Path.
 // Static assets under /assets/ are served with immutable cache headers.
 // All other paths fall back to index.html for client-side routing.
 func Handler() http.Handler {
 	sub, _ := fs.Sub(distFS, "dist")
-	fileServer := http.FileServer(http.FS(sub))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		if path == "/" {
+		path := strings.TrimPrefix(r.URL.Path, Path)
+		if path == "" || path == "/" {
 			path = "index.html"
 		} else {
 			path = strings.TrimPrefix(path, "/")
 		}
 
 		if f, err := sub.Open(path); err == nil {
-			f.Close()
-			if strings.HasPrefix(r.URL.Path, "/assets/") {
+			if strings.HasPrefix(path, "assets/") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
-			fileServer.ServeHTTP(w, r)
+			serveFSFile(w, r, f)
 			return
 		}
 
 		// SPA fallback: serve index.html for unmatched routes.
-		r.URL.Path = "/"
-		fileServer.ServeHTTP(w, r)
+		f, err := sub.Open("index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		serveFSFile(w, r, f)
 	})
+}
+
+func serveFSFile(w http.ResponseWriter, r *http.Request, f fs.File) {
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
+	rs, ok := f.(io.ReadSeeker)
+	if !ok {
+		http.Error(w, "web UI asset is not seekable", http.StatusInternalServerError)
+		return
+	}
+
+	http.ServeContent(w, r, info.Name(), info.ModTime(), rs)
 }

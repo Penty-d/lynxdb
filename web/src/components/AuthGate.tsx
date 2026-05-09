@@ -1,6 +1,7 @@
 import { useState, useCallback } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { token, authRequired, setToken } from "../stores/auth";
+import { uiPath } from "../utils/base";
 import styles from "./AuthGate.module.css";
 
 interface Props {
@@ -77,7 +78,7 @@ function LoginForm() {
     <div class={styles.backdrop}>
       <form class={styles.card} onSubmit={handleSubmit}>
         <div class={styles.logo}>
-          <img src="/favicon.svg" alt="LynxDB" class={styles.logoIcon} />
+          <img src={uiPath("/favicon.svg")} alt="LynxDB" class={styles.logoIcon} />
           LynxDB
         </div>
         <div class={styles.subtitle}>Enter your API key to continue</div>

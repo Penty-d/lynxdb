@@ -11,6 +11,8 @@ import (
 	"net/url"
 )
 
+const Path = "/ui"
+
 // Enabled always returns true in dev mode.
 func Enabled() bool { return true }
 
