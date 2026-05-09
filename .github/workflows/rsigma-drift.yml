@@ -56,7 +56,12 @@ jobs:
           set -euo pipefail
           committed_dir="$(mktemp -d)"
           generated_dir="$(mktemp -d)"
-          cp pkg/sigmaqueries/testdata/golden/*.spl2 "$committed_dir/"
+          find pkg/sigmaqueries/testdata/golden \
+            -maxdepth 1 \
+            -name '*.spl2' \
+            ! -name '*_minimal.spl2' \
+            ! -name '*_index.spl2' \
+            -exec cp {} "$committed_dir/" \;
           cp "$DRIFT_OUTPUT_DIR"/*.spl2 "$generated_dir/"
           if diff -ruN "$committed_dir" "$generated_dir" > drift.patch; then
             echo "has_drift=false" >> "$GITHUB_OUTPUT"
