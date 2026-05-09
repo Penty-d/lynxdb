@@ -46,6 +46,26 @@ Upgraded: v0.4.0 -> v0.5.0
 lynxdb upgrade --version v0.5.0-rc.1
 ```
 
+Prerelease versions require explicit consent:
+
+```bash
+lynxdb upgrade --version v0.5.0-rc.1 --allow-prerelease
+```
+
+## Nightly Upgrades
+
+Nightly builds are prerelease builds from `main` for testing. They may contain regressions and are not recommended for production.
+
+```bash
+# Check latest nightly without installing
+lynxdb upgrade --check --channel nightly --allow-prerelease
+
+# Upgrade to latest nightly
+lynxdb upgrade --channel nightly --allow-prerelease
+```
+
+Stable upgrades never read the nightly manifest. `lynxdb upgrade` reads `https://dl.lynxdb.org/manifest.json`; nightly upgrades read `https://dl.lynxdb.org/nightly/manifest.json` only when both `--channel nightly` and `--allow-prerelease` are provided.
+
 ### How Self-Update Works
 
 1. Fetches `manifest.json` from `dl.lynxdb.org` (fallback: GitHub Releases)
@@ -77,11 +97,24 @@ LynxDB v0.4.0 is installed. Upgrading to v0.5.0...
 LYNXDB_VERSION=v0.5.0 curl -fsSL https://lynxdb.org/install.sh | sh
 ```
 
+### Install Nightly
+
+```bash
+curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel nightly --allow-prerelease
+```
+
 ## Homebrew
 
 ```bash
 brew update
 brew upgrade lynxbase/tap/lynxdb
+```
+
+Nightly uses a separate package because it installs the same `lynxdb` binary name:
+
+```bash
+brew install lynxbase/tap/lynxdb-nightly
+brew upgrade lynxbase/tap/lynxdb-nightly
 ```
 
 ## Docker
@@ -92,6 +125,19 @@ docker pull ghcr.io/lynxbase/lynxdb:latest
 
 # Or a specific version
 docker pull ghcr.io/lynxbase/lynxdb:0.5.0
+
+# Or latest nightly for testing
+docker pull ghcr.io/lynxbase/lynxdb:nightly
+```
+
+## Roll Back to Stable
+
+```bash
+curl -fsSL https://lynxdb.org/install.sh | sh
+brew uninstall lynxdb-nightly
+brew install lynxbase/tap/lynxdb
+docker pull ghcr.io/lynxbase/lynxdb:latest
+lynxdb upgrade
 ```
 
 ### Docker Compose

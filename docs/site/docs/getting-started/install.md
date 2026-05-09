@@ -56,6 +56,8 @@ The install script supports customization via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LYNXDB_VERSION` | latest | Install a specific version |
+| `LYNXDB_CHANNEL` | stable | Release channel: `stable` or `nightly` |
+| `LYNXDB_ALLOW_PRERELEASE` | unset | Required for nightly and prerelease versions |
 | `LYNXDB_INSTALL_DIR` | auto-detect | Custom installation directory |
 | `LYNXDB_NO_MODIFY_PATH` | unset | Skip PATH modification |
 | `LYNXDB_FORCE` | unset | Skip confirmation prompts |
@@ -66,6 +68,26 @@ LYNXDB_VERSION=v0.5.0 curl -fsSL https://lynxdb.org/install.sh | sh
 
 # Install to a custom directory
 LYNXDB_INSTALL_DIR=/opt/bin curl -fsSL https://lynxdb.org/install.sh | sh
+```
+
+### Nightly Builds
+
+Nightly builds are prerelease builds from `main` for testing. They are not recommended for production and always require explicit opt-in.
+
+```bash
+# Install latest nightly
+curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel nightly --allow-prerelease
+
+# Homebrew nightly package
+brew install lynxbase/tap/lynxdb-nightly
+```
+
+To return to stable:
+
+```bash
+curl -fsSL https://lynxdb.org/install.sh | sh
+brew uninstall lynxdb-nightly
+brew install lynxbase/tap/lynxdb
 ```
 
 ## Docker
@@ -80,6 +102,9 @@ docker run -d --name lynxdb \
 # Run a one-off query
 echo '{"level":"error","msg":"test"}' | \
   docker run -i ghcr.io/lynxbase/lynxdb query '| stats count by level'
+
+# Pull latest nightly for testing
+docker pull ghcr.io/lynxbase/lynxdb:nightly
 ```
 
 ### Docker Compose
@@ -144,6 +169,9 @@ lynxdb upgrade --check
 
 # Upgrade to latest
 lynxdb upgrade
+
+# Upgrade to latest nightly
+lynxdb upgrade --channel nightly --allow-prerelease
 
 # Upgrade to a specific version
 lynxdb upgrade --version v0.6.0

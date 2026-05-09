@@ -148,11 +148,20 @@ These are used by the `install.sh` script, not by the LynxDB binary itself:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LYNXDB_VERSION` | latest | Specific version to install |
+| `LYNXDB_CHANNEL` | `stable` | Install channel: `stable` or `nightly` |
+| `LYNXDB_ALLOW_PRERELEASE` | | Required for nightly and explicit prerelease versions |
 | `LYNXDB_INSTALL_DIR` | auto-detect | Installation directory |
 | `LYNXDB_BASE_URL` | `https://dl.lynxdb.org` | CDN base URL |
 | `LYNXDB_NO_MODIFY_PATH` | | Skip PATH modification |
 | `LYNXDB_VERBOSE` | | Verbose output |
 | `LYNXDB_FORCE` | | Skip confirmation prompts |
+
+Nightly installs require both the nightly channel and prerelease consent:
+
+```bash
+LYNXDB_CHANNEL=nightly LYNXDB_ALLOW_PRERELEASE=1 \
+  curl -fsSL https://lynxdb.org/install.sh | sh
+```
 
 ## Usage in Docker
 

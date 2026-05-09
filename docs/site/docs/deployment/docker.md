@@ -28,10 +28,23 @@ curl http://localhost:3100/health
 | Image | Description |
 |-------|-------------|
 | `ghcr.io/lynxbase/lynxdb:latest` | Latest stable release |
+| `ghcr.io/lynxbase/lynxdb:nightly` | Latest nightly prerelease for testing |
 | `ghcr.io/lynxbase/lynxdb:0.5.0` | Specific version |
 | `ghcr.io/lynxbase/lynxdb:0.5` | Latest patch for minor version |
 
 Images are available for `linux/amd64` and `linux/arm64`.
+
+Nightly images are prerelease builds from `main`. They may contain regressions and are not recommended for production.
+
+```bash
+docker pull ghcr.io/lynxbase/lynxdb:nightly
+```
+
+To return to stable:
+
+```bash
+docker pull ghcr.io/lynxbase/lynxdb:latest
+```
 
 ## Docker Run
 
