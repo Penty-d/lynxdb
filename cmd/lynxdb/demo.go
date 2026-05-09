@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/rand"
+	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +27,8 @@ var (
 	flagDemoAddr string
 )
 
+const defaultDemoAddr = "127.0.0.1:3100"
+
 var demoCmd = &cobra.Command{
 	Use:   "demo",
 	Short: "Run a demo with live-generated logs",
@@ -36,7 +41,7 @@ All normal commands (query, tail, ingest) and the REST API work against it.`,
 
 func init() {
 	demoCmd.Flags().IntVar(&flagDemoRate, "rate", 200, "Events per second")
-	demoCmd.Flags().StringVar(&flagDemoAddr, "addr", "localhost:3100", "Listen address for demo server")
+	demoCmd.Flags().StringVar(&flagDemoAddr, "addr", defaultDemoAddr, "Listen address for demo server")
 	rootCmd.AddCommand(demoCmd)
 }
 
@@ -50,50 +55,40 @@ func runDemo(cmd *cobra.Command, args []string) error {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	srv, err := rest.NewServer(rest.Config{
-		Addr:    flagDemoAddr,
-		DataDir: "", // in-memory, no persistence
-		Logger:  logger,
-	})
-	if err != nil {
-		return fmt.Errorf("demo: failed to create server: %w", err)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- srv.Start(ctx) }()
-
-	readyCh := make(chan struct{})
-	go func() { srv.WaitReady(); close(readyCh) }()
-	select {
-	case <-readyCh:
-		// Server is ready to accept requests.
-	case err := <-serverErr:
-		return fmt.Errorf("demo: failed to start on %s: %w\n\n  Hint: Try --addr localhost:3101", flagDemoAddr, err)
+	addrs := demoListenCandidates(flagDemoAddr, !cmd.Flags().Changed("addr"))
+	started, err := startDemoServer(ctx, logger, addrs)
+	if err != nil {
+		return err
 	}
+	defer started.cancel()
+
+	srv := started.srv
+	serverErr := started.errCh
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	t := ui.Stdout
 	scheme := "http"
+	serverURL := scheme + "://" + srv.Addr()
 	fmt.Printf("\n  %s\n", t.Bold.Render("LynxDB Demo Mode"))
 	fmt.Printf("  %s\n\n", t.HRule(40))
-	fmt.Println(t.KeyValue("Server", scheme+"://"+srv.Addr()))
+	fmt.Println(t.KeyValue("Server", serverURL))
 	fmt.Println(t.KeyValue("Data", "(in-memory)"))
 	fmt.Println(t.KeyValue("Rate", fmt.Sprintf("%d events/sec", flagDemoRate)))
 	fmt.Println(t.KeyValue("Sources", "nginx, api-gateway, postgres, redis"))
 	fmt.Println()
 	fmt.Printf("  %s\n", t.Dim.Render("Try in another terminal:"))
-	fmt.Printf("    %s\n", t.Info.Render("lynxdb query '_source=nginx | stats count by status'"))
-	fmt.Printf("    %s\n", t.Info.Render("lynxdb query 'level=ERROR | stats count by host' --since 5m"))
-	fmt.Printf("    %s\n", t.Info.Render("lynxdb tail 'level=ERROR'"))
+	fmt.Printf("    %s\n", t.Info.Render(demoCommand(serverURL, "lynxdb query '_source=nginx | stats count by status'")))
+	fmt.Printf("    %s\n", t.Info.Render(demoCommand(serverURL, "lynxdb query 'level=ERROR | stats count by host' --since 5m")))
+	fmt.Printf("    %s\n", t.Info.Render(demoCommand(serverURL, "lynxdb tail 'level=ERROR'")))
 	fmt.Println()
 	fmt.Printf("  %s\n", t.Dim.Render("REST API:"))
 	fmt.Printf("    %s\n", t.Info.Render(
-		fmt.Sprintf("curl -s %s://%s/api/v1/query -d '{\"q\":\"| stats count by source\"}' | jq .", scheme, srv.Addr())))
+		fmt.Sprintf("curl -s %s/api/v1/query -d '{\"q\":\"| stats count by source\"}' | jq .", serverURL)))
 	fmt.Println()
 	fmt.Printf("  %s\n\n", t.Dim.Render("Press Ctrl+C to stop."))
 
@@ -143,6 +138,101 @@ func runDemo(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
+}
+
+type demoServer struct {
+	srv    *rest.Server
+	errCh  <-chan error
+	cancel context.CancelFunc
+}
+
+func demoListenCandidates(addr string, allowFallback bool) []string {
+	addrs := []string{addr}
+	if !allowFallback || addr != defaultDemoAddr {
+		return addrs
+	}
+	for port := 3101; port <= 3110; port++ {
+		addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", port))
+	}
+
+	return addrs
+}
+
+func startDemoServer(parent context.Context, logger *slog.Logger, addrs []string) (*demoServer, error) {
+	var lastErr error
+	for _, addr := range addrs {
+		available, err := isTCPAddrAvailable(addr)
+		if err != nil {
+			return nil, fmt.Errorf("demo: failed to check %s: %w", addr, err)
+		}
+		if !available {
+			lastErr = fmt.Errorf("listen tcp %s: address already in use", addr)
+			continue
+		}
+
+		attemptCtx, attemptCancel := context.WithCancel(parent)
+		srv, err := rest.NewServer(rest.Config{
+			Addr:    addr,
+			DataDir: "", // in-memory, no persistence
+			Logger:  logger,
+		})
+		if err != nil {
+			attemptCancel()
+			return nil, fmt.Errorf("demo: failed to create server: %w", err)
+		}
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- srv.Start(attemptCtx) }()
+
+		readyCh := make(chan struct{})
+		go func() { srv.WaitReady(); close(readyCh) }()
+		select {
+		case <-readyCh:
+			return &demoServer{srv: srv, errCh: errCh, cancel: attemptCancel}, nil
+		case err := <-errCh:
+			attemptCancel()
+			lastErr = err
+			if isAddrInUseError(err) {
+				continue
+			}
+			return nil, fmt.Errorf("demo: failed to start on %s: %w", addr, err)
+		case <-parent.Done():
+			attemptCancel()
+			return nil, parent.Err()
+		}
+	}
+
+	return nil, fmt.Errorf("demo: failed to start; all demo ports are busy: %w", lastErr)
+}
+
+func isTCPAddrAvailable(addr string) (bool, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		if isAddrInUseError(err) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	return true, ln.Close()
+}
+
+func isAddrInUseError(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && strings.Contains(opErr.Error(), "address already in use") {
+		return true
+	}
+
+	return strings.Contains(err.Error(), "address already in use")
+}
+
+func demoCommand(serverURL, command string) string {
+	if serverURL == "http://"+defaultDemoAddr {
+		return command
+	}
+
+	return command + " --server " + serverURL
 }
 
 func generateDemoLine(rng *rand.Rand, t time.Time) string {
