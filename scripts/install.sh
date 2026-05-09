@@ -10,6 +10,8 @@
 # Environment variables:
 #   LYNXDB_INSTALL_DIR  - Installation directory (default: /usr/local/bin or ~/.local/bin)
 #   LYNXDB_VERSION      - Specific version to install (default: latest)
+#   LYNXDB_CHANNEL      - Release channel: stable or nightly (default: stable)
+#   LYNXDB_ALLOW_PRERELEASE - Required for nightly and prerelease versions
 #   LYNXDB_BASE_URL     - Override download base URL
 #   LYNXDB_NO_MODIFY_PATH - If set, skip PATH modification
 #
@@ -24,7 +26,8 @@ set -eu
 GITHUB_REPO="lynxbase/Lynxdb"
 DEFAULT_BASE_URL="https://dl.lynxdb.org"
 FALLBACK_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download"
-MANIFEST_URL="https://dl.lynxdb.org/manifest.json"
+STABLE_MANIFEST_PATH="/manifest.json"
+NIGHTLY_MANIFEST_PATH="/nightly/manifest.json"
 
 
 setup_colors() {
@@ -165,19 +168,82 @@ detect_libc() {
     fi
 }
 
+allow_prerelease_enabled() {
+    case "${ALLOW_PRERELEASE:-}" in
+        1|true|TRUE|yes|YES) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+version_is_prerelease() {
+    case "$1" in
+        *-*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+normalize_version() {
+    if [ -n "${VERSION:-}" ]; then
+        case "$VERSION" in
+            v*) ;;
+            *) VERSION="v${VERSION}" ;;
+        esac
+    fi
+}
+
+resolve_manifest_url() {
+    case "$CHANNEL" in
+        stable) MANIFEST_URL="${BASE_URL}${STABLE_MANIFEST_PATH}" ;;
+        nightly) MANIFEST_URL="${BASE_URL}${NIGHTLY_MANIFEST_PATH}" ;;
+    esac
+}
+
+validate_channel_request() {
+    case "$CHANNEL" in
+        stable|nightly) ;;
+        *)
+            error "Invalid channel: $CHANNEL"
+            error "Use --channel stable or --channel nightly."
+            exit 1
+            ;;
+    esac
+
+    if [ "$CHANNEL" = "nightly" ] && ! allow_prerelease_enabled; then
+        error "Nightly installs require explicit prerelease consent."
+        error "Re-run with: --channel nightly --allow-prerelease"
+        exit 1
+    fi
+
+    normalize_version
+    if [ -n "${VERSION:-}" ] && version_is_prerelease "$VERSION" && ! allow_prerelease_enabled; then
+        error "Prerelease versions require explicit consent."
+        error "Re-run with: --allow-prerelease"
+        exit 1
+    fi
+}
+
+validate_resolved_version() {
+    if version_is_prerelease "$VERSION" && ! allow_prerelease_enabled; then
+        error "Resolved prerelease version without explicit consent: $VERSION"
+        error "Re-run with: --allow-prerelease"
+        exit 1
+    fi
+
+    case "$VERSION" in
+        *-nightly.*) RESOLVED_CHANNEL="nightly" ;;
+        *) RESOLVED_CHANNEL="$CHANNEL" ;;
+    esac
+}
 
 resolve_version() {
     if [ -n "${VERSION:-}" ]; then
-        # Normalize: ensure version starts with 'v'
-        case "$VERSION" in
-            v*) ;; # already has prefix
-            *)  VERSION="v${VERSION}" ;;
-        esac
+        normalize_version
         debug "Using specified version: $VERSION"
         return
     fi
 
-    info "Resolving latest version..."
+    info "Resolving latest ${CHANNEL} version..."
+    resolve_manifest_url
 
     # Try primary manifest first, then fallback
     manifest=""
@@ -193,6 +259,12 @@ resolve_version() {
             debug "Latest version from manifest: $VERSION"
             return
         fi
+    fi
+
+    if [ "$CHANNEL" = "nightly" ]; then
+        error "Could not determine the latest nightly version from the nightly manifest."
+        error "Please specify a nightly version manually with --version and --allow-prerelease."
+        exit 1
     fi
 
     # Final fallback: GitHub API
@@ -519,8 +591,12 @@ print_summary() {
     printf '\n'
     printf '  %s\n' "${UNDERLINE}Configuration${RESET}"
     info "${BOLD}Version${RESET}:     ${GREEN}${VERSION}${RESET}"
+    info "${BOLD}Channel${RESET}:     ${GREEN}${RESOLVED_CHANNEL}${RESET}"
     info "${BOLD}Platform${RESET}:    ${GREEN}${OS}/${ARCH}${LIBC:+ (${LIBC})}${RESET}"
     info "${BOLD}Install dir${RESET}: ${GREEN}${BIN_DIR}${RESET}"
+    if [ "$RESOLVED_CHANNEL" = "nightly" ]; then
+        warn "You are installing a nightly prerelease build. It may contain regressions."
+    fi
     printf '\n'
 }
 
@@ -556,6 +632,8 @@ ${UNDERLINE}Usage${RESET}
 
 ${UNDERLINE}Options${RESET}
   -v, --version VERSION   Install a specific version (e.g. v0.5.0)
+      --channel CHANNEL   Release channel: stable or nightly
+      --allow-prerelease  Allow nightly and explicit prerelease versions
   -d, --dir DIRECTORY     Custom installation directory
   -s, --server            Set up as a system service (runs 'lynxdb install')
   -f, --force             Skip confirmation prompts
@@ -567,6 +645,8 @@ ${UNDERLINE}Options${RESET}
 ${UNDERLINE}Environment Variables${RESET}
   LYNXDB_INSTALL_DIR      Installation directory
   LYNXDB_VERSION          Version to install
+  LYNXDB_CHANNEL          Release channel: stable or nightly
+  LYNXDB_ALLOW_PRERELEASE Required for nightly and prerelease versions
   LYNXDB_BASE_URL         Override download base URL
   LYNXDB_NO_MODIFY_PATH   Skip PATH modification
 
@@ -576,6 +656,9 @@ ${UNDERLINE}Examples${RESET}
 
   # Install specific version
   curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version v0.5.0
+
+  # Install latest nightly
+  curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel nightly --allow-prerelease
 
   # Install to custom directory
   curl -fsSL https://lynxdb.org/install.sh | LYNXDB_INSTALL_DIR=~/bin sh
@@ -592,6 +675,10 @@ parse_args() {
     VERSION="${LYNXDB_VERSION:-}"
     INSTALL_DIR="${LYNXDB_INSTALL_DIR:-}"
     BASE_URL="${LYNXDB_BASE_URL:-$DEFAULT_BASE_URL}"
+    BASE_URL="${BASE_URL%/}"
+    CHANNEL="${LYNXDB_CHANNEL:-stable}"
+    ALLOW_PRERELEASE="${LYNXDB_ALLOW_PRERELEASE:-}"
+    RESOLVED_CHANNEL="$CHANNEL"
     VERBOSE="${LYNXDB_VERBOSE:-}"
     QUIET="${LYNXDB_QUIET:-}"
     FORCE="${LYNXDB_FORCE:-}"
@@ -601,6 +688,9 @@ parse_args() {
         case "$1" in
             -v|--version)   VERSION="$2"; shift 2 ;;
             -v=*|--version=*) VERSION="${1#*=}"; shift ;;
+            --channel)      CHANNEL="$2"; shift 2 ;;
+            --channel=*)    CHANNEL="${1#*=}"; shift ;;
+            --allow-prerelease) ALLOW_PRERELEASE=1; shift ;;
             -d|--dir)       INSTALL_DIR="$2"; shift 2 ;;
             -d=*|--dir=*)   INSTALL_DIR="${1#*=}"; shift ;;
             -s|--server)    SETUP_SERVER=1; shift ;;
@@ -636,13 +726,21 @@ setup_server_mode() {
 main() {
     setup_colors
     parse_args "$@"
+    validate_channel_request
     print_banner
     detect_http_client
     detect_os
     detect_arch
     detect_libc
     resolve_version
+    validate_resolved_version
     resolve_install_dir
+    if [ "${LYNXDB_INSTALL_TEST_MODE:-}" = "resolve" ]; then
+        printf 'VERSION=%s\n' "$VERSION"
+        printf 'CHANNEL=%s\n' "$RESOLVED_CHANNEL"
+        printf 'MANIFEST_URL=%s\n' "${MANIFEST_URL:-}"
+        exit 0
+    fi
     check_existing_installation
     print_summary
     build_download_url
