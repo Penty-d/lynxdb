@@ -201,6 +201,15 @@ func (p *Parser) parseQuery() (*Query, error) {
 		} else if q.Source != nil {
 			// After FROM + optional WHERE, need a pipe for more commands.
 			break
+		} else if isImplicitSearchStart(tok, p.peekAt(1)) {
+			cmd, err := p.parseImplicitSearch()
+			if err != nil {
+				return nil, err
+			}
+			if cmd != nil {
+				q.Commands = append(q.Commands, cmd)
+			}
+			continue
 		}
 
 		cmds, err := p.parseCommand()
@@ -211,6 +220,19 @@ func (p *Parser) parseQuery() (*Query, error) {
 	}
 
 	return q, nil
+}
+
+func isImplicitSearchStart(tok, next Token) bool {
+	if tok.Type != TokenIdent && tok.Type != TokenGlob {
+		return false
+	}
+
+	switch next.Type {
+	case TokenEq, TokenNeq, TokenLt, TokenLte, TokenGt, TokenGte, TokenLike, TokenIn:
+		return true
+	default:
+		return false
+	}
 }
 
 // parseIndexSource handles the INDEX keyword as a source command.
@@ -824,7 +846,7 @@ func (p *Parser) parseOutliers() (*OutliersCommand, error) {
 			default:
 				return nil, fmt.Errorf("spl2: outliers method must be iqr, zscore, or mad, got %q", tok.Literal)
 			}
-				if cmd.Method == "zscore" {
+			if cmd.Method == "zscore" {
 				cmd.Threshold = 3.0
 			}
 		}

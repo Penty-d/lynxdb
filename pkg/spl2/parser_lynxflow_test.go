@@ -1366,6 +1366,64 @@ func TestLynxFlow_CTE(t *testing.T) {
 	}
 }
 
+func TestLynxFlow_CTEImplicitSearch(t *testing.T) {
+	input := `$auth = source=api-gateway host=auth-service level=ERROR | stats count AS auth_errors, dc(trace_id) AS distinct_traces BY host; FROM $auth | head 10`
+	prog, err := ParseProgram(input)
+	if err != nil {
+		t.Fatalf("ParseProgram: %v", err)
+	}
+	if len(prog.Datasets) != 1 {
+		t.Fatalf("Datasets: got %d, want 1", len(prog.Datasets))
+	}
+	if len(prog.Datasets[0].Query.Commands) != 2 {
+		t.Fatalf("CTE commands: got %d, want 2", len(prog.Datasets[0].Query.Commands))
+	}
+	if _, ok := prog.Datasets[0].Query.Commands[0].(*SearchCommand); !ok {
+		t.Fatalf("CTE cmd[0]: expected SearchCommand, got %T", prog.Datasets[0].Query.Commands[0])
+	}
+	stats, ok := prog.Datasets[0].Query.Commands[1].(*StatsCommand)
+	if !ok {
+		t.Fatalf("CTE cmd[1]: expected StatsCommand, got %T", prog.Datasets[0].Query.Commands[1])
+	}
+	if len(stats.Aggregations) != 2 {
+		t.Fatalf("stats aggregations: got %d, want 2", len(stats.Aggregations))
+	}
+	if stats.Aggregations[0].Alias != "auth_errors" || stats.Aggregations[1].Alias != "distinct_traces" {
+		t.Fatalf("stats aliases: got %#v", stats.Aggregations)
+	}
+}
+
+func TestLynxFlow_CTEImplicitSearchCurlRegression(t *testing.T) {
+	input := `$bad_logins = source=nginx
+    | rex field=_raw "(?P<ip>\d+\.\d+\.\d+\.\d+).*\"\w+\s/login\sHTTP[^\"]*\"\s(?P<status>4\d\d)"
+    | stats count AS failed_logins BY ip;
+
+  $auth_svc_errors = source=api-gateway host=auth-service level=ERROR
+    | stats count AS auth_errors, dc(trace_id) AS distinct_traces BY host;
+
+  FROM $bad_logins
+  | where failed_logins >= 3
+  | eval risk_score = failed_logins * 10
+  | sort -risk_score
+  | head 10`
+
+	prog, err := ParseProgram(input)
+	if err != nil {
+		t.Fatalf("ParseProgram: %v", err)
+	}
+	if len(prog.Datasets) != 2 {
+		t.Fatalf("Datasets: got %d, want 2", len(prog.Datasets))
+	}
+	for i, ds := range prog.Datasets {
+		if len(ds.Query.Commands) == 0 {
+			t.Fatalf("dataset %d has no commands", i)
+		}
+		if _, ok := ds.Query.Commands[0].(*SearchCommand); !ok {
+			t.Fatalf("dataset %d cmd[0]: expected SearchCommand, got %T", i, ds.Query.Commands[0])
+		}
+	}
+}
+
 // Spec 14 — Expression Extensions (%, ??, ?, between, is null)
 
 func TestLynxFlow_ModuloOperator(t *testing.T) {
