@@ -8,7 +8,7 @@ set -euo pipefail
 # - cargo, for building the rsigma CLI
 # - go, for the final SPL2 parse check
 #
-# This script is developer-facing only. It is not intended for CI.
+# Used by developers and the scheduled rsigma drift workflow.
 
 rsigma_ref="v0.9.0"
 with_matches=false
@@ -64,7 +64,12 @@ git clone --depth 1 --branch "$rsigma_ref" https://github.com/timescale/rsigma "
 (cd "$tmpdir/rsigma" && cargo build --release -p rsigma)
 
 src_dir="$tmpdir/rsigma/crates/rsigma-convert/tests/golden/lynxdb"
-rsigma_bin="$tmpdir/rsigma/target/release/rsigma"
+rsigma_target_dir="${CARGO_TARGET_DIR:-$tmpdir/rsigma/target}"
+rsigma_bin="$rsigma_target_dir/release/rsigma"
+if [[ ! -x "$rsigma_bin" ]]; then
+  echo "built rsigma binary not found at $rsigma_bin" >&2
+  exit 1
+fi
 
 yaml_files=()
 while IFS= read -r file; do
