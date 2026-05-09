@@ -32,6 +32,7 @@ func TestParseSemver(t *testing.T) {
 		{"v0.0.0", semver{0, 0, 0, ""}, false},
 		{"v1.2.3-rc.1", semver{1, 2, 3, "rc.1"}, false},
 		{"v1.2.3-beta.2", semver{1, 2, 3, "beta.2"}, false},
+		{"v0.7.0-nightly.20260509.g1a2b3c4", semver{0, 7, 0, "nightly.20260509.g1a2b3c4"}, false},
 		{"v10.20.30", semver{10, 20, 30, ""}, false},
 		{"", semver{}, true},
 		{"v1.2", semver{}, true},
@@ -75,6 +76,9 @@ func TestCompareVersions(t *testing.T) {
 		{"v0.5.0-rc.1", "v0.5.0-rc.2", -1},   // rc.1 < rc.2
 		{"v0.5.0-beta.1", "v0.5.0-rc.1", -1}, // beta < rc (lexicographic)
 		{"v0.5.0-rc.1", "v0.5.0-beta.1", 1},  // rc > beta
+		{"v0.7.0-nightly.20260510.g9f8e7d6", "v0.7.0-nightly.20260509.g1a2b3c4", 1},
+		{"v0.7.0", "v0.7.0-nightly.20260510.g9f8e7d6", 1},
+		{"v0.7.1-nightly.20260510.g9f8e7d6", "v0.7.0", 1},
 
 		// v prefix handling.
 		{"v1.0.0", "v1.0.0", 0},
@@ -209,6 +213,68 @@ func TestFetchManifestFallback(t *testing.T) {
 	}
 }
 
+func TestFetchChannelManifest(t *testing.T) {
+	stableManifest := Manifest{
+		Version: "v0.6.0",
+		Channel: ChannelStable,
+		Artifacts: map[string]Artifact{
+			"linux-amd64": {URL: "https://example.com/stable.tar.gz", SHA256: "abc"},
+		},
+	}
+	nightlyManifest := Manifest{
+		Version: "v0.7.0-nightly.20260509.g1a2b3c4",
+		Channel: ChannelNightly,
+		Artifacts: map[string]Artifact{
+			"linux-amd64": {URL: "https://example.com/nightly.tar.gz", SHA256: "def"},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/manifest.json":
+			json.NewEncoder(w).Encode(stableManifest)
+		case "/nightly/manifest.json":
+			json.NewEncoder(w).Encode(nightlyManifest)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	oldManifestURL := manifestURL
+	oldNightlyManifestURL := nightlyManifestURL
+	oldManifestFallbackURL := manifestFallbackURL
+	manifestURL = srv.URL + "/manifest.json"
+	nightlyManifestURL = srv.URL + "/nightly/manifest.json"
+	manifestFallbackURL = srv.URL + "/manifest.json"
+	defer func() {
+		manifestURL = oldManifestURL
+		nightlyManifestURL = oldNightlyManifestURL
+		manifestFallbackURL = oldManifestFallbackURL
+	}()
+
+	ctx := context.Background()
+
+	stable, err := FetchChannelManifest(ctx, ChannelStable)
+	if err != nil {
+		t.Fatalf("FetchChannelManifest(stable): %v", err)
+	}
+	if stable.Version != "v0.6.0" || stable.Channel != ChannelStable {
+		t.Fatalf("stable manifest = %s/%s, want v0.6.0/stable", stable.Version, stable.Channel)
+	}
+
+	nightly, err := FetchChannelManifest(ctx, ChannelNightly)
+	if err != nil {
+		t.Fatalf("FetchChannelManifest(nightly): %v", err)
+	}
+	if nightly.Version != "v0.7.0-nightly.20260509.g1a2b3c4" || nightly.Channel != ChannelNightly {
+		t.Fatalf("nightly manifest = %s/%s, want nightly version/channel", nightly.Version, nightly.Channel)
+	}
+
+	if _, err := FetchChannelManifest(ctx, "beta"); err == nil {
+		t.Fatal("FetchChannelManifest(beta) error = nil, want error")
+	}
+}
 
 func TestCheckUpdateAvailable(t *testing.T) {
 	platformKey := PlatformKey()
@@ -274,6 +340,26 @@ func TestCheckOlderManifest(t *testing.T) {
 
 	if result.UpdateAvail {
 		t.Error("UpdateAvail = true, want false (current is newer)")
+	}
+}
+
+func TestCheckStableCurrentDoesNotDowngradeToNightly(t *testing.T) {
+	platformKey := PlatformKey()
+	manifest := &Manifest{
+		Version: "v0.7.0-nightly.20260509.g1a2b3c4",
+		Channel: ChannelNightly,
+		Artifacts: map[string]Artifact{
+			platformKey: {URL: "https://example.com/file.tar.gz", SHA256: "abc"},
+		},
+	}
+
+	result, err := checkAgainstManifest(manifest, "v0.7.0")
+	if err != nil {
+		t.Fatalf("checkAgainstManifest: %v", err)
+	}
+
+	if result.UpdateAvail {
+		t.Error("UpdateAvail = true, want false for stable current version")
 	}
 }
 

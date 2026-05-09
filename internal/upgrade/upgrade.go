@@ -13,12 +13,20 @@ import (
 )
 
 const (
-	manifestURL         = "https://dl.lynxdb.org/manifest.json"
-	manifestFallbackURL = "https://raw.githubusercontent.com/lynxbase/Lynxdb/main/dist/manifest.json"
-	httpTimeout         = 30 * time.Second
+	ChannelStable  = "stable"
+	ChannelNightly = "nightly"
+
+	httpTimeout = 30 * time.Second
 
 	// maxManifestSize limits the manifest body to prevent abuse (1 MB).
 	maxManifestSize = 1 << 20
+)
+
+var (
+	cdnBaseURL          = "https://dl.lynxdb.org"
+	manifestURL         = cdnBaseURL + "/manifest.json"
+	nightlyManifestURL  = cdnBaseURL + "/nightly/manifest.json"
+	manifestFallbackURL = "https://raw.githubusercontent.com/lynxbase/Lynxdb/main/dist/manifest.json"
 )
 
 // Manifest represents the release manifest served from CDN.
@@ -58,15 +66,27 @@ func PlatformKey() string {
 // FetchManifest downloads and parses the release manifest from the CDN,
 // falling back to GitHub if the primary endpoint fails.
 func FetchManifest(ctx context.Context) (*Manifest, error) {
-	return fetchManifestFromEndpoints(ctx, manifestURL, manifestFallbackURL)
+	return FetchChannelManifest(ctx, ChannelStable)
+}
+
+// FetchChannelManifest downloads and parses the latest manifest for a release channel.
+func FetchChannelManifest(ctx context.Context, channel string) (*Manifest, error) {
+	switch channel {
+	case ChannelStable:
+		return fetchManifestFromEndpoints(ctx, manifestURL, manifestFallbackURL)
+	case ChannelNightly:
+		client := &http.Client{Timeout: httpTimeout}
+		return fetchManifestFrom(ctx, client, nightlyManifestURL)
+	default:
+		return nil, fmt.Errorf("unknown release channel %q", channel)
+	}
 }
 
 // FetchVersionedManifest downloads and parses a manifest for a specific version,
-// falling back to GitHub if the primary CDN endpoint fails.
+// using only the immutable CDN version path.
 func FetchVersionedManifest(ctx context.Context, version string) (*Manifest, error) {
-	primary := fmt.Sprintf("https://dl.lynxdb.org/%s/manifest.json", version)
-	fallback := fmt.Sprintf("https://raw.githubusercontent.com/lynxbase/Lynxdb/main/dist/manifest.json")
-	return fetchManifestFromEndpoints(ctx, primary, fallback)
+	client := &http.Client{Timeout: httpTimeout}
+	return fetchManifestFrom(ctx, client, fmt.Sprintf("%s/%s/manifest.json", cdnBaseURL, version))
 }
 
 func fetchManifestFromEndpoints(ctx context.Context, primary, fallback string) (*Manifest, error) {
@@ -119,7 +139,12 @@ func fetchManifestFrom(ctx context.Context, client *http.Client, url string) (*M
 // by comparing the current version against the manifest's latest version
 // using semantic versioning.
 func Check(ctx context.Context, currentVersion string) (*CheckResult, error) {
-	manifest, err := FetchManifest(ctx)
+	return CheckChannel(ctx, currentVersion, ChannelStable)
+}
+
+// CheckChannel checks for an update in the requested release channel.
+func CheckChannel(ctx context.Context, currentVersion, channel string) (*CheckResult, error) {
+	manifest, err := FetchChannelManifest(ctx, channel)
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,10 +21,12 @@ func init() {
 
 func newUpgradeCmd() *cobra.Command {
 	var (
-		flagCheck   bool
-		flagVersion string
-		flagForce   bool
-		flagYes     bool
+		flagCheck           bool
+		flagVersion         string
+		flagForce           bool
+		flagYes             bool
+		flagChannel         string
+		flagAllowPrerelease bool
 	)
 
 	cmd := &cobra.Command{
@@ -31,26 +34,34 @@ func newUpgradeCmd() *cobra.Command {
 		Short: "Upgrade LynxDB to the latest version",
 		Long: `Check for and install LynxDB updates.
 
-By default, upgrades to the latest stable release. Use --version to install
-a specific version, or --check to check without installing.`,
+By default, upgrades to the latest stable release. Use --channel nightly with
+--allow-prerelease to opt in to nightly builds. Use --version to install a
+specific version, or --check to check without installing.`,
 		Example: `  lynxdb upgrade              # Upgrade to latest
   lynxdb upgrade --check      # Check only, don't install
   lynxdb upgrade --version v0.6.0  # Install specific version
+  lynxdb upgrade --channel nightly --allow-prerelease
   lynxdb upgrade --yes         # Skip confirmation prompt`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runUpgrade(flagCheck, flagVersion, flagForce, flagYes)
+			return runUpgrade(flagCheck, flagVersion, flagForce, flagYes, flagChannel, flagAllowPrerelease)
 		},
 	}
 
 	cmd.Flags().BoolVar(&flagCheck, "check", false, "Check for updates without installing")
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Install a specific version (e.g., v0.6.0)")
+	cmd.Flags().StringVar(&flagChannel, "channel", upgrade.ChannelStable, "Release channel: stable or nightly")
+	cmd.Flags().BoolVar(&flagAllowPrerelease, "allow-prerelease", false, "Allow nightly and explicit prerelease versions")
 	cmd.Flags().BoolVar(&flagForce, "force", false, "Skip 'already up to date' check")
 	cmd.Flags().BoolVar(&flagYes, "yes", false, "Skip confirmation prompt")
 
 	return cmd
 }
 
-func runUpgrade(check bool, version string, force, yes bool) error {
+func runUpgrade(check bool, version string, force, yes bool, channel string, allowPrerelease bool) error {
+	if err := validateUpgradeOptions(channel, version, allowPrerelease); err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -59,7 +70,11 @@ func runUpgrade(check bool, version string, force, yes bool) error {
 		return nil
 	}
 
-	printMeta("Checking for updates...")
+	if version == "" {
+		printMeta("Checking for %s updates...", channel)
+	} else {
+		printMeta("Checking version %s...", version)
+	}
 
 	var result *upgrade.CheckResult
 	var err error
@@ -89,7 +104,7 @@ func runUpgrade(check bool, version string, force, yes bool) error {
 			}
 		}
 	} else {
-		result, err = upgrade.Check(ctx, buildinfo.Version)
+		result, err = upgrade.CheckChannel(ctx, buildinfo.Version, channel)
 		if err != nil {
 			if errors.Is(err, upgrade.ErrPlatformNotFound) {
 				return fmt.Errorf("no build for %s/%s. Check available builds at https://github.com/lynxbase/lynxdb/releases",
@@ -128,9 +143,13 @@ func runUpgrade(check bool, version string, force, yes bool) error {
 	if version != "" {
 		targetVersion = version
 	}
+	resolvedChannel := upgradeChannelForTarget(channel, targetVersion)
 
 	if isTTY() && !yes {
 		msg := fmt.Sprintf("Upgrade LynxDB %s -> %s?", buildinfo.Version, targetVersion)
+		if resolvedChannel == upgrade.ChannelNightly {
+			msg = fmt.Sprintf("Upgrade LynxDB %s -> %s from nightly?", buildinfo.Version, targetVersion)
+		}
 		if !confirmAction(msg) {
 			printHint("Aborted.")
 			os.Exit(exitAborted)
@@ -178,4 +197,42 @@ func runUpgrade(check bool, version string, force, yes bool) error {
 	printNextSteps("Restart any running lynxdb processes")
 
 	return nil
+}
+
+func validateUpgradeOptions(channel, version string, allowPrerelease bool) error {
+	switch channel {
+	case upgrade.ChannelStable, upgrade.ChannelNightly:
+	default:
+		return fmt.Errorf("invalid channel %q: use stable or nightly", channel)
+	}
+
+	if channel == upgrade.ChannelNightly && !allowPrerelease {
+		return fmt.Errorf("nightly upgrades require --channel nightly --allow-prerelease")
+	}
+
+	if isPrereleaseVersion(version) && !allowPrerelease {
+		return fmt.Errorf("prerelease versions require --allow-prerelease")
+	}
+
+	return nil
+}
+
+func isPrereleaseVersion(version string) bool {
+	for _, r := range version {
+		if r == '-' {
+			return true
+		}
+	}
+	return false
+}
+
+func upgradeChannelForTarget(channel, version string) string {
+	if isNightlyVersion(version) {
+		return upgrade.ChannelNightly
+	}
+	return channel
+}
+
+func isNightlyVersion(version string) bool {
+	return strings.Contains(version, "-nightly.")
 }
