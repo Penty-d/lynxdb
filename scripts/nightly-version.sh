@@ -28,7 +28,7 @@ if ! printf '%s\n' "$base_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
 fi
 
 if [ "${CI:-}" != "true" ]; then
-    if ! git diff --quiet || ! git diff --cached --quiet; then
+    if [ -n "$(git status --porcelain)" ]; then
         echo "ERROR: refusing to calculate a local nightly tag from a dirty worktree" >&2
         exit 1
     fi
