@@ -1,9 +1,10 @@
 # .goreleaser.yaml
-# GoReleaser configuration for LynxDB
+# GoReleaser configuration for LynxDB stable releases
 # Docs: https://goreleaser.com
 #
 # This config builds LynxDB for all supported platforms, generates checksums,
-# publishes to GitHub Releases, and uploads to CDN via post-hooks.
+# publishes stable GitHub Releases, and leaves nightly releases to
+# .goreleaser-nightly.yaml.
 
 version: 2
 
@@ -98,6 +99,7 @@ checksum:
 release:
   draft: false
   prerelease: auto
+  make_latest: true
   name_template: "LynxDB v{{ .Version }}"
   header: |
     ## LynxDB v{{ .Version }}
