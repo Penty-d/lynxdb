@@ -13,6 +13,7 @@ const (
 	LintLeadingWildcard    = "L001"
 	LintDefaultSource      = "L002"
 	LintIndexRewrite       = "L003"
+	LintRawExactCompare    = "L005"
 	LintCountWithoutParens = "L013"
 	LintMixedSearchAndOr   = "L030"
 )
@@ -41,6 +42,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 
 	lints := lintDefaultSource(prog, tokens)
 	lints = append(lints, lintLeadingWildcards(prog)...)
+	lints = append(lints, lintRawExactCompare(prog)...)
 	lints = append(lints, lintIndexRewrite(tokens)...)
 	lints = append(lints, lintCountWithoutParens(tokens)...)
 	lints = append(lints, lintMixedSearchAndOr(input, tokens)...)
@@ -63,6 +65,116 @@ func lintDefaultSource(prog *Program, tokens []Token) []QueryLint {
 		Message:  "Default source `main` is used; add `FROM` for clarity",
 		Position: pos,
 	}}
+}
+
+func lintRawExactCompare(prog *Program) []QueryLint {
+	if prog == nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for _, ds := range prog.Datasets {
+		lints = append(lints, lintRawExactCompareInQuery(ds.Query)...)
+	}
+	lints = append(lints, lintRawExactCompareInQuery(prog.Main)...)
+
+	return lints
+}
+
+func lintRawExactCompareInQuery(q *Query) []QueryLint {
+	if q == nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for _, cmd := range q.Commands {
+		switch c := cmd.(type) {
+		case *SearchCommand:
+			if c.Expression != nil {
+				lints = append(lints, lintRawExactCompareInSearch(c.Expression)...)
+			}
+		case *WhereCommand:
+			lints = append(lints, lintRawExactCompareInExpr(c.Expr)...)
+		case *JoinCommand:
+			lints = append(lints, lintRawExactCompareInQuery(c.Subquery)...)
+		case *AppendCommand:
+			lints = append(lints, lintRawExactCompareInQuery(c.Subquery)...)
+		case *MultisearchCommand:
+			for _, sub := range c.Searches {
+				lints = append(lints, lintRawExactCompareInQuery(sub)...)
+			}
+		}
+	}
+
+	return lints
+}
+
+func lintRawExactCompareInSearch(expr SearchExpr) []QueryLint {
+	switch e := expr.(type) {
+	case *SearchAndExpr:
+		lints := lintRawExactCompareInSearch(e.Left)
+		return append(lints, lintRawExactCompareInSearch(e.Right)...)
+	case *SearchOrExpr:
+		lints := lintRawExactCompareInSearch(e.Left)
+		return append(lints, lintRawExactCompareInSearch(e.Right)...)
+	case *SearchNotExpr:
+		return lintRawExactCompareInSearch(e.Operand)
+	case *SearchCompareExpr:
+		if e.Field == "_raw" && e.Op == OpEq && e.Value != "" {
+			return []QueryLint{rawExactCompareLint()}
+		}
+	}
+
+	return nil
+}
+
+func lintRawExactCompareInExpr(expr Expr) []QueryLint {
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		lints := lintRawExactCompareInExpr(e.Left)
+		return append(lints, lintRawExactCompareInExpr(e.Right)...)
+	case *NotExpr:
+		return lintRawExactCompareInExpr(e.Expr)
+	case *CompareExpr:
+		var lints []QueryLint
+		lints = append(lints, lintRawExactCompareInExpr(e.Left)...)
+		lints = append(lints, lintRawExactCompareInExpr(e.Right)...)
+		if e.Op == "=" && isRawFieldExpr(e.Left) {
+			lints = append(lints, rawExactCompareLint())
+		}
+		return lints
+	case *InExpr:
+		var lints []QueryLint
+		lints = append(lints, lintRawExactCompareInExpr(e.Field)...)
+		for _, value := range e.Values {
+			lints = append(lints, lintRawExactCompareInExpr(value)...)
+		}
+		return lints
+	case *ArithExpr:
+		lints := lintRawExactCompareInExpr(e.Left)
+		return append(lints, lintRawExactCompareInExpr(e.Right)...)
+	case *FuncCallExpr:
+		var lints []QueryLint
+		for _, arg := range e.Args {
+			lints = append(lints, lintRawExactCompareInExpr(arg)...)
+		}
+		return lints
+	}
+
+	return nil
+}
+
+func isRawFieldExpr(expr Expr) bool {
+	field, ok := expr.(*FieldExpr)
+	return ok && field.Name == "_raw"
+}
+
+func rawExactCompareLint() QueryLint {
+	return QueryLint{
+		Code:     LintRawExactCompare,
+		Message:  "For substring search use `_raw LIKE \"%x%\"` or `search \"x\"`",
+		Position: 0,
+	}
 }
 
 func lintIndexRewrite(tokens []Token) []QueryLint {
