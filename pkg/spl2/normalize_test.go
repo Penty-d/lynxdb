@@ -102,6 +102,66 @@ func TestNormalizeQuery(t *testing.T) {
 	}
 }
 
+func TestNormalizeQueryWithRewrites(t *testing.T) {
+	now := time.Date(2025, 3, 23, 14, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		input      string
+		wantQuery  string
+		wantReason string
+	}{
+		{
+			name:       "freehand search",
+			input:      "error",
+			wantQuery:  "FROM main | search error",
+			wantReason: "freehand-search",
+		},
+		{
+			name:       "spl index",
+			input:      "index=nginx earliest=-1h error",
+			wantQuery:  "FROM nginx[-1h] | search error",
+			wantReason: "spl-index",
+		},
+		{
+			name:       "time modifier default source",
+			input:      "earliest=-1h level=error",
+			wantQuery:  "FROM main[-1h] | search level=error",
+			wantReason: "time-modifier",
+		},
+		{
+			name:       "pipe default source",
+			input:      "| stats count",
+			wantQuery:  "FROM main | stats count",
+			wantReason: "default-source",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, rewrites := NormalizeQueryWithRewritesNow(tt.input, now)
+			if got != tt.wantQuery {
+				t.Fatalf("normalized: got %q, want %q", got, tt.wantQuery)
+			}
+			if len(rewrites) != 1 {
+				t.Fatalf("rewrites: got %d, want 1", len(rewrites))
+			}
+			rw := rewrites[0]
+			if rw.Before != tt.input || rw.After != tt.wantQuery || rw.Reason != tt.wantReason {
+				t.Fatalf("rewrite: got %#v, want before=%q after=%q reason=%q", rw, tt.input, tt.wantQuery, tt.wantReason)
+			}
+		})
+	}
+
+	got, rewrites := NormalizeQueryWithRewritesNow("FROM main | stats count", now)
+	if got != "FROM main | stats count" {
+		t.Fatalf("unchanged normalized: got %q", got)
+	}
+	if len(rewrites) != 0 {
+		t.Fatalf("unchanged rewrites: got %#v, want none", rewrites)
+	}
+}
+
 func TestIsKnownCommand(t *testing.T) {
 	if !isKnownCommand("search") {
 		t.Error("expected 'search' to be a known command")

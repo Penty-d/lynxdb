@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+// QueryRewrite describes one visible query normalization.
+type QueryRewrite struct {
+	Before string `json:"before"`
+	After  string `json:"after"`
+	Reason string `json:"reason"`
+}
+
 // NormalizeQuery produces a fully-qualified SPL2 query from user input.
 // It ensures every query has an explicit FROM clause so the pipeline builder
 // always has a source to scan. Without this, server-mode queries that lack
@@ -23,6 +30,27 @@ import (
 //   - "level=error"    → "FROM main | search level=error" (implicit search)
 func NormalizeQuery(q string) string {
 	return NormalizeQueryWithNow(q, time.Now())
+}
+
+// NormalizeQueryWithRewrites returns the normalized query plus visible rewrite metadata.
+func NormalizeQueryWithRewrites(q string) (string, []QueryRewrite) {
+	return NormalizeQueryWithRewritesNow(q, time.Now())
+}
+
+// NormalizeQueryWithRewritesNow is like NormalizeQueryWithRewrites but accepts
+// an explicit "now" time for deterministic testing of relative time rewrites.
+func NormalizeQueryWithRewritesNow(q string, now time.Time) (string, []QueryRewrite) {
+	normalized := NormalizeQueryWithNow(q, now)
+	trimmed := strings.TrimSpace(q)
+	if normalized == trimmed {
+		return normalized, nil
+	}
+
+	return normalized, []QueryRewrite{{
+		Before: q,
+		After:  normalized,
+		Reason: inferRewriteReason(trimmed),
+	}}
 }
 
 // NormalizeQueryWithNow is like NormalizeQuery but accepts an explicit "now"
@@ -106,6 +134,31 @@ func NormalizeQueryWithNow(q string, now time.Time) string {
 
 	// Implicit search: prepend FROM main and "search" keyword.
 	return "FROM main | search " + trimmed
+}
+
+func inferRewriteReason(trimmed string) string {
+	if trimmed == "" {
+		return "empty"
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(trimmed, "|") {
+		return "default-source"
+	}
+	if strings.HasPrefix(lower, "index") {
+		return "spl-index"
+	}
+	if strings.HasPrefix(lower, "source") {
+		return "source-filter"
+	}
+	if mods, _ := extractTimeModifierPrefix(trimmed); hasSearchTimeModifier(mods) {
+		return "time-modifier"
+	}
+	first := firstToken(trimmed)
+	if isKnownCommand(strings.ToLower(first)) {
+		return "default-source"
+	}
+
+	return "freehand-search"
 }
 
 // extractIndexInPrefix detects "index IN (...)" or "index NOT IN (...)" at the
