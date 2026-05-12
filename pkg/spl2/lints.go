@@ -16,6 +16,7 @@ const (
 	LintRawExactCompare    = "L005"
 	LintCountWithoutParens = "L013"
 	LintMixedSearchAndOr   = "L030"
+	LintDefaultMetricField = "L036"
 )
 
 // LintQuery parses input and returns RFC lint warnings for valid queries.
@@ -46,6 +47,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	lints = append(lints, lintIndexRewrite(tokens)...)
 	lints = append(lints, lintCountWithoutParens(tokens)...)
 	lints = append(lints, lintMixedSearchAndOr(input, tokens)...)
+	lints = append(lints, lintDefaultMetricField(tokens)...)
 
 	return lints, nil
 }
@@ -77,6 +79,34 @@ func lintRawExactCompare(prog *Program) []QueryLint {
 		lints = append(lints, lintRawExactCompareInQuery(ds.Query)...)
 	}
 	lints = append(lints, lintRawExactCompareInQuery(prog.Main)...)
+
+	return lints
+}
+
+func lintDefaultMetricField(tokens []Token) []QueryLint {
+	var lints []QueryLint
+
+	for i := 0; i < len(tokens); i++ {
+		if tokens[i].Type != TokenSlowest {
+			continue
+		}
+		hasBy := false
+		for j := i + 1; j < len(tokens); j++ {
+			switch tokens[j].Type {
+			case TokenPipe, TokenRBracket, TokenSemicolon, TokenEOF:
+				j = len(tokens)
+			case TokenBy:
+				hasBy = true
+			}
+		}
+		if !hasBy {
+			lints = append(lints, QueryLint{
+				Code:     LintDefaultMetricField,
+				Message:  "Default field `duration_ms` used; specify it explicitly for clarity",
+				Position: tokens[i].Pos,
+			})
+		}
+	}
 
 	return lints
 }
