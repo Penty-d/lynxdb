@@ -407,6 +407,7 @@ func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEm
 
 	rows := fm.rows
 	elapsed := time.Since(fm.startTime).Round(time.Millisecond)
+	printQueryLints(fm.serverMeta.Lints)
 
 	if len(rows) == 0 {
 		printEmptyResultGuidance(query, since)

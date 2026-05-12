@@ -1613,6 +1613,8 @@ lynxdb query --file access.log '| stats count' > result.json
 # stderr shows: Scanned 50,000 events | 1 results | 89ms
 ```
 
+Server-backed `query` also prints advisory query lints to stderr unless `--quiet` or `--no-lint` is set.
+
 ---
 
 ## Configuration

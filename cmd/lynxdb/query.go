@@ -664,6 +664,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 	}
 
 	rows := queryResultToRows(result)
+	printQueryLints(result.Meta.Lints)
 	if len(rows) == 0 {
 		printEmptyResultGuidance(query, since)
 
@@ -900,6 +901,7 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty bool, anal
 	}
 
 	rows := queryResultToRows(result)
+	printQueryLints(result.Meta.Lints)
 	if failEmpty && len(rows) == 0 {
 		printMeta("No results found.")
 
@@ -940,6 +942,21 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty bool, anal
 	}
 
 	return nil
+}
+
+func printQueryLints(lints []client.QueryLint) {
+	if globalQuiet || len(lints) == 0 {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr)
+	for _, lint := range lints {
+		location := ""
+		if lint.Position >= 0 {
+			location = fmt.Sprintf(" at %d", lint.Position)
+		}
+		ui.Stderr.PrintWarning(false, "%s%s: %s", lint.Code, location, lint.Message)
+	}
 }
 
 // suggestGlimpse returns a hint string suggesting | glimpse for zero-result queries.
