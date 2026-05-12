@@ -1564,6 +1564,39 @@ func TestParse_StatsPercentileAliases(t *testing.T) {
 	}
 }
 
+func TestParse_StatsAggregateAliases(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantFunc string
+	}{
+		{`| stats mean(duration) as mean_duration`, "avg"},
+		{`| stats median(duration) as median_duration`, "perc50"},
+		{`| stats distinct_count(user) as users`, "dc"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.input, err)
+			}
+			if len(q.Commands) != 1 {
+				t.Fatalf("Commands: got %d, want 1", len(q.Commands))
+			}
+			stats, ok := q.Commands[0].(*StatsCommand)
+			if !ok {
+				t.Fatalf("cmd[0]: expected StatsCommand, got %T", q.Commands[0])
+			}
+			if len(stats.Aggregations) != 1 {
+				t.Fatalf("aggs: got %d, want 1", len(stats.Aggregations))
+			}
+			if got := stats.Aggregations[0].Func; got != tt.wantFunc {
+				t.Errorf("Func: got %q, want %q", got, tt.wantFunc)
+			}
+		})
+	}
+}
+
 func TestParse_StatsMultiplePercentileAliases(t *testing.T) {
 	// Verify multiple percentile aliases in a single stats command.
 	q, err := Parse(`| stats p50(dur), p99(dur), count by service`)

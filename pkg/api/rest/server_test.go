@@ -624,6 +624,75 @@ func TestServer_StatsQuery(t *testing.T) {
 	}
 }
 
+func TestServer_StatsAggregateAliases(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	now := time.Now()
+	durations := []float64{20, 20, 20}
+	users := []string{"alice", "bob", "alice"}
+	events := make([]*event.Event, 0, len(durations))
+	for i, duration := range durations {
+		ev := event.NewEvent(now.Add(time.Duration(i)*time.Second), fmt.Sprintf("duration_ms=%v user=%s", duration, users[i]))
+		ev.Index = "main"
+		ev.Host = "web-00"
+		ev.Source = "/var/log/app.log"
+		ev.SourceType = "json"
+		ev.SetField("duration_ms", event.FloatValue(duration))
+		ev.SetField("user", event.StringValue(users[i]))
+		events = append(events, ev)
+	}
+	if err := srv.engine.Ingest(events); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	searchBody, _ := json.Marshal(map[string]interface{}{
+		"q": `FROM main | stats mean(duration_ms) as avg_dur, median(duration_ms) as p50_dur, distinct_count(user) as users`,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(searchBody))
+	if err != nil {
+		t.Fatalf("POST query: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := result["data"].(map[string]interface{})
+	cols := data["columns"].([]interface{})
+	rows := data["rows"].([]interface{})
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(rows))
+	}
+	row := rows[0].([]interface{})
+	colIndex := func(name string) int {
+		t.Helper()
+		for i, col := range cols {
+			if fmt.Sprint(col) == name {
+				return i
+			}
+		}
+		t.Fatalf("missing column %q in %v", name, cols)
+		return -1
+	}
+
+	if got := row[colIndex("avg_dur")].(float64); got != 20 {
+		t.Errorf("avg_dur: got %v, want 20", got)
+	}
+	if got := row[colIndex("p50_dur")].(float64); got != 20 {
+		t.Errorf("p50_dur: got %v, want 20", got)
+	}
+	if got := row[colIndex("users")].(float64); got != 2 {
+		t.Errorf("users: got %v, want 2", got)
+	}
+}
+
 // New Three-Mode Query Tests
 
 func TestQuery_SyncMode(t *testing.T) {

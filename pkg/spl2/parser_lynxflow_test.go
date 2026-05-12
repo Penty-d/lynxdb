@@ -769,7 +769,7 @@ func TestLynxFlow_TopByAgg(t *testing.T) {
 }
 
 func TestLynxFlow_Topby(t *testing.T) {
-	q, err := Parse(`from app | topby 20 sku using avg(dur) compute count() as n`)
+	q, err := Parse(`from app | topby 20 sku using mean(dur) compute count() as n`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

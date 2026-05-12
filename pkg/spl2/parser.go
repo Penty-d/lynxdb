@@ -2911,7 +2911,7 @@ func (p *Parser) parseAggList() ([]AggExpr, error) {
 			}
 			// No-arg aggregation without parentheses (e.g., "count AS total").
 			p.advance()
-			agg := AggExpr{Func: funcName}
+			agg := AggExpr{Func: normalizeAggFuncName(funcName)}
 			if p.peek().Type == TokenAs {
 				p.advance()
 				alias, err := p.expectIdent()
@@ -2946,21 +2946,7 @@ func (p *Parser) parseAggList() ([]AggExpr, error) {
 		}
 		p.advance() // consume )
 
-		// Normalize shorthand percentile aliases: p50 → perc50, etc.
-		normalizedFunc := funcName
-		switch strings.ToLower(funcName) {
-		case "p50":
-			normalizedFunc = "perc50"
-		case "p75":
-			normalizedFunc = "perc75"
-		case "p90":
-			normalizedFunc = "perc90"
-		case "p95":
-			normalizedFunc = "perc95"
-		case "p99":
-			normalizedFunc = "perc99"
-		}
-		agg := AggExpr{Func: normalizedFunc, Args: args}
+		agg := AggExpr{Func: normalizeAggFuncName(funcName), Args: args}
 
 		// Optional "as alias".
 		if p.peek().Type == TokenAs {
@@ -2980,6 +2966,27 @@ func (p *Parser) parseAggList() ([]AggExpr, error) {
 	}
 
 	return aggs, nil
+}
+
+func normalizeAggFuncName(name string) string {
+	switch strings.ToLower(name) {
+	case "mean":
+		return "avg"
+	case "median", "p50":
+		return "perc50"
+	case "distinct_count":
+		return "dc"
+	case "p75":
+		return "perc75"
+	case "p90":
+		return "perc90"
+	case "p95":
+		return "perc95"
+	case "p99":
+		return "perc99"
+	default:
+		return name
+	}
 }
 
 func (p *Parser) parseIdentList() ([]string, error) {
@@ -3566,7 +3573,7 @@ func (p *Parser) parseSingleAgg() (AggExpr, error) {
 
 	if p.peek().Type != TokenLParen {
 		// No-arg agg without parens.
-		agg := AggExpr{Func: funcTok.Literal}
+		agg := AggExpr{Func: normalizeAggFuncName(funcTok.Literal)}
 		if p.peek().Type == TokenAs {
 			p.advance()
 			alias, err := p.expectIdent()
@@ -3595,7 +3602,7 @@ func (p *Parser) parseSingleAgg() (AggExpr, error) {
 	}
 	p.advance() // consume )
 
-	agg := AggExpr{Func: funcTok.Literal, Args: args}
+	agg := AggExpr{Func: normalizeAggFuncName(funcTok.Literal), Args: args}
 	if p.peek().Type == TokenAs {
 		p.advance()
 		alias, err := p.expectIdent()
