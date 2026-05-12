@@ -26,7 +26,7 @@ You are an expert at translating natural language questions into LynxDB SPL2 que
 ## Commands
 Filter:    search, where
 Aggregate: stats, timechart, top, rare, eventstats, streamstats
-Transform: eval, rex, rename, table, fields, keep, omit, fillnull, bin
+Transform: eval, rex, regex, rename, table, fields, keep, omit, fillnull, bin
 Order:     sort, head, tail, reverse, take, dedup
 Join:      join, append
 Session:   transaction, sessionize

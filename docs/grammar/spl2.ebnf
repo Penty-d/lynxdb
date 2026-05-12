@@ -14,7 +14,7 @@ cte_ref          = "$" ident ;
 
 command          = search_cmd | where_cmd | stats_cmd | eval_cmd | sort_cmd
                  | head_cmd | tail_cmd | reverse_cmd | table_cmd | fields_cmd | rename_cmd
-                 | dedup_cmd | rex_cmd | bin_cmd | timechart_cmd
+                 | dedup_cmd | rex_cmd | regex_cmd | bin_cmd | timechart_cmd
                  | top_cmd | rare_cmd | fillnull_cmd | streamstats_cmd
                  | eventstats_cmd | join_cmd | append_cmd | transaction_cmd
                  | xyseries_cmd | materialize_cmd | from_cmd | views_cmd
@@ -108,6 +108,7 @@ dedup_cmd        = "dedup" [ number ] ident_list ;
 (* ─── REX command (regex extraction) ─── *)
 
 rex_cmd          = "rex" [ "field" "=" field ] quoted_string ;
+regex_cmd        = "regex" ( quoted_string | field ( "=" | "!=" ) quoted_string ) ;
 
 (* ─── BIN command (bucketing) ─── *)
 

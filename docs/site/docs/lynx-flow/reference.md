@@ -1267,6 +1267,7 @@ Every SPL2 command has a Lynx Flow counterpart. Both syntaxes are first-class.
 | `TABLE` | `table` | Identical |
 | `RENAME` | `rename` | Identical |
 | `REX` | `parse regex(...)` | Unified parse syntax |
+| `REGEX` | `regex` | Regex filter |
 | `unpack_json` | `parse json(...)` | Unified parse syntax |
 | `unpack_logfmt` | `parse logfmt(...)` | Unified parse syntax |
 | `unpack_syslog` | `parse syslog(...)` | Unified parse syntax |

@@ -30,7 +30,7 @@ func TestLexer_SimpleTokens(t *testing.T) {
 }
 
 func TestLexer_Keywords(t *testing.T) {
-	input := `FROM where SEARCH stats eval sort head tail reverse timechart rex fields table dedup by as and or xor not`
+	input := `FROM where SEARCH stats eval sort head tail reverse timechart rex regex fields table dedup by as and or xor not`
 	lexer := NewLexer(input)
 	tokens, err := lexer.Tokenize()
 	if err != nil {
@@ -39,7 +39,7 @@ func TestLexer_Keywords(t *testing.T) {
 
 	expected := []TokenType{
 		TokenFrom, TokenWhere, TokenSearch, TokenStats, TokenEval,
-		TokenSort, TokenHead, TokenTail, TokenReverse, TokenTimechart, TokenRex,
+		TokenSort, TokenHead, TokenTail, TokenReverse, TokenTimechart, TokenRex, TokenRegex,
 		TokenFields, TokenTable, TokenDedup, TokenBy, TokenAs,
 		TokenAnd, TokenOr, TokenXor, TokenNot, TokenEOF,
 	}

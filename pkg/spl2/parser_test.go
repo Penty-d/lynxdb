@@ -303,6 +303,48 @@ func TestParse_ReverseCommand(t *testing.T) {
 	}
 }
 
+func TestParse_RegexCommandDefaultRaw(t *testing.T) {
+	q, err := Parse(`FROM main | regex "error|fatal"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	cmd, ok := q.Commands[0].(*RegexCommand)
+	if !ok {
+		t.Fatalf("expected RegexCommand, got %T", q.Commands[0])
+	}
+	if cmd.Field != "_raw" {
+		t.Errorf("field: got %q, want _raw", cmd.Field)
+	}
+	if cmd.Pattern != "error|fatal" {
+		t.Errorf("pattern: got %q", cmd.Pattern)
+	}
+	if cmd.Negate {
+		t.Error("negate: got true, want false")
+	}
+}
+
+func TestParse_RegexCommandFieldNotMatch(t *testing.T) {
+	q, err := Parse(`FROM main | regex message!="^debug"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	cmd, ok := q.Commands[0].(*RegexCommand)
+	if !ok {
+		t.Fatalf("expected RegexCommand, got %T", q.Commands[0])
+	}
+	if cmd.Field != "message" {
+		t.Errorf("field: got %q, want message", cmd.Field)
+	}
+	if cmd.Pattern != "^debug" {
+		t.Errorf("pattern: got %q", cmd.Pattern)
+	}
+	if !cmd.Negate {
+		t.Error("negate: got false, want true")
+	}
+}
+
 func TestParse_HeadDefault(t *testing.T) {
 	input := `FROM main | head`
 	q, err := Parse(input)

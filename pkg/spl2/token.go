@@ -45,6 +45,7 @@ const (
 	TokenReverse
 	TokenTimechart
 	TokenRex
+	TokenRegex
 	TokenFields
 	TokenTable
 	TokenDedup
@@ -235,6 +236,7 @@ var tokenNames = map[TokenType]string{
 	TokenReverse:           "REVERSE",
 	TokenTimechart:         "TIMECHART",
 	TokenRex:               "REX",
+	TokenRegex:             "REGEX",
 	TokenFields:            "FIELDS",
 	TokenTable:             "TABLE",
 	TokenDedup:             "DEDUP",
@@ -385,6 +387,7 @@ var keywords = map[string]TokenType{
 	"reverse":             TokenReverse,
 	"timechart":           TokenTimechart,
 	"rex":                 TokenRex,
+	"regex":               TokenRegex,
 	"fields":              TokenFields,
 	"table":               TokenTable,
 	"dedup":               TokenDedup,

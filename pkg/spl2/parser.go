@@ -364,6 +364,11 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return singleCmd(p.parseTimechart())
 	case TokenRex:
 		return singleCmd(p.parseRex())
+	case TokenRegex:
+		if p.peekAt(1).Type == TokenLParen {
+			return singleCmd(p.parseLynxParseBody())
+		}
+		return singleCmd(p.parseRegex())
 	case TokenFields:
 		return singleCmd(p.parseFields())
 	case TokenTable:
@@ -1259,6 +1264,42 @@ func (p *Parser) parseRex() (*RexCommand, error) {
 	tok, err := p.expect(TokenString)
 	if err != nil {
 		return nil, err
+	}
+	cmd.Pattern = tok.Literal
+
+	return cmd, nil
+}
+
+func (p *Parser) parseRegex() (*RegexCommand, error) {
+	p.advance() // consume "regex"
+
+	cmd := &RegexCommand{Field: "_raw"}
+	if p.peek().Type == TokenString {
+		tok := p.advance()
+		cmd.Pattern = tok.Literal
+		return cmd, nil
+	}
+
+	field, err := p.expectIdent()
+	if err != nil {
+		return nil, fmt.Errorf("spl2: regex expects a pattern string or field comparison: %w", err)
+	}
+	cmd.Field = field.Literal
+
+	switch p.peek().Type {
+	case TokenEq:
+		p.advance()
+	case TokenNeq:
+		p.advance()
+		cmd.Negate = true
+	default:
+		tok := p.peek()
+		return nil, fmt.Errorf("spl2: regex expects '=' or '!=' after field, got %s %q at position %d", tok.Type, tok.Literal, tok.Pos)
+	}
+
+	tok, err := p.expect(TokenString)
+	if err != nil {
+		return nil, fmt.Errorf("spl2: regex expects quoted pattern: %w", err)
 	}
 	cmd.Pattern = tok.Literal
 
@@ -3130,7 +3171,7 @@ func isIdentLike(t TokenType) bool {
 // as TokenJson but is a valid format name for the parse command.
 func isFormatKeyword(t TokenType) bool {
 	switch t {
-	case TokenJson, TokenIndex:
+	case TokenJson, TokenIndex, TokenRegex:
 		return true
 	}
 	return false

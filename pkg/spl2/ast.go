@@ -217,6 +217,26 @@ func (c *RexCommand) String() string {
 	return fmt.Sprintf("rex field=%s %q", c.Field, c.Pattern)
 }
 
+// RegexCommand represents: regex [<field>=|<field>!=] "<pattern>".
+type RegexCommand struct {
+	Field   string
+	Pattern string
+	Negate  bool
+}
+
+func (*RegexCommand) commandNode() {}
+func (c *RegexCommand) String() string {
+	field := c.Field
+	if field == "" {
+		field = "_raw"
+	}
+	op := "="
+	if c.Negate {
+		op = "!="
+	}
+	return fmt.Sprintf("regex %s%s%q", field, op, c.Pattern)
+}
+
 // FieldsCommand represents: fields <field1>, <field2>, ...
 type FieldsCommand struct {
 	Fields []string

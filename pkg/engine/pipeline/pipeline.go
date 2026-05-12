@@ -630,6 +630,8 @@ func commandStageName(cmd spl2.Command) string {
 		return "Dedup"
 	case *spl2.RexCommand:
 		return "Rex"
+	case *spl2.RegexCommand:
+		return "Regex"
 	case *spl2.BinCommand:
 		return "Bin"
 	case *spl2.StreamstatsCommand:
@@ -978,6 +980,27 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		}
 
 		return NewRexIterator(child, field, c.Pattern)
+
+	case *spl2.RegexCommand:
+		field := c.Field
+		if field == "" {
+			field = "_raw"
+		}
+		op := "=~"
+		if c.Negate {
+			op = "!~"
+		}
+		expr := &spl2.CompareExpr{
+			Left:  &spl2.FieldExpr{Name: field},
+			Op:    op,
+			Right: &spl2.LiteralExpr{Value: c.Pattern},
+		}
+		prog, err := vm.CompilePredicate(expr)
+		if err != nil {
+			return nil, fmt.Errorf("compile REGEX: %w", err)
+		}
+
+		return NewFilterIterator(child, prog), nil
 
 	case *spl2.BinCommand:
 		dur := parseDuration(c.Span)

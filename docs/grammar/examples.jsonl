@@ -112,6 +112,8 @@
 {"nl": "Multi-stage CTE pipeline", "query": "$top_errors = level=error | stats count as err_count by source | sort -err_count | head 5; | from $top_errors | eval severity=\"high\"", "category": "cte"}
 {"nl": "Percentage calculation", "query": "| stats count as total | eval pct=round(total*100/1000000, 2)", "category": "transform"}
 {"nl": "Filter by regex match", "query": "| where match(message, \"timeout.*exceeded\")", "category": "filter"}
+{"nl": "Filter raw events with regex", "query": "| regex \"timeout|fatal\"", "category": "filter"}
+{"nl": "Filter field with regex", "query": "| regex message!=\"^debug\"", "category": "filter"}
 {"nl": "Filter by like pattern", "query": "| where source like \"api-*\"", "category": "filter"}
 {"nl": "Replace in string", "query": "| eval clean=replace(source, \"old-\", \"new-\")", "category": "transform"}
 {"nl": "Split string field", "query": "| eval parts=split(endpoint, \"/\")", "category": "transform"}

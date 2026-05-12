@@ -159,6 +159,78 @@ func TestBuildFromSourceReverseCommand(t *testing.T) {
 	}
 }
 
+func TestBuildFromSourceRegexCommandDefaultRaw(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | regex "error|fatal"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	events := []*event.Event{
+		event.NewEvent(time.Unix(1, 0), "info ready"),
+		event.NewEvent(time.Unix(2, 0), "error timeout"),
+		event.NewEvent(time.Unix(3, 0), "fatal panic"),
+	}
+	iter, err := BuildFromSource(context.Background(), NewScanIterator(events, 2), query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	rows, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if got := rows[0]["_raw"].AsString(); got != "error timeout" {
+		t.Errorf("first raw: got %q", got)
+	}
+}
+
+func TestBuildFromSourceRegexCommandNotMatchIncludesNull(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | regex message!="^debug"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	events := []*event.Event{
+		event.NewEvent(time.Unix(1, 0), "a"),
+		event.NewEvent(time.Unix(2, 0), "b"),
+		event.NewEvent(time.Unix(3, 0), "c"),
+	}
+	events[0].SetField("message", event.StringValue("debug detail"))
+	events[1].SetField("message", event.StringValue("info detail"))
+
+	iter, err := BuildFromSource(context.Background(), NewScanIterator(events, 2), query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	rows, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if got := rows[0]["message"].AsString(); got != "info detail" {
+		t.Errorf("first message: got %q", got)
+	}
+	if !rows[1]["message"].IsNull() {
+		t.Errorf("second message: got %v, want null", rows[1]["message"])
+	}
+}
+
 func TestPipelineEndToEnd(t *testing.T) {
 	// FROM idx | WHERE status >= 500 | stats count
 	events := makeEvents(100)
