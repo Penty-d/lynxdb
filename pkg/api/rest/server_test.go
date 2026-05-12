@@ -1748,6 +1748,35 @@ func TestQuery_ParseError(t *testing.T) {
 	}
 }
 
+func TestQuery_UnsupportedTimeFormat(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": `index=main timeformat="%b %d %Y" starttime="Mar 23 2025"`,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: got %d, want 400, body: %s", resp.StatusCode, string(b))
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	errObj := result["error"].(map[string]interface{})
+	if errObj["code"] != string(ErrCodeUnsupportedCommand) {
+		t.Fatalf("code: got %v, want %s", errObj["code"], ErrCodeUnsupportedCommand)
+	}
+	if suggestion, _ := errObj["suggestion"].(string); !strings.Contains(suggestion, "%Y-%m-%d") {
+		t.Fatalf("suggestion missing supported format example: %q", suggestion)
+	}
+}
+
 func TestQuery_MissingQuery(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

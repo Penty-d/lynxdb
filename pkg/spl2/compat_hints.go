@@ -54,6 +54,13 @@ func (e *UnsupportedCommandError) Error() string {
 // CheckUnsupportedCommands returns an UnsupportedCommandError if the query
 // contains any unsupported Splunk commands, or nil if all commands are supported.
 func CheckUnsupportedCommands(query string) *UnsupportedCommandError {
+	if format, ok := unsupportedTimeFormat(query); ok {
+		return &UnsupportedCommandError{
+			Command: "timeformat=" + format,
+			Hint:    unsupportedTimeFormatHint,
+		}
+	}
+
 	for _, seg := range pipeSegments(query) {
 		cmd := strings.ToLower(seg)
 		if hint, ok := unsupportedCommands[cmd]; ok {
@@ -112,6 +119,8 @@ var translationHints = map[string]string{
 	"syslog":                  "sourcetype=syslog works in LynxDB if you have syslog-formatted data ingested",
 }
 
+const unsupportedTimeFormatHint = "timeformat supports %Y, %m, %d, %H, %M, and %S. Use ISO-style formats such as timeformat=\"%Y-%m-%d\" or omit timeformat for %m/%d/%Y:%H:%M:%S."
+
 // DetectCompatHints scans a query string for common Splunk-only patterns
 // and returns hints about LynxDB equivalents.
 func DetectCompatHints(query string) []CompatHint {
@@ -130,6 +139,17 @@ func DetectCompatHints(query string) []CompatHint {
 					Unsupported: true,
 				})
 			}
+		}
+	}
+
+	for _, format := range timeFormatModifiers(query) {
+		if _, ok := splunkTimeLayout(format); !ok && !seen["timeformat"] {
+			seen["timeformat"] = true
+			hints = append(hints, CompatHint{
+				Pattern:     "timeformat=" + format,
+				Suggestion:  unsupportedTimeFormatHint,
+				Unsupported: true,
+			})
 		}
 	}
 
@@ -185,6 +205,33 @@ func DetectCompatHints(query string) []CompatHint {
 	}
 
 	return hints
+}
+
+func unsupportedTimeFormat(query string) (string, bool) {
+	for _, format := range timeFormatModifiers(query) {
+		if _, ok := splunkTimeLayout(format); !ok {
+			return format, true
+		}
+	}
+
+	return "", false
+}
+
+func timeFormatModifiers(query string) []string {
+	var formats []string
+	remaining := query
+	for {
+		lower := strings.ToLower(remaining)
+		idx := strings.Index(lower, "timeformat=")
+		if idx < 0 {
+			return formats
+		}
+		value, next := extractValue(remaining[idx+len("timeformat="):])
+		if value != "" {
+			formats = append(formats, value)
+		}
+		remaining = next
+	}
 }
 
 // DetectScopeHint returns a hint when the query has no explicit source/index

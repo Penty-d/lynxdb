@@ -14,6 +14,7 @@ Source contract: `docs/grammar/RFC.md`.
 | Core LynxFlow projection/filter/aggregation/output sugar | `pkg/spl2/parser_lynxflow_test.go` |
 | Aggregate aliases `mean`, `median`, `distinct_count`, `estdc`, and supported percentile forms normalize to executable aggregate functions | `pkg/spl2/parser.go`, `pkg/spl2/parser_test.go`, `pkg/api/rest/server_test.go` |
 | Query rewrite transparency records and surfaces normalizer rewrites | `pkg/spl2/normalize.go`, `pkg/api/rest/query.go`, `pkg/api/rest/jobs.go`, `pkg/api/rest/explain.go`, `cmd/lynxdb/query.go`, `cmd/lynxdb/query_tui.go` |
+| Source-prefix time modifiers normalize or reject with structured suggestions | `pkg/spl2/normalize.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/compat_hints_test.go`, `pkg/api/rest/server_test.go` |
 | Aggregate `range(field)` executes for numeric fields | `pkg/engine/pipeline/aggregate.go`, `pkg/engine/pipeline/partial_agg.go`, `pkg/api/rest/server_test.go` |
 | Aggregate `sumsq(field)` executes for numeric fields | `pkg/engine/pipeline/aggregate.go`, `pkg/engine/pipeline/partial_agg.go`, `pkg/api/rest/server_test.go` |
 | Aggregate `stdevp(field)`, `var(field)`, and `varp(field)` execute for numeric fields | `pkg/engine/pipeline/aggregate.go`, `pkg/engine/pipeline/partial_agg.go`, `pkg/api/rest/server_test.go` |
@@ -71,7 +72,6 @@ Official Splunk compatibility checked:
 | RFC area | Current state | Gap |
 |---|---|---|
 | Source selectors | `FROM`, `INDEX`, lists, RFC glob matching, source exclude globs, `*`, CTE refs, and compact time ranges parse | Some source-scope diagnostics still need coverage against the RFC rewrite contract. |
-| Time modifiers | Source-prefix `earliest`/`latest` normalizes to compact source time ranges, including `now`/`now()` latest values; `_index_earliest` and `_index_latest` normalize to explicit `_indextime` predicates; lossless deprecated `daysago`, `hoursago`, `minutesago`, matching `end*` forms, `starttime`, `endtime`, and supported `timeformat` values normalize to explicit ranges | Unsupported legacy `timeformat` directives still need rejection with structured suggestions. |
 | Lints | Compatibility hints, parse suggestions, and post-parse `L001`/`L002`/`L003`/`L005`/`L010`/`L012`/`L013`/`L022`/`L030`/`L031`/`L034`/`L036` exist | Most RFC lint catalog entries `L001` through `L039` are not implemented yet. |
 | Quoted identifier canon | Single-quoted identifiers now parse as canonical names and double-quoted names remain accepted in legacy positions with `L012` | Some less-common double-quoted legacy name positions may still need coverage. |
 | Function catalog | Many eval and aggregate functions parse and execute; common aggregate aliases and time aggregates now normalize before planning | RFC aggregate/eval catalog needs a full parser, VM, and editor cross-check for missing functions and aliases. |

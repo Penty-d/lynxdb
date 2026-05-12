@@ -54,6 +54,39 @@ func TestSplunkCompat_CapabilityCommandsNotUnsupported(t *testing.T) {
 	}
 }
 
+func TestSplunkCompat_UnsupportedTimeFormat(t *testing.T) {
+	query := `index=main timeformat="%b %d %Y" starttime="Mar 23 2025"`
+
+	err := CheckUnsupportedCommands(query)
+	if err == nil {
+		t.Fatal("expected unsupported timeformat error")
+	}
+	if err.Command != `timeformat=%b %d %Y` {
+		t.Fatalf("command: got %q", err.Command)
+	}
+	if !strings.Contains(err.Hint, "%Y-%m-%d") {
+		t.Fatalf("hint missing supported format example: %s", err.Hint)
+	}
+
+	hints := DetectCompatHints(query)
+	if len(hints) == 0 || !hints[0].Unsupported {
+		t.Fatalf("expected unsupported compat hint, got %+v", hints)
+	}
+}
+
+func TestSplunkCompat_SupportedTimeFormat(t *testing.T) {
+	query := `index=main timeformat="%Y-%m-%d" starttime="2025-03-23"`
+
+	if err := CheckUnsupportedCommands(query); err != nil {
+		t.Fatalf("supported timeformat rejected: %v", err)
+	}
+	for _, hint := range DetectCompatHints(query) {
+		if strings.HasPrefix(hint.Pattern, "timeformat=") && hint.Unsupported {
+			t.Fatalf("supported timeformat produced unsupported hint: %+v", hint)
+		}
+	}
+}
+
 func TestSplunkCompat_ChartSupported(t *testing.T) {
 	hints := DetectCompatHints(`index=main | chart count by host`)
 	for _, h := range hints {
