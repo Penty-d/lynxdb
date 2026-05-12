@@ -6,9 +6,11 @@
 
 program          = { dataset_def } query ;
 dataset_def      = "$" ident "=" query [ ";" ] ;
-query            = [ "from" source ] [ "where" expr ] { "|" command } ;
-source           = cte_ref | ident | quoted_ident ;
+query            = [ ( "from" | "index" ) source_list [ time_range ] ] [ "where" expr ] { "|" command } ;
+source_list      = source { "," source } ;
+source           = cte_ref | ident | quoted_ident | glob | "*" ;
 cte_ref          = "$" ident ;
+time_range       = "[" duration_literal [ ".." duration_literal ] "]" ;
 
 (* ─── Commands ─── *)
 
@@ -337,6 +339,8 @@ number_list      = number { "," number } ;
 span_value       = number span_unit ;
 span_unit        = "s" | "sec" | "m" | "min" | "h" | "hr" | "d" | "w" | "mon" ;
 duration_value   = number span_unit ;
+duration_literal = [ "+" | "-" ] digit { digit } span_unit [ "@" snap_unit ] ;
+snap_unit        = "s" | "m" | "h" | "d" | "w" ;
 
 (* ─── Character classes ─── *)
 

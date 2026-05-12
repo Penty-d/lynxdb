@@ -204,7 +204,7 @@ const (
 
 	// Time literals.
 	TokenAt       // @
-	TokenDuration // relative time like -1h, -7d, -1h@h
+	TokenDuration // relative time like -1h, +30m, -7d, -1h@h
 	TokenDot      // . (used for range syntax -7d..-1d)
 
 	// Lynx Flow punctuation (NOT in keywords map — lexed directly).

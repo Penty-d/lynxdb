@@ -78,6 +78,10 @@ func (l *Lexer) next() (Token, error) {
 
 		return Token{Type: TokenDollar, Literal: "$", Pos: startPos}, nil
 	case ch == '+':
+		// Duration literal: +Nd, +Nh, +Nm, +Ns, +Nw (e.g., +30m).
+		if dur, ok := l.tryReadDuration(); ok {
+			return dur, nil
+		}
 		l.pos++
 
 		return Token{Type: TokenPlus, Literal: "+", Pos: startPos}, nil
@@ -450,11 +454,11 @@ func (l *Lexer) skipLineComment() {
 	}
 }
 
-// tryReadDuration attempts to read a duration literal like -1h, -7d, -30m@h.
+// tryReadDuration attempts to read a duration literal like -1h, +30m, -7d, -30m@h.
 // Returns the token and true if a duration was found, otherwise returns
-// a zero token and false (caller should fall through to normal minus handling).
+// a zero token and false (caller should fall through to normal sign handling).
 func (l *Lexer) tryReadDuration() (Token, bool) {
-	if l.pos >= len(l.input) || l.input[l.pos] != '-' {
+	if l.pos >= len(l.input) || (l.input[l.pos] != '-' && l.input[l.pos] != '+') {
 		return Token{}, false
 	}
 
@@ -492,7 +496,7 @@ func (l *Lexer) tryReadDuration() (Token, bool) {
 
 	// Verify the next character is not an identifier continuation
 	// (e.g., "-1hour" should not be a duration, "-1h" should be).
-	if i < len(l.input) && isIdentPart(l.input[i]) && l.input[i] != '|' && l.input[i] != ']' {
+	if i < len(l.input) && isIdentPart(l.input[i]) && l.input[i] != '|' && l.input[i] != ']' && l.input[i] != '.' {
 		return Token{}, false
 	}
 

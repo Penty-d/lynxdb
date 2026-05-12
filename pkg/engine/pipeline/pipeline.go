@@ -513,12 +513,11 @@ func resolveTimeRange(tr *spl2.SourceTimeRange, now time.Time) (earliest, latest
 		return earliest, latest
 	}
 
-	dur := parseRelativeDuration(tr.Relative)
-	earliest = now.Add(-dur)
+	earliest = resolveRelativeTime(tr.Relative, now)
 
 	// Apply snap-to on the earliest bound.
 	if tr.SnapTo != "" {
-		earliest = snapTime(now.Add(-dur), tr.SnapTo)
+		earliest = snapTime(earliest, tr.SnapTo)
 	}
 
 	// End bound: either explicit range end or "now".
@@ -526,17 +525,28 @@ func resolveTimeRange(tr *spl2.SourceTimeRange, now time.Time) (earliest, latest
 		if strings.HasPrefix(tr.End, "@") {
 			latest = snapTime(now, tr.End[1:])
 		} else {
-			endDur := parseRelativeDuration(tr.End)
-			latest = now.Add(-endDur)
+			latest = resolveRelativeTime(tr.End, now)
 		}
 	} else {
 		latest = now
+	}
+	if !earliest.IsZero() && !latest.IsZero() && latest.Before(earliest) {
+		earliest, latest = latest, earliest
 	}
 
 	return earliest, latest
 }
 
-// parseRelativeDuration parses a duration string like "-1h", "-7d", "-30m".
+func resolveRelativeTime(s string, now time.Time) time.Time {
+	dur := parseRelativeDuration(s)
+	if strings.HasPrefix(s, "+") {
+		return now.Add(dur)
+	}
+
+	return now.Add(-dur)
+}
+
+// parseRelativeDuration parses a duration string like "-1h", "+30m", "-7d", "-30m".
 func parseRelativeDuration(s string) time.Duration {
 	if s == "" {
 		return 0

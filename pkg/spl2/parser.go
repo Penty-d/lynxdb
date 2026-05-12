@@ -2245,9 +2245,14 @@ func (p *Parser) parseSourceTimeRange() (*SourceTimeRange, error) {
 		tok := p.advance()
 		tr.Relative = tok.Literal
 
-		if p.peek().Type == TokenDot && p.peekAt(1).Type == TokenDot {
-			p.advance() // consume first .
-			p.advance() // consume second .
+		if p.peek().Type == TokenDot {
+			dot := p.advance()
+			if dot.Literal != ".." {
+				if p.peek().Type != TokenDot {
+					return nil, fmt.Errorf("spl2: expected '..' in time range at position %d", dot.Pos)
+				}
+				p.advance()
+			}
 			if p.peek().Type == TokenDuration {
 				endTok := p.advance()
 				tr.End = endTok.Literal

@@ -513,6 +513,45 @@ func TestParse_DigitPrefixedSourceName(t *testing.T) {
 	}
 }
 
+func TestParse_SourceTimeRangeSignedDurations(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		wantRelative string
+		wantEnd      string
+	}{
+		{
+			name:         "positive duration",
+			input:        "FROM jobs[+30m] | head 1",
+			wantRelative: "+30m",
+		},
+		{
+			name:         "signed range",
+			input:        "FROM jobs[-1h..+30m] | head 1",
+			wantRelative: "-1h",
+			wantEnd:      "+30m",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if q.Source == nil || q.Source.TimeRange == nil {
+				t.Fatalf("missing source time range")
+			}
+			if q.Source.TimeRange.Relative != tt.wantRelative {
+				t.Fatalf("Relative: got %q, want %q", q.Source.TimeRange.Relative, tt.wantRelative)
+			}
+			if q.Source.TimeRange.End != tt.wantEnd {
+				t.Fatalf("End: got %q, want %q", q.Source.TimeRange.End, tt.wantEnd)
+			}
+		})
+	}
+}
+
 func TestParse_SearchWithGlob(t *testing.T) {
 	input := `FROM main | search web-*`
 	q, err := Parse(input)
