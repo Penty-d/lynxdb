@@ -104,7 +104,9 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		WithTookMS(snap.Stats.ElapsedMS),
 		WithScanned(snap.Stats.RowsScanned),
 		WithQueryID(snap.ID),
-		WithSearchStats(searchStatsToMeta(&snap.Stats)))
+		WithSearchStats(searchStatsToMeta(&snap.Stats)),
+		WithWarnings(snap.Warnings),
+		WithLints(snap.Lints))
 }
 
 // handleCancelJob cancels a running job.

@@ -357,7 +357,10 @@ func writeJobHandleFromUsecase(w http.ResponseWriter, result *usecases.SubmitRes
 	if result.Progress != nil {
 		data["progress"] = result.Progress
 	}
-	respondData(w, http.StatusAccepted, data, WithQueryID(result.JobID))
+	respondData(w, http.StatusAccepted, data,
+		WithQueryID(result.JobID),
+		WithWarnings(result.Warnings),
+		WithLints(result.Lints))
 }
 
 func buildEventsResponse(rows []spl2.ResultRow, limit, offset int) map[string]interface{} {

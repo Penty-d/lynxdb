@@ -43,6 +43,21 @@ func startTestServer(t *testing.T) (*Server, func()) {
 	}
 }
 
+func assertLintMeta(t *testing.T, meta map[string]interface{}, wantCode string) {
+	t.Helper()
+	if meta == nil {
+		t.Fatal("missing meta")
+	}
+	lints, _ := meta["lints"].([]interface{})
+	if len(lints) != 1 {
+		t.Fatalf("meta.lints: got %#v, want one lint", meta["lints"])
+	}
+	firstLint, _ := lints[0].(map[string]interface{})
+	if firstLint["code"] != wantCode {
+		t.Fatalf("meta.lints[0].code: got %v, want %s", firstLint["code"], wantCode)
+	}
+}
+
 func startTestServerWithConfig(t *testing.T, cfg Config) (*Server, func()) {
 	t.Helper()
 
@@ -656,7 +671,7 @@ func TestQuery_AsyncMode(t *testing.T) {
 
 	wait := float64(0)
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | head 5`, "wait": wait,
+		"q": `FROM main | stats count`, "wait": wait,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -680,6 +695,8 @@ func TestQuery_AsyncMode(t *testing.T) {
 	if data["status"] != "running" {
 		t.Errorf("status: %v", data["status"])
 	}
+	meta := result["meta"].(map[string]interface{})
+	assertLintMeta(t, meta, spl2.LintCountWithoutParens)
 
 	// Poll until done.
 	for i := 0; i < 50; i++ {
@@ -696,13 +713,8 @@ func TestQuery_AsyncMode(t *testing.T) {
 		dtype, _ := d["type"].(string)
 		dstatus, _ := d["status"].(string)
 		if dstatus == "done" || (dtype != "" && dtype != "job") {
-			// Completed
-			if dtype == "events" {
-				events := d["events"].([]interface{})
-				if len(events) != 5 {
-					t.Errorf("events: got %d, want 5", len(events))
-				}
-			}
+			meta := jr["meta"].(map[string]interface{})
+			assertLintMeta(t, meta, spl2.LintCountWithoutParens)
 
 			return
 		}

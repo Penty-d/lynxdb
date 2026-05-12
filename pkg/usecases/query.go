@@ -863,6 +863,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 			lints, _ = spl2.LintProgram(plan.RawQuery, plan.Program)
 		}
 	}
+	job.SetAdvisoryMetadata(warnings, lints)
 
 	switch req.Mode {
 	case QueryModeSync:
@@ -1126,10 +1127,13 @@ func buildSyncResult(job *server.SearchJob, limit, offset int) *SubmitResult {
 }
 
 func buildJobHandle(job *server.SearchJob) *SubmitResult {
+	snap := job.Snapshot()
 	r := &SubmitResult{
-		Done:   false,
-		JobID:  job.ID,
-		Status: "running",
+		Done:     false,
+		JobID:    job.ID,
+		Status:   "running",
+		Warnings: snap.Warnings,
+		Lints:    snap.Lints,
 	}
 	if p := job.Progress.Load(); p != nil {
 		r.Progress = p
