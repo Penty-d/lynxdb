@@ -326,61 +326,40 @@ func stringEqual(a, b string, caseInsensitive bool) bool {
 	return a == b
 }
 
-// GlobToRegex converts a Splunk glob pattern to a compiled Go regex.
-// The * character matches zero or more of any character.
-// All other regex metacharacters are escaped.
+// GlobToRegex converts an RFC glob pattern to a compiled Go regex.
 func GlobToRegex(pattern string, caseInsensitive bool) *regexp.Regexp {
-	var buf strings.Builder
-	if caseInsensitive {
-		buf.WriteString("(?i)")
-	}
-	buf.WriteString("^")
-
-	for i := 0; i < len(pattern); i++ {
-		ch := pattern[i]
-		switch ch {
-		case '*':
-			buf.WriteString(".*")
-		case '.', '(', ')', '[', ']', '{', '}', '+', '^', '$', '|', '\\', '?':
-			buf.WriteByte('\\')
-			buf.WriteByte(ch)
-		default:
-			buf.WriteByte(ch)
-		}
-	}
-
-	buf.WriteString("$")
-
-	return regexp.MustCompile(buf.String())
+	return globToRegex(pattern, caseInsensitive, true)
 }
 
 // matchGlob checks if text matches a glob pattern with caching.
 func (e *SearchEvaluator) matchGlob(text, pattern string, caseInsensitive bool) bool {
-	// Fast path: *literal* → contains check.
-	if literal, ok := extractStarLiteralStar(pattern); ok {
-		if caseInsensitive {
-			return containsFoldASCII(text, e.lowerKeyword(literal))
+	if !strings.Contains(text, "/") {
+		// Fast path: *literal* -> contains check.
+		if literal, ok := extractStarLiteralStar(pattern); ok {
+			if caseInsensitive {
+				return containsFoldASCII(text, e.lowerKeyword(literal))
+			}
+
+			return strings.Contains(text, literal)
 		}
 
-		return strings.Contains(text, literal)
-	}
+		// Fast path: literal* -> prefix check.
+		if literal, ok := extractLiteralStar(pattern); ok {
+			if caseInsensitive {
+				return hasPrefixFoldASCII(text, e.lowerKeyword(literal))
+			}
 
-	// Fast path: literal* → prefix check.
-	if literal, ok := extractLiteralStar(pattern); ok {
-		if caseInsensitive {
-			return hasPrefixFoldASCII(text, e.lowerKeyword(literal))
+			return strings.HasPrefix(text, literal)
 		}
 
-		return strings.HasPrefix(text, literal)
-	}
+		// Fast path: *literal -> suffix check.
+		if literal, ok := extractStarLiteral(pattern); ok {
+			if caseInsensitive {
+				return hasSuffixFoldASCII(text, e.lowerKeyword(literal))
+			}
 
-	// Fast path: *literal → suffix check.
-	if literal, ok := extractStarLiteral(pattern); ok {
-		if caseInsensitive {
-			return hasSuffixFoldASCII(text, e.lowerKeyword(literal))
+			return strings.HasSuffix(text, literal)
 		}
-
-		return strings.HasSuffix(text, literal)
 	}
 
 	// General case: compile to regex
@@ -417,24 +396,142 @@ func (e *SearchEvaluator) matchGlobContains(text, pattern string, caseInsensitiv
 
 // globToContainsRegex converts a glob pattern to a regex without anchoring (substring match).
 func globToContainsRegex(pattern string, caseInsensitive bool) *regexp.Regexp {
+	return globToRegex(pattern, caseInsensitive, false)
+}
+
+func globToRegex(pattern string, caseInsensitive bool, anchored bool) *regexp.Regexp {
 	var buf strings.Builder
 	if caseInsensitive {
 		buf.WriteString("(?i)")
+	}
+	if anchored {
+		buf.WriteString("^")
 	}
 	for i := 0; i < len(pattern); i++ {
 		ch := pattern[i]
 		switch ch {
 		case '*':
-			buf.WriteString(".*")
-		case '.', '(', ')', '[', ']', '{', '}', '+', '^', '$', '|', '\\', '?':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				buf.WriteString(".*")
+				i++
+			} else {
+				buf.WriteString("[^/]*")
+			}
+		case '?':
+			buf.WriteString("[^/]")
+		case '[':
+			next, ok := appendGlobClass(&buf, pattern, i)
+			if ok {
+				i = next
+			} else {
+				buf.WriteString(`\[`)
+			}
+		case '{':
+			next, ok := appendGlobAlternatives(&buf, pattern, i)
+			if ok {
+				i = next
+			} else {
+				buf.WriteString(`\{`)
+			}
+		case '\\':
+			if i+1 < len(pattern) {
+				i++
+				buf.WriteString(regexp.QuoteMeta(pattern[i : i+1]))
+			} else {
+				buf.WriteString(`\\`)
+			}
+		case '.', '(', ')', ']', '}', '+', '^', '$', '|':
 			buf.WriteByte('\\')
 			buf.WriteByte(ch)
 		default:
 			buf.WriteByte(ch)
 		}
 	}
+	if anchored {
+		buf.WriteString("$")
+	}
 
 	return regexp.MustCompile(buf.String())
+}
+
+func appendGlobClass(buf *strings.Builder, pattern string, start int) (int, bool) {
+	i := start + 1
+	if i >= len(pattern) {
+		return start, false
+	}
+
+	var class strings.Builder
+	class.WriteByte('[')
+	if pattern[i] == '!' {
+		class.WriteByte('^')
+		i++
+	} else if pattern[i] == '^' {
+		class.WriteByte('\\')
+		class.WriteByte('^')
+		i++
+	}
+
+	for ; i < len(pattern); i++ {
+		ch := pattern[i]
+		if ch == ']' {
+			class.WriteByte(']')
+			buf.WriteString(class.String())
+
+			return i, true
+		}
+		if ch == '\\' {
+			if i+1 >= len(pattern) {
+				class.WriteString(`\\`)
+				continue
+			}
+			i++
+			ch = pattern[i]
+		}
+		class.WriteByte(ch)
+	}
+
+	return start, false
+}
+
+func appendGlobAlternatives(buf *strings.Builder, pattern string, start int) (int, bool) {
+	i := start + 1
+	var parts []string
+	var part strings.Builder
+
+	for ; i < len(pattern); i++ {
+		ch := pattern[i]
+		switch ch {
+		case '\\':
+			if i+1 < len(pattern) {
+				i++
+				part.WriteString(regexp.QuoteMeta(pattern[i : i+1]))
+			} else {
+				part.WriteString(`\\`)
+			}
+		case ',':
+			parts = append(parts, part.String())
+			part.Reset()
+		case '}':
+			parts = append(parts, part.String())
+			if len(parts) < 2 {
+				return start, false
+			}
+			buf.WriteString("(?:")
+			for j, alt := range parts {
+				if j > 0 {
+					buf.WriteByte('|')
+				}
+				buf.WriteString(alt)
+			}
+			buf.WriteByte(')')
+
+			return i, true
+		default:
+			part.WriteString(regexp.QuoteMeta(pattern[i : i+1]))
+		}
+	}
+
+	return start, false
 }
 
 // extractStarLiteralStar returns the literal from *literal* patterns.

@@ -63,7 +63,23 @@ func TestGlobToRegex(t *testing.T) {
 		{"file.txt", "file.txt", true},
 		{"file.txt", "fileTtxt", false},
 		{"(test)", "(test)", true},
-		{"[data]", "[data]", true},
+		{`\[data\]`, "[data]", true},
+		{"[data]", "d", true},
+
+		// RFC glob syntax
+		{"api/?", "api/v", true},
+		{"api/?", "api/v1", false},
+		{"api/*", "api/v1", true},
+		{"api/*", "api/v1/users", false},
+		{"api/**", "api/v1/users", true},
+		{"web-[0-9]", "web-7", true},
+		{"web-[0-9]", "web-a", false},
+		{"web-[!0-9]", "web-a", true},
+		{"web-[!0-9]", "web-7", false},
+		{"{api,web,worker}", "web", true},
+		{"{api,web,worker}", "db", false},
+		{`file\*.txt`, "file*.txt", true},
+		{`file\*.txt`, "file1.txt", false},
 	}
 
 	for _, tt := range tests {
@@ -71,6 +87,28 @@ func TestGlobToRegex(t *testing.T) {
 		got := re.MatchString(tt.input)
 		if got != tt.match {
 			t.Errorf("GlobToRegex(%q).Match(%q) = %v, want %v", tt.pattern, tt.input, got, tt.match)
+		}
+	}
+}
+
+func TestSearchEvaluatorGlobDoesNotFastMatchSlash(t *testing.T) {
+	e := NewSearchEvaluator(nil)
+
+	tests := []struct {
+		pattern string
+		input   string
+		match   bool
+	}{
+		{"*error*", "api/error", false},
+		{"**error*", "api/error", true},
+		{"api/*", "api/v1/users", false},
+		{"api/**", "api/v1/users", true},
+	}
+
+	for _, tt := range tests {
+		got := e.matchGlob(tt.input, tt.pattern, true)
+		if got != tt.match {
+			t.Errorf("matchGlob(%q, %q) = %v, want %v", tt.input, tt.pattern, got, tt.match)
 		}
 	}
 }
