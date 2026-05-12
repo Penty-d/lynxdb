@@ -72,3 +72,59 @@ func TestLintProgram_RequiresSuccessfulParse(t *testing.T) {
 		t.Fatal("expected parse error")
 	}
 }
+
+func TestLintQuery_MixedSearchAndOr(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCodes []string
+	}{
+		{
+			name:      "explicit mixed operators",
+			query:     `from app | search error OR timeout AND fatal`,
+			wantCodes: []string{LintMixedSearchAndOr},
+		},
+		{
+			name:      "implicit and with or",
+			query:     `from app | search error timeout OR fatal`,
+			wantCodes: []string{LintMixedSearchAndOr},
+		},
+		{
+			name:      "field comparisons",
+			query:     `from app | search status=500 OR status=503 host=web`,
+			wantCodes: []string{LintMixedSearchAndOr},
+		},
+		{
+			name:      "parenthesized or",
+			query:     `from app | search (error OR timeout) AND fatal`,
+			wantCodes: nil,
+		},
+		{
+			name:      "parenthesized and",
+			query:     `from app | search error OR (timeout AND fatal)`,
+			wantCodes: nil,
+		},
+		{
+			name:      "where context",
+			query:     `from app | where error OR timeout AND fatal`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
