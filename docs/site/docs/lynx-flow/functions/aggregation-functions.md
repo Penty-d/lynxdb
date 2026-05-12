@@ -73,6 +73,9 @@ Standard deviation.
 
 ```spl
 | stats stdev(duration_ms) AS latency_stddev by endpoint
+| stats stdevp(duration_ms) AS population_stddev,
+        var(duration_ms) AS sample_variance,
+        varp(duration_ms) AS population_variance
 ```
 
 ## Percentiles

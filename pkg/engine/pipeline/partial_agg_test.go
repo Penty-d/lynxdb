@@ -886,6 +886,37 @@ func TestMergePartialAggs_Stdev(t *testing.T) {
 	}
 }
 
+func TestMergePartialAggs_VarianceFamily(t *testing.T) {
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{
+			{Name: "stdevp", Field: "v", Alias: "stdevp_v"},
+			{Name: "var", Field: "v", Alias: "var_v"},
+			{Name: "varp", Field: "v", Alias: "varp_v"},
+		},
+	}
+	p1 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{
+			{Count: 1, StdevMean: 0, StdevM2: 0},
+			{Count: 1, StdevMean: 0, StdevM2: 0},
+			{Count: 1, StdevMean: 0, StdevM2: 0},
+		}},
+	}
+	p2 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{
+			{Count: 1, StdevMean: 2, StdevM2: 0},
+			{Count: 1, StdevMean: 2, StdevM2: 0},
+			{Count: 1, StdevMean: 2, StdevM2: 0},
+		}},
+	}
+	rows := MergePartialAggs([][]*PartialAggGroup{p1, p2}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	assertFloatField(t, rows[0], "stdevp_v", 1)
+	assertFloatField(t, rows[0], "var_v", 2)
+	assertFloatField(t, rows[0], "varp_v", 1)
+}
+
 func TestPartialAgg_Stdev_SingleValue(t *testing.T) {
 	events := makePartialAggEvents(
 		map[string]event.Value{"v": event.FloatValue(42)},

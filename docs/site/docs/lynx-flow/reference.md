@@ -1118,6 +1118,9 @@ Used in `group compute`, `every compute`, `running`, `enrich`, `stats`, `timecha
 | `dc(<field>)` | Distinct count | `dc(client_ip) as unique_clients` |
 | `values(<field>)` | List of distinct values | `values(level) as seen_levels` |
 | `stdev(<field>)` | Standard deviation | `stdev(duration_ms) as stdev_latency` |
+| `stdevp(<field>)` | Population standard deviation | `stdevp(duration_ms) as stdevp_latency` |
+| `var(<field>)` | Sample variance | `var(duration_ms) as var_latency` |
+| `varp(<field>)` | Population variance | `varp(duration_ms) as varp_latency` |
 | `perc25(<field>)` | 25th percentile | `perc25(duration_ms) as p25` |
 | `perc50(<field>)` | Median (50th pct) | `perc50(duration_ms) as median` |
 | `perc75(<field>)` | 75th percentile | `perc75(duration_ms) as p75` |

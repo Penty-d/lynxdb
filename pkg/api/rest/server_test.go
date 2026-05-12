@@ -865,6 +865,66 @@ func TestServer_StatsSumSqAggregate(t *testing.T) {
 	t.Fatalf("missing duration_squares column in %v", cols)
 }
 
+func TestServer_StatsVarianceAggregates(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	now := time.Now()
+	durations := []float64{0, 2}
+	events := make([]*event.Event, 0, len(durations))
+	for i, duration := range durations {
+		ev := event.NewEvent(now.Add(time.Duration(i)*time.Second), fmt.Sprintf("duration_ms=%v", duration))
+		ev.Index = "main"
+		ev.Host = "web-00"
+		ev.Source = "/var/log/app.log"
+		ev.SourceType = "json"
+		ev.SetField("duration_ms", event.FloatValue(duration))
+		events = append(events, ev)
+	}
+	if err := srv.engine.Ingest(events); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": `FROM main | stats stdevp(duration_ms) as stdevp_duration, var(duration_ms) as sample_var, varp(duration_ms) as population_var`,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST query: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := result["data"].(map[string]interface{})
+	cols := data["columns"].([]interface{})
+	rows := data["rows"].([]interface{})
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(rows))
+	}
+	row := rows[0].([]interface{})
+	values := map[string]float64{}
+	for i, col := range cols {
+		values[fmt.Sprint(col)] = row[i].(float64)
+	}
+	if got := values["stdevp_duration"]; got != 1 {
+		t.Fatalf("stdevp_duration: got %v, want 1", got)
+	}
+	if got := values["sample_var"]; got != 2 {
+		t.Fatalf("sample_var: got %v, want 2", got)
+	}
+	if got := values["population_var"]; got != 1 {
+		t.Fatalf("population_var: got %v, want 1", got)
+	}
+}
+
 func TestServer_StatsListAggregatePreservesDuplicates(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

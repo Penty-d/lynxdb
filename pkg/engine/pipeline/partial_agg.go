@@ -82,7 +82,7 @@ func IsPushableAgg(name string) bool {
 	switch strings.ToLower(name) {
 	case aggCount, aggSum, aggSumSq, aggAvg, aggMin, aggMax, aggRange, "dc",
 		aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99,
-		aggStdev:
+		aggStdev, aggStdevP, aggVar, aggVarP:
 		return true
 	default:
 		return false
@@ -718,7 +718,7 @@ func updatePartialState(s *PartialAggState, fn string, val event.Value) {
 			}
 			s.Digest.Add(f)
 		}
-	case aggStdev:
+	case aggStdev, aggStdevP, aggVar, aggVarP:
 		if f, ok := vm.ValueToFloat(val); ok {
 			// Welford's online algorithm for numerically stable variance.
 			s.Count++
@@ -810,7 +810,7 @@ func mergePartialState(dst, src *PartialAggState, fn string) {
 			}
 			dst.Digest.Merge(src.Digest)
 		}
-	case aggStdev:
+	case aggStdev, aggStdevP, aggVar, aggVarP:
 		// Chan et al. parallel algorithm for combining Welford states.
 		if src.Count == 0 {
 			return
@@ -885,14 +885,32 @@ func finalizePartialState(s *PartialAggState, fn string) event.Value {
 	case aggPerc99:
 		return finalizeTDigest(s, 0.99)
 	case aggStdev:
-		if s.Count < 2 {
-			return event.NullValue()
-		}
-
-		return event.FloatValue(math.Sqrt(s.StdevM2 / float64(s.Count-1)))
+		return finalizePartialVarianceState(s, false, true)
+	case aggStdevP:
+		return finalizePartialVarianceState(s, true, true)
+	case aggVar:
+		return finalizePartialVarianceState(s, false, false)
+	case aggVarP:
+		return finalizePartialVarianceState(s, true, false)
 	}
 
 	return event.NullValue()
+}
+
+func finalizePartialVarianceState(s *PartialAggState, population, root bool) event.Value {
+	if s.Count == 0 || (!population && s.Count < 2) {
+		return event.NullValue()
+	}
+	denom := float64(s.Count)
+	if !population {
+		denom = float64(s.Count - 1)
+	}
+	variance := s.StdevM2 / denom
+	if root {
+		return event.FloatValue(math.Sqrt(variance))
+	}
+
+	return event.FloatValue(variance)
 }
 
 // finalizeTDigest extracts a quantile from the partial state's t-digest.

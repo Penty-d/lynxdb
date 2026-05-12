@@ -74,6 +74,9 @@ const (
 	aggList   = "list"
 	aggDC     = "dc"
 	aggStdev  = "stdev"
+	aggStdevP = "stdevp"
+	aggVar    = "var"
+	aggVarP   = "varp"
 	aggPerc25 = "perc25"
 	aggPerc50 = "perc50"
 	aggPerc75 = "perc75"
@@ -128,7 +131,7 @@ func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct
 	needsValues := make([]bool, len(aggs))
 	for i, a := range aggs {
 		switch strings.ToLower(a.Name) {
-		case aggDC, aggValues, aggList, aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99, aggStdev:
+		case aggDC, aggValues, aggList, aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99, aggStdev, aggStdevP, aggVar, aggVarP:
 			needsValues[i] = true
 		}
 	}
@@ -654,7 +657,7 @@ func (a *AggregateIterator) updateState(s *aggState, fn string, val event.Value)
 				s.all = append(s.all, f)
 			}
 		}
-	case aggStdev:
+	case aggStdev, aggStdevP, aggVar, aggVarP:
 		if f, ok := vm.ValueToFloat(val); ok {
 			if len(s.all) < maxValuesPerGroup {
 				s.all = append(s.all, f)
@@ -922,7 +925,7 @@ func (a *AggregateIterator) mergeAggStateFromSpillRow(group *aggGroup, row map[s
 			a.mergeValuesFromRow(&group.states[j], row, agg.Alias)
 		case aggList:
 			a.mergeListFromRow(&group.states[j], row, agg.Alias)
-		case aggStdev:
+		case aggStdev, aggStdevP, aggVar, aggVarP:
 			a.mergeStdevFromRow(&group.states[j], row, agg.Alias)
 		case aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
 			a.mergePercFromRow(&group.states[j], row, agg.Alias)
@@ -1272,26 +1275,42 @@ func (a *AggregateIterator) finalizeState(s *aggState, fn string) event.Value {
 
 		return percentile(s.all, 99)
 	case aggStdev:
-		if s.count < 2 {
-			return event.NullValue()
-		}
-		if len(s.all) == 0 {
-			// Merged state (after spill merge): M2 was accumulated via parallel variance formula.
-			return event.FloatValue(math.Sqrt(s.sumSq / float64(s.count-1)))
-		}
-		// Raw values: compute M2 from scratch.
-		mean := s.sum / float64(s.count)
-		var sumSqLocal float64
-		for _, v := range s.all {
-			f := v.(float64)
-			diff := f - mean
-			sumSqLocal += diff * diff
-		}
-
-		return event.FloatValue(math.Sqrt(sumSqLocal / float64(s.count-1)))
+		return finalizeVarianceState(s, false, true)
+	case aggStdevP:
+		return finalizeVarianceState(s, true, true)
+	case aggVar:
+		return finalizeVarianceState(s, false, false)
+	case aggVarP:
+		return finalizeVarianceState(s, true, false)
 	}
 
 	return event.NullValue()
+}
+
+func finalizeVarianceState(s *aggState, population, root bool) event.Value {
+	if s.count == 0 || (!population && s.count < 2) {
+		return event.NullValue()
+	}
+	sumSq := s.sumSq
+	if len(s.all) > 0 {
+		mean := s.sum / float64(s.count)
+		sumSq = 0
+		for _, v := range s.all {
+			f := v.(float64)
+			diff := f - mean
+			sumSq += diff * diff
+		}
+	}
+	denom := float64(s.count)
+	if !population {
+		denom = float64(s.count - 1)
+	}
+	variance := sumSq / denom
+	if root {
+		return event.FloatValue(math.Sqrt(variance))
+	}
+
+	return event.FloatValue(variance)
 }
 
 func percentile(all []interface{}, pct float64) event.Value {

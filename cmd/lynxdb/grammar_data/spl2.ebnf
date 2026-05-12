@@ -63,7 +63,7 @@ agg_list         = agg_expr { [ "," ] agg_expr } ;
 agg_expr         = agg_func "(" [ expr_list ] ")" [ "as" ident ]
                  | agg_func [ "(" ")" ] [ "as" ident ] ;
 agg_func         = "count" | "sum" | "sumsq" | "avg" | "min" | "max" | "dc"
-                 | "values" | "first" | "last" | "stdev"
+                 | "values" | "first" | "last" | "stdev" | "stdevp" | "var" | "varp"
                  | "perc" | "percentile" | "exactperc" | "upperperc"
                  | "perc25" | "perc50" | "perc75" | "perc90"
                  | "perc95" | "perc99"
