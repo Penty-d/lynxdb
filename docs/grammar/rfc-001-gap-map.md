@@ -37,6 +37,7 @@ Source contract: `docs/grammar/RFC.md`.
 | SPL/SPL2 `mvcombine` merges rows that differ only by one field into a single row with multivalue field values | `pkg/spl2/parser.go`, `pkg/engine/pipeline/mvcombine.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | SPL/SPL2 `nomv` converts multivalue fields into one newline-delimited value | `pkg/spl2/parser.go`, `pkg/engine/pipeline/nomv.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | Optional capability commands parse and report capability-required execution errors | `pkg/spl2/parser.go`, `pkg/engine/pipeline/pipeline.go`, `pkg/spl2/parser_test.go`, `pkg/engine/pipeline/pipeline_test.go` |
+| `use <fragment>` parses and expands named pipeline fragments with missing-fragment and cycle diagnostics | `pkg/spl2/parser.go`, `pkg/spl2/fragment.go`, `pkg/spl2/fragment_test.go` |
 | SEARCH `L030` mixed `AND`/`OR` lint covers explicit `search` and normalized free-hand search inputs | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
@@ -96,7 +97,6 @@ Official Splunk compatibility checked:
 | `mvcombine` delimiter display metadata | Deferred | Current `event.Value` has one representation per field; row grouping and multivalue values are implemented, but delimiter-specific alternate display strings are not represented. |
 | Optional capability command execution semantics | Deferred | `addinfo`, `convert`, `fieldsummary`, `flatten`, `iplocation`, `tags`, `typer`, `thru`, `timewrap`, `tstats`, and `mstats` parse for compatibility, but execution depends on deployment-specific metadata, GeoIP data, accelerated indexes, or metrics stores. |
 | `facets` fan-out normalization | Deferred | Requires prefix-aware normalizer support for command suffixes that expand the prior pipeline into `multisearch`. |
-| `use <fragment>` expansion | Partial | Command parses, but fragment resolution and missing-fragment diagnostics need full RFC tests. |
 | REST `meta.rewrites`, `meta.suggestions`, `meta.explain` | Deferred | Requires API contract expansion without changing result row shape. |
 | CLI `--show-rewritten` and TUI rewrite blocks | Deferred | `--no-lint` now disables server-side advisory lints and returned lints render on stderr; rewrite rendering still requires structured rewrite data. |
 | Grammar source sharing between Go parser and web/CLI catalogs | Partial | Web now shares an editor catalog, but Go parser catalogs are still manually mirrored. |
