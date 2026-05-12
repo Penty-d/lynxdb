@@ -523,6 +523,8 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return p.parseSlowestCmd()
 	case TokenImpact:
 		return p.parseImpactCmd()
+	case TokenBaseline:
+		return p.parseBaselineCmd()
 
 	case TokenEOF:
 		return nil, nil
@@ -3016,7 +3018,7 @@ func isIdentLike(t TokenType) bool {
 		TokenInto, TokenAsc, TokenDesc,
 		// Lynx Flow domain sugar keywords.
 		TokenLatency, TokenErrors, TokenRate, TokenProportion, TokenPercentiles, TokenSlowest,
-		TokenImpact,
+		TokenImpact, TokenBaseline,
 		// SPL2 keywords that can be field names in expression context.
 		TokenTypeKeyword, TokenCurrent, TokenWindow, TokenMaxspan,
 		TokenStartswith, TokenEndswith:
@@ -4284,6 +4286,82 @@ func aggAlias(agg AggExpr) string {
 		return agg.Func
 	}
 	return agg.Func + "_" + strings.ReplaceAll(agg.Args[0].String(), ".", "_")
+}
+
+// parseBaselineCmd parses: baseline <field> window=N [by <fields>].
+// Desugars to streamstats baseline/stdev fields, then eval delta and z-score.
+func (p *Parser) parseBaselineCmd() ([]Command, error) {
+	p.advance() // consume "baseline"
+
+	field, err := p.expectIdent()
+	if err != nil {
+		return nil, fmt.Errorf("spl2: baseline requires a field name")
+	}
+	if p.peek().Type != TokenWindow && !(p.peek().Type == TokenIdent && strings.EqualFold(p.peek().Literal, "window")) {
+		return nil, fmt.Errorf("spl2: baseline: expected 'window' at position %d", p.peek().Pos)
+	}
+	p.advance()
+	if _, err := p.expect(TokenEq); err != nil {
+		return nil, fmt.Errorf("spl2: baseline: expected '=' after window")
+	}
+	windowTok, err := p.expect(TokenNumber)
+	if err != nil {
+		return nil, fmt.Errorf("spl2: baseline: expected numeric window")
+	}
+	window, err := strconv.Atoi(windowTok.Literal)
+	if err != nil {
+		return nil, fmt.Errorf("spl2: baseline: invalid window %q", windowTok.Literal)
+	}
+
+	var groupBy []string
+	if p.peek().Type == TokenBy {
+		p.advance()
+		groupBy, err = p.parseIdentListLF()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	name := strings.ReplaceAll(field.Literal, ".", "_")
+	baselineAlias := "baseline_" + name
+	stdevAlias := "stdev_" + name
+	deltaAlias := "delta_" + name
+	zAlias := "z_" + name
+
+	fieldExpr := &FieldExpr{Name: field.Literal}
+	deltaExpr := &ArithExpr{
+		Left:  &FieldExpr{Name: field.Literal},
+		Op:    "-",
+		Right: &FieldExpr{Name: baselineAlias},
+	}
+	zExpr := &FuncCallExpr{
+		Name: "if",
+		Args: []Expr{
+			&CompareExpr{Left: &FieldExpr{Name: stdevAlias}, Op: ">", Right: &LiteralExpr{Value: "0"}},
+			&ArithExpr{Left: &FieldExpr{Name: deltaAlias}, Op: "/", Right: &FieldExpr{Name: stdevAlias}},
+			&FuncCallExpr{Name: "null"},
+		},
+	}
+
+	return []Command{
+		&StreamstatsCommand{
+			Current: false,
+			Window:  window,
+			Aggregations: []AggExpr{
+				{Func: "avg", Args: []Expr{fieldExpr}, Alias: baselineAlias},
+				{Func: "stdev", Args: []Expr{fieldExpr}, Alias: stdevAlias},
+			},
+			GroupBy: groupBy,
+		},
+		&EvalCommand{
+			Field: deltaAlias,
+			Expr:  deltaExpr,
+			Assignments: []EvalAssignment{
+				{Field: deltaAlias, Expr: deltaExpr},
+				{Field: zAlias, Expr: zExpr},
+			},
+		},
+	}, nil
 }
 
 // parseIdentListLF parses a comma-separated list of identifiers, accepting

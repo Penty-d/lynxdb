@@ -26,7 +26,7 @@ command          = search_cmd | where_cmd | stats_cmd | eval_cmd | sort_cmd
                  | rank_cmd | topby_cmd | bottomby_cmd | bottom_cmd
                  | running_cmd | enrich_cmd | parse_cmd | explode_cmd
                  | pack_cmd | lookup_cmd | latency_cmd | errors_cmd
-                 | rate_cmd | proportion_cmd | impact_cmd
+                 | rate_cmd | proportion_cmd | impact_cmd | baseline_cmd
                  | percentiles_cmd | slowest_cmd ;
 
 (* ─── Search command (implicit or explicit) ─── *)
@@ -228,6 +228,7 @@ rate_cmd         = "rate" [ field ] [ "span" "=" span_value ]
 proportion_cmd   = "proportion" expr "as" field
                    [ "every" span_value ] [ "by" ident_list ] ;
 impact_cmd       = "impact" [ agg_expr ] "by" ident_list ;
+baseline_cmd     = "baseline" field "window" "=" number [ "by" ident_list ] ;
 percentiles_cmd  = "percentiles" field { "," field } [ "by" ident_list ]
                    [ "p" "=" number_list ] ;
 slowest_cmd      = "slowest" [ number ] [ field ] [ "by" ident_list ] ;
