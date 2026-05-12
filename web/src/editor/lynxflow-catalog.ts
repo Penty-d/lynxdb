@@ -125,7 +125,7 @@ export const AGG_FUNCTIONS: readonly string[] = [
   "stdevp()", "var()", "varp()", "range()", "median()", "mode()", "perc25()",
   "perc()", "perc50()", "perc75()", "perc90()", "perc95()", "perc99()", "percentile()",
   "percentile95()", "exactperc()", "exactperc95()", "upperperc()", "upperperc95()",
-  "per_second()", "per_minute()", "per_hour()", "rate()",
+  "per_second()", "per_minute()", "per_hour()", "per_day()", "rate()",
 ];
 
 export const LATENCY_AGG_SHORTHANDS: readonly string[] = [

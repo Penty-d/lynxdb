@@ -1139,7 +1139,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		// rows in chronological order.
 		dur := parseDuration(c.Span)
 		binIter := NewBinIterator(child, "_time", "_time", dur)
-		aggs := qc.convertAggs(c.Aggregations)
+		aggs := qc.convertTimechartAggs(c.Aggregations, dur)
 		groupBy := append([]string{"_time"}, c.GroupBy...)
 		tcIter := NewAggregateIteratorWithSpill(binIter, aggs, groupBy, qc.newCoordinatedAccount("timechart", reservationAggregate), qc.spillMgr)
 		if qc.govBudget != nil {
@@ -1434,6 +1434,36 @@ func (qc *queryContext) convertAggs(aggs []spl2.AggExpr) []AggFunc {
 	}
 
 	return result
+}
+
+func (qc *queryContext) convertTimechartAggs(aggs []spl2.AggExpr, span time.Duration) []AggFunc {
+	result := qc.convertAggs(aggs)
+	if span == 0 {
+		span = time.Hour
+	}
+	for i := range result {
+		result[i].Scale = timechartAggScale(result[i].Name, span)
+	}
+
+	return result
+}
+
+func timechartAggScale(name string, span time.Duration) float64 {
+	if span <= 0 {
+		return 1
+	}
+	switch strings.ToLower(name) {
+	case aggPerSec:
+		return float64(time.Second) / float64(span)
+	case aggPerMin:
+		return float64(time.Minute) / float64(span)
+	case aggPerHr:
+		return float64(time.Hour) / float64(span)
+	case aggPerDay:
+		return float64(24*time.Hour) / float64(span)
+	default:
+		return 0
+	}
 }
 
 func parseDuration(s string) time.Duration {

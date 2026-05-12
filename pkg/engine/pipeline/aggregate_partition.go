@@ -284,7 +284,7 @@ func emitPartitionGroups(a *AggregateIterator, result *Batch) {
 				}
 			}
 			for j, agg := range a.aggs {
-				row[agg.Alias] = a.finalizeState(&group.states[j], agg.Name)
+				row[agg.Alias] = a.finalizeAgg(&group.states[j], agg)
 			}
 			result.AddRow(row)
 		}
@@ -309,7 +309,7 @@ func (a *AggregateIterator) serializeGroup(group *aggGroup, aggs []AggFunc) map[
 		case aggAvg:
 			row[agg.Alias+"__sum"] = event.FloatValue(s.sum)
 			row[agg.Alias+"__count"] = event.IntValue(s.count)
-		case aggSum, aggSumSq:
+		case aggSum, aggSumSq, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 			row[agg.Alias+"__sum"] = event.FloatValue(s.sum)
 		case aggRange:
 			row[agg.Alias+"__min"] = s.min
@@ -360,7 +360,7 @@ func (a *AggregateIterator) serializeGroup(group *aggGroup, aggs []AggFunc) map[
 					joinAllFloats(s.all, "|"))
 			}
 		default:
-			row[agg.Alias] = a.finalizeState(s, agg.Name)
+			row[agg.Alias] = a.finalizeAgg(s, agg)
 		}
 	}
 
@@ -385,7 +385,7 @@ func (a *AggregateIterator) mergeAggStateFromRow(group *aggGroup, row map[string
 			if countF, ok := vm.ValueToFloat(countVal); ok {
 				group.states[j].count += int64(countF)
 			}
-		case aggSum, aggSumSq:
+		case aggSum, aggSumSq, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 			sumVal := row[agg.Alias+"__sum"]
 			a.mergeSpilledValue(&group.states[j], agg.Name, sumVal)
 		case aggRange:

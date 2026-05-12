@@ -440,7 +440,7 @@ func updateAggState(s *aggState, fn string, val event.Value) {
 		if !val.IsNull() {
 			s.count++
 		}
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		if f, ok := vm.ValueToFloat(val); ok {
 			s.sum += f
 		}
@@ -491,7 +491,7 @@ func finalizeAggState(s *aggState, fn string) event.Value {
 	switch strings.ToLower(fn) {
 	case aggCount:
 		return event.IntValue(s.count)
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		return event.FloatValue(s.sum)
 	case aggSumSq:
 		return event.FloatValue(s.sum)

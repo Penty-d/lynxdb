@@ -28,6 +28,7 @@ type AggFunc struct {
 	Field   string      // field to aggregate (empty for count)
 	Alias   string      // output field name
 	Program *vm.Program // optional compiled expression for nested eval
+	Scale   float64     // optional multiplier applied at finalize time
 }
 
 // maxInMemoryGroups is a safety valve that prevents degenerate cases where
@@ -74,6 +75,10 @@ const (
 	aggValues = "values"
 	aggList   = "list"
 	aggMode   = "mode"
+	aggPerSec = "per_second"
+	aggPerMin = "per_minute"
+	aggPerHr  = "per_hour"
+	aggPerDay = "per_day"
 	aggDC     = "dc"
 	aggEstDCE = "estdc_error"
 	aggStdev  = "stdev"
@@ -575,7 +580,7 @@ func (a *AggregateIterator) updateState(s *aggState, fn string, val event.Value)
 		if !val.IsNull() {
 			s.count++
 		}
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		if f, ok := vm.ValueToFloat(val); ok {
 			s.sum += f
 			s.count++
@@ -718,7 +723,7 @@ func (a *AggregateIterator) emitAllGroups() *Batch {
 		// No input, no group-by: emit one row with zero values.
 		row := make(map[string]event.Value, len(a.aggs))
 		for _, agg := range a.aggs {
-			row[agg.Alias] = a.finalizeState(&aggState{values: make(map[string]bool)}, agg.Name)
+			row[agg.Alias] = a.finalizeAgg(&aggState{values: make(map[string]bool)}, agg)
 		}
 		result.AddRow(row)
 
@@ -735,7 +740,7 @@ func (a *AggregateIterator) emitAllGroups() *Batch {
 				}
 			}
 			for j, agg := range a.aggs {
-				row[agg.Alias] = a.finalizeState(&group.states[j], agg.Name)
+				row[agg.Alias] = a.finalizeAgg(&group.states[j], agg)
 			}
 			result.AddRow(row)
 		}
@@ -778,7 +783,7 @@ func (a *AggregateIterator) buildResultPartitioned() *Batch {
 	if result.Len == 0 && len(a.groupBy) == 0 {
 		row := make(map[string]event.Value, len(a.aggs))
 		for _, agg := range a.aggs {
-			row[agg.Alias] = a.finalizeState(&aggState{values: make(map[string]bool)}, agg.Name)
+			row[agg.Alias] = a.finalizeAgg(&aggState{values: make(map[string]bool)}, agg)
 		}
 		result.AddRow(row)
 	}
@@ -898,7 +903,7 @@ func (a *AggregateIterator) mergeSpillFilesPartitioned() *Batch {
 	if result.Len == 0 && len(a.groupBy) == 0 {
 		row := make(map[string]event.Value, len(a.aggs))
 		for _, agg := range a.aggs {
-			row[agg.Alias] = a.finalizeState(&aggState{values: make(map[string]bool)}, agg.Name)
+			row[agg.Alias] = a.finalizeAgg(&aggState{values: make(map[string]bool)}, agg)
 		}
 		result.AddRow(row)
 	}
@@ -924,7 +929,7 @@ func (a *AggregateIterator) mergeAggStateFromSpillRow(group *aggGroup, row map[s
 			if countF, ok := vm.ValueToFloat(countVal); ok {
 				group.states[j].count += int64(countF)
 			}
-		case aggSum, aggSumSq:
+		case aggSum, aggSumSq, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 			// Read raw sum from suffixed key.
 			sumVal := row[agg.Alias+"__sum"]
 			a.mergeSpilledValue(&group.states[j], agg.Name, sumVal)
@@ -964,7 +969,7 @@ func (a *AggregateIterator) mergeSpilledValue(s *aggState, fn string, val event.
 		if n, ok := vm.ValueToFloat(val); ok {
 			s.count += int64(n)
 		}
-	case aggSum, aggSumSq:
+	case aggSum, aggSumSq, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		if f, ok := vm.ValueToFloat(val); ok {
 			s.sum += f
 			s.count++ // track that we have at least one contribution
@@ -1220,7 +1225,7 @@ func (a *AggregateIterator) finalizeState(s *aggState, fn string) event.Value {
 	switch strings.ToLower(fn) {
 	case aggCount:
 		return event.IntValue(s.count)
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		return event.FloatValue(s.sum)
 	case aggSumSq:
 		return event.FloatValue(s.sum)
@@ -1324,6 +1329,21 @@ func (a *AggregateIterator) finalizeState(s *aggState, fn string) event.Value {
 	}
 
 	return event.NullValue()
+}
+
+func (a *AggregateIterator) finalizeAgg(s *aggState, agg AggFunc) event.Value {
+	val := a.finalizeState(s, agg.Name)
+	if val.IsNull() || agg.Scale == 0 {
+		return val
+	}
+	switch strings.ToLower(agg.Name) {
+	case aggPerSec, aggPerMin, aggPerHr, aggPerDay:
+		if f, ok := vm.ValueToFloat(val); ok {
+			return event.FloatValue(f * agg.Scale)
+		}
+	}
+
+	return val
 }
 
 func finalizeVarianceState(s *aggState, population, root bool) event.Value {

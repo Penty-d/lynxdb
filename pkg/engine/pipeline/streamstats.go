@@ -315,7 +315,7 @@ func addValueToRunning(st *runningAggState, agg AggFunc, row map[string]event.Va
 		} else if v, ok := row[agg.Field]; ok && !v.IsNull() {
 			st.count++
 		}
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		if v, ok := row[agg.Field]; ok {
 			if f, fok := vm.ValueToFloat(v); fok {
 				st.sum += f
@@ -371,7 +371,7 @@ func removeValueFromRunning(st *runningAggState, agg AggFunc, row map[string]eve
 		} else if v, ok := row[agg.Field]; ok && !v.IsNull() {
 			st.count--
 		}
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		if v, ok := row[agg.Field]; ok {
 			if f, fok := vm.ValueToFloat(v); fok {
 				st.sum -= f
@@ -428,7 +428,7 @@ func readRunningAgg(st *runningAggState, agg AggFunc, rb *ringBuffer) event.Valu
 	switch strings.ToLower(agg.Name) {
 	case aggCount:
 		return event.IntValue(st.count)
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		return event.FloatValue(st.sum)
 	case aggSumSq:
 		return event.FloatValue(st.sum)
@@ -517,7 +517,7 @@ func (s *StreamStatsIterator) computeAgg(agg AggFunc, items []map[string]event.V
 		}
 
 		return event.IntValue(count)
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		sum := 0.0
 		for _, item := range items {
 			if v, ok := item[agg.Field]; ok {

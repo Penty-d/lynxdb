@@ -77,6 +77,14 @@ Most frequent value, compared as a string.
 | stats mode(status) AS common_status by endpoint
 ```
 
+## per_second / per_minute / per_hour / per_day
+
+Scale numeric bucket totals to a fixed time period in `timechart`.
+
+```spl
+| timechart span=5m per_minute(bytes) AS bytes_per_minute
+```
+
 ## stdev
 
 Standard deviation.

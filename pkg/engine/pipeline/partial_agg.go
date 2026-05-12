@@ -82,6 +82,7 @@ type PartialAggState struct {
 func IsPushableAgg(name string) bool {
 	switch strings.ToLower(name) {
 	case aggCount, aggSum, aggSumSq, aggAvg, aggMin, aggMax, aggRange, aggDC, aggEstDCE, aggMode,
+		aggPerSec, aggPerMin, aggPerHr, aggPerDay,
 		aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99,
 		aggStdev, aggStdevP, aggVar, aggVarP:
 		return true
@@ -665,7 +666,7 @@ func updatePartialState(s *PartialAggState, fn string, val event.Value) {
 		if !val.IsNull() {
 			s.Count++
 		}
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		if f, ok := vm.ValueToFloat(val); ok {
 			s.Sum += f
 			s.Count++
@@ -755,7 +756,7 @@ func mergePartialState(dst, src *PartialAggState, fn string) {
 	switch strings.ToLower(fn) {
 	case aggCount:
 		dst.Count += src.Count
-	case aggSum, aggSumSq:
+	case aggSum, aggSumSq, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		dst.Sum += src.Sum
 		dst.Count += src.Count
 	case aggAvg:
@@ -865,7 +866,7 @@ func finalizePartialState(s *PartialAggState, fn string) event.Value {
 	switch strings.ToLower(fn) {
 	case aggCount:
 		return event.IntValue(s.Count)
-	case aggSum:
+	case aggSum, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
 		return event.FloatValue(s.Sum)
 	case aggSumSq:
 		return event.FloatValue(s.Sum)

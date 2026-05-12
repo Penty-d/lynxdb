@@ -1205,6 +1205,65 @@ func TestQuery_TimechartResult(t *testing.T) {
 	}
 }
 
+func TestQuery_TimechartPerMinuteAggregate(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	events := []*event.Event{
+		event.NewEvent(base, "bytes=60"),
+		event.NewEvent(base.Add(30*time.Second), "bytes=120"),
+	}
+	for _, ev := range events {
+		ev.Index = "main"
+		ev.Host = "web-00"
+	}
+	events[0].SetField("bytes", event.IntValue(60))
+	events[1].SetField("bytes", event.IntValue(120))
+	if err := srv.engine.Ingest(events); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": `FROM main | timechart span=1h per_minute(bytes) as bytes_per_minute`,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := result["data"].(map[string]interface{})
+	cols := data["columns"].([]interface{})
+	rows := data["rows"].([]interface{})
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(rows))
+	}
+	colIndex := -1
+	for i, col := range cols {
+		if fmt.Sprint(col) == "bytes_per_minute" {
+			colIndex = i
+			break
+		}
+	}
+	if colIndex < 0 {
+		t.Fatalf("missing bytes_per_minute column in %v", cols)
+	}
+	got := rows[0].([]interface{})[colIndex].(float64)
+	if got != 3 {
+		t.Errorf("bytes_per_minute: got %v, want 3", got)
+	}
+}
+
 func TestQuery_CancelJob(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

@@ -64,6 +64,7 @@ agg_expr         = agg_func "(" [ expr_list ] ")" [ "as" ident ]
                  | agg_func [ "(" ")" ] [ "as" ident ] ;
 agg_func         = "count" | "sum" | "sumsq" | "avg" | "min" | "max" | "dc" | "estdc" | "estdc_error"
                  | "values" | "list" | "mode" | "first" | "last" | "stdev" | "stdevp" | "var" | "varp"
+                 | "per_second" | "per_minute" | "per_hour" | "per_day"
                  | "perc" | "percentile" | "exactperc" | "upperperc"
                  | "perc25" | "perc50" | "perc75" | "perc90"
                  | "perc95" | "perc99"
