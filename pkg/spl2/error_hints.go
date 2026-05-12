@@ -23,7 +23,7 @@ var knownCommands = []string{
 	"order", "take", "rank", "topby", "bottomby", "bottom",
 	"running", "enrich", "parse", "explode", "pack", "lookup",
 	"latency", "errors", "rate", "proportion", "percentiles", "slowest",
-	"views", "dropview", "glimpse", "describe",
+	"impact", "views", "dropview", "glimpse", "describe",
 	"use", "outliers", "compare", "patterns", "trace", "rollup", "correlate", "sessionize", "topology",
 }
 

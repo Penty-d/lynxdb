@@ -1281,6 +1281,50 @@ func TestLynxFlow_ProportionEvery(t *testing.T) {
 	}
 }
 
+func TestLynxFlow_ImpactDefault(t *testing.T) {
+	q, err := Parse(`from app | impact by service`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 4 {
+		t.Fatalf("Commands: got %d, want 4", len(q.Commands))
+	}
+	stats := q.Commands[0].(*StatsCommand)
+	if len(stats.Aggregations) != 1 || stats.Aggregations[0].Func != "count" || stats.Aggregations[0].Alias != "n" {
+		t.Errorf("stats aggregation: got %+v", stats.Aggregations)
+	}
+	if len(stats.GroupBy) != 1 || stats.GroupBy[0] != "service" {
+		t.Errorf("GroupBy: got %v, want [service]", stats.GroupBy)
+	}
+	eventstats := q.Commands[1].(*EventstatsCommand)
+	if len(eventstats.Aggregations) != 1 || eventstats.Aggregations[0].Alias != "total_n" {
+		t.Errorf("eventstats aggregation: got %+v", eventstats.Aggregations)
+	}
+	eval := q.Commands[2].(*EvalCommand)
+	if eval.Field != "pct_n" {
+		t.Errorf("Eval field: got %q, want pct_n", eval.Field)
+	}
+	sort := q.Commands[3].(*SortCommand)
+	if len(sort.Fields) != 1 || sort.Fields[0].Name != "pct_n" || !sort.Fields[0].Desc {
+		t.Errorf("Sort fields: got %+v, want -pct_n", sort.Fields)
+	}
+}
+
+func TestLynxFlow_ImpactAggregate(t *testing.T) {
+	q, err := Parse(`from app | impact sum(bytes) by host`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	stats := q.Commands[0].(*StatsCommand)
+	if stats.Aggregations[0].Alias != "sum_bytes" {
+		t.Errorf("Alias: got %q, want sum_bytes", stats.Aggregations[0].Alias)
+	}
+	eventstats := q.Commands[1].(*EventstatsCommand)
+	if eventstats.Aggregations[0].Alias != "total_sum_bytes" {
+		t.Errorf("Total alias: got %q, want total_sum_bytes", eventstats.Aggregations[0].Alias)
+	}
+}
+
 func TestLynxFlow_Percentiles(t *testing.T) {
 	q, err := Parse(`from app | percentiles dur by service`)
 	if err != nil {
@@ -1684,6 +1728,7 @@ func TestLynxFlow_LexerKeywordsAsTokens(t *testing.T) {
 		{"errors", TokenErrors},
 		{"rate", TokenRate},
 		{"proportion", TokenProportion},
+		{"impact", TokenImpact},
 		{"percentiles", TokenPercentiles},
 		{"slowest", TokenSlowest},
 	}
@@ -2048,7 +2093,7 @@ func TestLynxFlow_NormalizeKnownCommands(t *testing.T) {
 		"let", "keep", "omit", "select", "group", "every", "bucket",
 		"order", "take", "rank", "topby", "bottomby", "bottom",
 		"running", "enrich", "parse", "explode", "pack", "lookup",
-		"latency", "errors", "rate", "proportion", "percentiles", "slowest",
+		"latency", "errors", "rate", "proportion", "impact", "percentiles", "slowest",
 		"views", "dropview",
 	}
 	for _, cmd := range lfCommands {
@@ -2871,6 +2916,7 @@ func TestLynxFlow_NormalizerAllLynxFlowCommands(t *testing.T) {
 		{"order by f asc", "FROM main | order by f asc"},
 		{"take 10", "FROM main | take 10"},
 		{"proportion status >= 500 AS error_rate", "FROM main | proportion status >= 500 AS error_rate"},
+		{"impact by service", "FROM main | impact by service"},
 		{"views", "FROM main | views"},
 	}
 	for _, tt := range tests {

@@ -152,6 +152,7 @@ const (
 	TokenProportion
 	TokenPercentiles
 	TokenSlowest
+	TokenImpact
 	TokenRollup
 
 	// Schema exploration.
@@ -319,6 +320,7 @@ var tokenNames = map[TokenType]string{
 	TokenProportion:        "PROPORTION",
 	TokenPercentiles:       "PERCENTILES",
 	TokenSlowest:           "SLOWEST",
+	TokenImpact:            "IMPACT",
 	TokenRollup:            "ROLLUP",
 	TokenGlimpse:           "GLIMPSE",
 	TokenDescribe:          "DESCRIBE",
@@ -461,6 +463,7 @@ var keywords = map[string]TokenType{
 	"proportion":          TokenProportion,
 	"percentiles":         TokenPercentiles,
 	"slowest":             TokenSlowest,
+	"impact":              TokenImpact,
 	"rollup":              TokenRollup,
 	"glimpse":             TokenGlimpse,
 	"describe":            TokenDescribe,

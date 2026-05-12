@@ -521,6 +521,8 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return singleCmd(p.parsePercentilesCmd())
 	case TokenSlowest:
 		return p.parseSlowestCmd()
+	case TokenImpact:
+		return p.parseImpactCmd()
 
 	case TokenEOF:
 		return nil, nil
@@ -3014,6 +3016,7 @@ func isIdentLike(t TokenType) bool {
 		TokenInto, TokenAsc, TokenDesc,
 		// Lynx Flow domain sugar keywords.
 		TokenLatency, TokenErrors, TokenRate, TokenProportion, TokenPercentiles, TokenSlowest,
+		TokenImpact,
 		// SPL2 keywords that can be field names in expression context.
 		TokenTypeKeyword, TokenCurrent, TokenWindow, TokenMaxspan,
 		TokenStartswith, TokenEndswith:
@@ -4220,6 +4223,67 @@ func (p *Parser) parseSlowestCmd() ([]Command, error) {
 	headCmd := &HeadCommand{Count: n}
 
 	return []Command{statsCmd, sortCmd, headCmd}, nil
+}
+
+// parseImpactCmd parses: impact [agg()] by <fields>.
+// Desugars to stats, eventstats total, eval pct, sort descending by pct.
+func (p *Parser) parseImpactCmd() ([]Command, error) {
+	p.advance() // consume "impact"
+
+	var agg AggExpr
+	if p.peek().Type == TokenBy {
+		agg = AggExpr{Func: "count", Alias: "n"}
+	} else {
+		var err error
+		agg, err = p.parseSingleAgg()
+		if err != nil {
+			return nil, fmt.Errorf("spl2: impact: expected aggregate or 'by'")
+		}
+		if agg.Alias == "" {
+			agg.Alias = aggAlias(agg)
+		}
+	}
+
+	if p.peek().Type != TokenBy {
+		return nil, fmt.Errorf("spl2: impact: expected 'by' at position %d", p.peek().Pos)
+	}
+	p.advance()
+	groupBy, err := p.parseIdentListLF()
+	if err != nil {
+		return nil, err
+	}
+
+	totalAlias := "total_" + agg.Alias
+	pctAlias := "pct_" + agg.Alias
+	ratioExpr := &ArithExpr{
+		Left: &ArithExpr{
+			Left:  &FieldExpr{Name: agg.Alias},
+			Op:    "*",
+			Right: &LiteralExpr{Value: "1.0"},
+		},
+		Op:    "/",
+		Right: &FieldExpr{Name: totalAlias},
+	}
+
+	return []Command{
+		&StatsCommand{Aggregations: []AggExpr{agg}, GroupBy: groupBy},
+		&EventstatsCommand{
+			Aggregations: []AggExpr{{Func: "sum", Args: []Expr{&FieldExpr{Name: agg.Alias}}, Alias: totalAlias}},
+		},
+		&EvalCommand{
+			Field:       pctAlias,
+			Expr:        ratioExpr,
+			Assignments: []EvalAssignment{{Field: pctAlias, Expr: ratioExpr}},
+		},
+		&SortCommand{Fields: []SortField{{Name: pctAlias, Desc: true}}},
+	}, nil
+}
+
+func aggAlias(agg AggExpr) string {
+	if len(agg.Args) == 0 {
+		return agg.Func
+	}
+	return agg.Func + "_" + strings.ReplaceAll(agg.Args[0].String(), ".", "_")
 }
 
 // parseIdentListLF parses a comma-separated list of identifiers, accepting
