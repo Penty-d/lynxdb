@@ -753,6 +753,62 @@ func TestServer_StatsPercentileSuffixAliases(t *testing.T) {
 	}
 }
 
+func TestServer_StatsRangeAggregate(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	now := time.Now()
+	durations := []float64{10, 25, 40}
+	events := make([]*event.Event, 0, len(durations))
+	for i, duration := range durations {
+		ev := event.NewEvent(now.Add(time.Duration(i)*time.Second), fmt.Sprintf("duration_ms=%v", duration))
+		ev.Index = "main"
+		ev.Host = "web-00"
+		ev.Source = "/var/log/app.log"
+		ev.SourceType = "json"
+		ev.SetField("duration_ms", event.FloatValue(duration))
+		events = append(events, ev)
+	}
+	if err := srv.engine.Ingest(events); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": `FROM main | stats range(duration_ms) as duration_range`,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST query: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := result["data"].(map[string]interface{})
+	cols := data["columns"].([]interface{})
+	rows := data["rows"].([]interface{})
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(rows))
+	}
+	row := rows[0].([]interface{})
+	for i, col := range cols {
+		if fmt.Sprint(col) == "duration_range" {
+			if got := row[i].(float64); got != 30 {
+				t.Fatalf("duration_range: got %v, want 30", got)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing duration_range column in %v", cols)
+}
+
 // New Three-Mode Query Tests
 
 func TestQuery_SyncMode(t *testing.T) {

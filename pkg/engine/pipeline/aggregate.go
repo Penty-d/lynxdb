@@ -68,6 +68,7 @@ const (
 	aggAvg    = "avg"
 	aggMin    = "min"
 	aggMax    = "max"
+	aggRange  = "range"
 	aggValues = "values"
 	aggDC     = "dc"
 	aggStdev  = "stdev"
@@ -587,6 +588,17 @@ func (a *AggregateIterator) updateState(s *aggState, fn string, val event.Value)
 				s.max = val
 			}
 		}
+	case aggRange:
+		if f, ok := vm.ValueToFloat(val); ok {
+			v := event.FloatValue(f)
+			if s.count == 0 || vm.CompareValues(v, s.min) < 0 {
+				s.min = v
+			}
+			if s.count == 0 || vm.CompareValues(v, s.max) > 0 {
+				s.max = v
+			}
+			s.count++
+		}
 	case aggDC:
 		if !val.IsNull() {
 			str := val.String()
@@ -891,6 +903,8 @@ func (a *AggregateIterator) mergeAggStateFromSpillRow(group *aggGroup, row map[s
 			// Read raw sum from suffixed key.
 			sumVal := row[agg.Alias+"__sum"]
 			a.mergeSpilledValue(&group.states[j], agg.Name, sumVal)
+		case aggRange:
+			a.mergeRangeFromRow(&group.states[j], row, agg.Alias)
 		case aggDC:
 			a.mergeDCFromRow(&group.states[j], row, agg.Alias)
 		case aggValues:
@@ -933,6 +947,17 @@ func (a *AggregateIterator) mergeSpilledValue(s *aggState, fn string, val event.
 	case aggMax:
 		if s.max.IsNull() || vm.CompareValues(val, s.max) > 0 {
 			s.max = val
+		}
+	case aggRange:
+		if f, ok := vm.ValueToFloat(val); ok {
+			v := event.FloatValue(f)
+			if s.count == 0 || vm.CompareValues(v, s.min) < 0 {
+				s.min = v
+			}
+			if s.count == 0 || vm.CompareValues(v, s.max) > 0 {
+				s.max = v
+			}
+			s.count++
 		}
 	case "first", "earliest":
 		if !s.hasFirst {
@@ -993,6 +1018,29 @@ func (a *AggregateIterator) mergeDCFromRow(s *aggState, row map[string]event.Val
 			}
 		}
 	}
+}
+
+func (a *AggregateIterator) mergeRangeFromRow(s *aggState, row map[string]event.Value, alias string) {
+	minVal := row[alias+"__min"]
+	maxVal := row[alias+"__max"]
+	countVal := row[alias+"__count"]
+	countF, ok := vm.ValueToFloat(countVal)
+	if !ok || countF == 0 {
+		return
+	}
+	if f, ok := vm.ValueToFloat(minVal); ok {
+		v := event.FloatValue(f)
+		if s.count == 0 || vm.CompareValues(v, s.min) < 0 {
+			s.min = v
+		}
+	}
+	if f, ok := vm.ValueToFloat(maxVal); ok {
+		v := event.FloatValue(f)
+		if s.count == 0 || vm.CompareValues(v, s.max) > 0 {
+			s.max = v
+		}
+	}
+	s.count += int64(countF)
 }
 
 // mergeValuesFromRow merges values() state from a spill row's suffixed columns.
@@ -1122,6 +1170,17 @@ func (a *AggregateIterator) finalizeState(s *aggState, fn string) event.Value {
 		return s.min
 	case aggMax:
 		return s.max
+	case aggRange:
+		if s.count == 0 {
+			return event.NullValue()
+		}
+		min, minOK := vm.ValueToFloat(s.min)
+		max, maxOK := vm.ValueToFloat(s.max)
+		if !minOK || !maxOK {
+			return event.NullValue()
+		}
+
+		return event.FloatValue(max - min)
 	case aggDC:
 		if s.hll != nil {
 			return event.IntValue(s.hll.Count())

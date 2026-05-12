@@ -212,6 +212,23 @@ func TestMergePartialAggs_MinMax(t *testing.T) {
 	}
 }
 
+func TestMergePartialAggs_Range(t *testing.T) {
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "range", Field: "v", Alias: "range_v"}},
+	}
+	p1 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{{Min: event.FloatValue(5), Max: event.FloatValue(50), Count: 2}}},
+	}
+	p2 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{{Min: event.FloatValue(3), Max: event.FloatValue(100), Count: 2}}},
+	}
+	rows := MergePartialAggs([][]*PartialAggGroup{p1, p2}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	assertFloatField(t, rows[0], "range_v", 97)
+}
+
 func TestMergePartialAggs_EmptyPartials(t *testing.T) {
 	spec := &PartialAggSpec{
 		Funcs: []PartialAggFunc{{Name: "count", Alias: "count"}},

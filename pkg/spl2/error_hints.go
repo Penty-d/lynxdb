@@ -35,7 +35,7 @@ var knownFunctions = []string{
 	"floor", "sqrt", "mvjoin", "mvappend", "mvdedup", "mvcount",
 	"isnotnull", "isnull", "null", "strftime", "max", "min",
 	// Aggregation functions
-	"count", "sum", "avg", "mean", "dc", "distinct_count", "values", "stdev",
+	"count", "sum", "avg", "mean", "dc", "distinct_count", "values", "stdev", "range",
 	"perc", "perc25", "perc50", "perc75", "perc90", "perc95", "perc99",
 	"earliest", "latest", "first", "last", "median", "percentile",
 	"percentile95", "exactperc", "exactperc95", "upperperc", "upperperc95",
