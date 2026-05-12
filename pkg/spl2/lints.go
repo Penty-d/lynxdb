@@ -20,6 +20,7 @@ const (
 	LintDeprecatedSort     = "L022"
 	LintMixedSearchAndOr   = "L030"
 	LintDeepSearchNesting  = "L031"
+	LintReservedFieldName  = "L034"
 	LintDefaultMetricField = "L036"
 )
 
@@ -55,6 +56,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	lints = append(lints, lintDeprecatedSortSyntax(tokens)...)
 	lints = append(lints, lintMixedSearchAndOr(input, tokens)...)
 	lints = append(lints, lintDeepSearchNesting(prog)...)
+	lints = append(lints, lintReservedFieldNames(tokens)...)
 	lints = append(lints, lintDefaultMetricField(tokens)...)
 
 	return lints, nil
@@ -244,6 +246,96 @@ func lintDeprecatedSortSyntax(tokens []Token) []QueryLint {
 	}
 
 	return lints
+}
+
+func lintReservedFieldNames(tokens []Token) []QueryLint {
+	var lints []QueryLint
+
+	for i := 0; i < len(tokens); i++ {
+		switch tokens[i].Type {
+		case TokenBy:
+			allowDirections := i > 0 && (tokens[i-1].Type == TokenSort || tokens[i-1].Type == TokenOrder)
+			lints = append(lints, lintReservedFieldList(tokens, i+1, allowDirections)...)
+		case TokenFields, TokenTable, TokenDedup, TokenKeep, TokenOmit, TokenSelect:
+			lints = append(lints, lintReservedFieldList(tokens, i+1, false)...)
+		case TokenSort:
+			if peekTokenType(tokens, i+1) != TokenBy {
+				lints = append(lints, lintReservedSortFields(tokens, i+1)...)
+			}
+		}
+	}
+
+	return lints
+}
+
+func lintReservedFieldList(tokens []Token, start int, allowDirections bool) []QueryLint {
+	var lints []QueryLint
+
+	for i := start; i < len(tokens); i++ {
+		tok := tokens[i]
+		switch tok.Type {
+		case TokenPipe, TokenRBracket, TokenSemicolon, TokenEOF:
+			return lints
+		case TokenComma, TokenPlus, TokenMinus:
+			continue
+		case TokenNumber:
+			continue
+		}
+		if allowDirections && isSortDirection(tok.Type) {
+			continue
+		}
+		if isReservedFieldNameToken(tok) {
+			lints = append(lints, reservedFieldNameLint(tok))
+		}
+		if !isIdentLike(tok.Type) && tok.Type != TokenGlob {
+			return lints
+		}
+		if peekTokenType(tokens, i+1) != TokenComma && !(allowDirections && isSortDirection(peekTokenType(tokens, i+1))) {
+			return lints
+		}
+	}
+
+	return lints
+}
+
+func lintReservedSortFields(tokens []Token, start int) []QueryLint {
+	var lints []QueryLint
+
+	for i := start; i < len(tokens); i++ {
+		tok := tokens[i]
+		switch tok.Type {
+		case TokenPipe, TokenRBracket, TokenSemicolon, TokenEOF:
+			return lints
+		case TokenComma:
+			continue
+		case TokenMinus, TokenPlus:
+			if isReservedFieldNameToken(tokens[i+1]) {
+				lints = append(lints, reservedFieldNameLint(tokens[i+1]))
+			}
+			i++
+			continue
+		}
+		if isReservedFieldNameToken(tok) {
+			lints = append(lints, reservedFieldNameLint(tok))
+		}
+		if isSortDirection(peekTokenType(tokens, i+1)) {
+			i++
+		}
+	}
+
+	return lints
+}
+
+func isReservedFieldNameToken(tok Token) bool {
+	return tok.Type != TokenIdent && tok.Type != TokenGlob && isIdentLike(tok.Type)
+}
+
+func reservedFieldNameLint(tok Token) QueryLint {
+	return QueryLint{
+		Code:     LintReservedFieldName,
+		Message:  "Use single quotes for reserved-word field names",
+		Position: tok.Pos,
+	}
 }
 
 func isSortDirection(t TokenType) bool {

@@ -429,6 +429,57 @@ func TestLintQuery_OptionAfterArg(t *testing.T) {
 	}
 }
 
+func TestLintQuery_ReservedFieldNames(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCodes []string
+	}{
+		{
+			name:      "stats group field",
+			query:     `from app | stats count() by order`,
+			wantCodes: []string{LintReservedFieldName},
+		},
+		{
+			name:      "sort field",
+			query:     `from app | sort -order`,
+			wantCodes: []string{LintReservedFieldName},
+		},
+		{
+			name:      "fields list",
+			query:     `from app | fields order`,
+			wantCodes: []string{LintReservedFieldName},
+		},
+		{
+			name:      "single quoted field",
+			query:     `from app | stats count() by 'order'`,
+			wantCodes: nil,
+		},
+		{
+			name:      "sort direction",
+			query:     `from app | sort by duration_ms desc`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLintProgram_RequiresSuccessfulParse(t *testing.T) {
 	_, err := LintQuery(`from app | stats count(`)
 	if err == nil {
