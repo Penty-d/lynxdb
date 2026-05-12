@@ -1438,7 +1438,7 @@ func (p *Parser) parseJoin() (*JoinCommand, error) {
 	cmd := &JoinCommand{JoinType: "inner"} // default
 
 	// Parse optional type=inner/left.
-	if p.peek().Type == TokenIdent && strings.ToLower(p.peek().Literal) == "type" &&
+	if p.peek().Type == TokenTypeKeyword &&
 		p.peekAt(1).Type == TokenEq {
 		p.advance()
 		p.advance() // consume =
@@ -1497,7 +1497,10 @@ func (p *Parser) parseTransaction() (*TransactionCommand, error) {
 	}
 	cmd.Field = field.Literal
 
-	for p.peek().Type == TokenIdent {
+	for p.peek().Type == TokenIdent ||
+		p.peek().Type == TokenMaxspan ||
+		p.peek().Type == TokenStartswith ||
+		p.peek().Type == TokenEndswith {
 		name := strings.ToLower(p.peek().Literal)
 		if name == "maxspan" && p.peekAt(1).Type == TokenEq {
 			p.advance()

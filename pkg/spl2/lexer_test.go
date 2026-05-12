@@ -266,6 +266,18 @@ func TestLexer_NewKeywords(t *testing.T) {
 		{"IS", TokenIs},
 		{"null", TokenNull},
 		{"NULL", TokenNull},
+		{"type", TokenTypeKeyword},
+		{"TYPE", TokenTypeKeyword},
+		{"window", TokenWindow},
+		{"WINDOW", TokenWindow},
+		{"current", TokenCurrent},
+		{"CURRENT", TokenCurrent},
+		{"maxspan", TokenMaxspan},
+		{"MAXSPAN", TokenMaxspan},
+		{"startswith", TokenStartswith},
+		{"STARTSWITH", TokenStartswith},
+		{"endswith", TokenEndswith},
+		{"ENDSWITH", TokenEndswith},
 	}
 
 	for _, tt := range tests {

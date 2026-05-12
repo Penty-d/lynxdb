@@ -904,7 +904,7 @@ func TestLynxFlow_Append(t *testing.T) {
 }
 
 func TestLynxFlow_Transaction(t *testing.T) {
-	q, err := Parse(`from app | transaction session_id maxspan=30m`)
+	q, err := Parse(`from app | transaction session_id maxspan=30m startswith="login" endswith="logout"`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -917,6 +917,29 @@ func TestLynxFlow_Transaction(t *testing.T) {
 	}
 	if tx.MaxSpan != "30m" {
 		t.Errorf("MaxSpan: got %q", tx.MaxSpan)
+	}
+	if tx.StartsWith != "login" {
+		t.Errorf("StartsWith: got %q, want login", tx.StartsWith)
+	}
+	if tx.EndsWith != "logout" {
+		t.Errorf("EndsWith: got %q, want logout", tx.EndsWith)
+	}
+}
+
+func TestLynxFlow_StreamstatsModifierKeywords(t *testing.T) {
+	q, err := Parse(`from app | streamstats current=false window=5 count() as n`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	ss, ok := q.Commands[0].(*StreamstatsCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected StreamstatsCommand, got %T", q.Commands[0])
+	}
+	if ss.Current {
+		t.Error("Current: got true, want false")
+	}
+	if ss.Window != 5 {
+		t.Errorf("Window: got %d, want 5", ss.Window)
 	}
 }
 
