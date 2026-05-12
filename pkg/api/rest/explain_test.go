@@ -42,6 +42,39 @@ func TestQueryExplain_Valid(t *testing.T) {
 	}
 }
 
+func TestQueryExplain_Rewrites(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	query := "stats count"
+	u := fmt.Sprintf("http://%s/api/v1/query/explain?q=%s", srv.Addr(), url.QueryEscape(query))
+	resp, err := http.Get(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, body)
+	}
+
+	var envelope map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&envelope)
+	data := envelope["data"].(map[string]interface{})
+	rewrites, _ := data["rewrites"].([]interface{})
+	if len(rewrites) != 1 {
+		t.Fatalf("rewrites: got %#v, want one rewrite", data["rewrites"])
+	}
+	first := rewrites[0].(map[string]interface{})
+	if first["after"] != "FROM main | stats count" {
+		t.Fatalf("after: got %v, want FROM main | stats count", first["after"])
+	}
+	if first["reason"] != "default-source" {
+		t.Fatalf("reason: got %v, want default-source", first["reason"])
+	}
+}
+
 func TestQueryExplain_InvalidQuery(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

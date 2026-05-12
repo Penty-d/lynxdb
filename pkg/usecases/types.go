@@ -79,6 +79,7 @@ type ExplainResult struct {
 	Errors     []ExplainError
 	Parsed     *ExplainParsed
 	HasMVAccel bool
+	Rewrites   []spl2.QueryRewrite
 }
 
 // ExplainError represents a parse/validation error in an explain response.

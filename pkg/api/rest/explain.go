@@ -63,12 +63,14 @@ func (s *Server) handleExplainAnalyze(w http.ResponseWriter, r *http.Request, q 
 	}
 
 	// Execute with full profiling.
+	normalizedQuery, rewrites := spl2.NormalizeQueryWithRewrites(q)
 	submitResult, err := s.queryService.Submit(r.Context(), usecases.SubmitRequest{
-		Query:   q,
-		From:    from,
-		To:      to,
-		Mode:    usecases.QueryModeSync,
-		Profile: "full",
+		Query:    normalizedQuery,
+		From:     from,
+		To:       to,
+		Mode:     usecases.QueryModeSync,
+		Profile:  "full",
+		Rewrites: rewrites,
 	})
 	if err != nil {
 		handlePlanError(w, err)
@@ -123,10 +125,14 @@ func respondExplainResult(w http.ResponseWriter, result *usecases.ExplainResult)
 				"suggestion": e.Suggestion,
 			}
 		}
-		respondData(w, http.StatusOK, map[string]interface{}{
+		body := map[string]interface{}{
 			"is_valid": false,
 			"errors":   errs,
-		})
+		}
+		if len(result.Rewrites) > 0 {
+			body["rewrites"] = result.Rewrites
+		}
+		respondData(w, http.StatusOK, body)
 
 		return
 	}
@@ -241,7 +247,7 @@ func buildExplainResponse(result *usecases.ExplainResult) map[string]interface{}
 		parsed["optimizer_warnings"] = result.Parsed.OptimizerWarnings
 	}
 
-	return map[string]interface{}{
+	resp := map[string]interface{}{
 		"is_valid": true,
 		"parsed":   parsed,
 		"errors":   []interface{}{},
@@ -249,4 +255,9 @@ func buildExplainResponse(result *usecases.ExplainResult) map[string]interface{}
 			"available": result.HasMVAccel,
 		},
 	}
+	if len(result.Rewrites) > 0 {
+		resp["rewrites"] = result.Rewrites
+	}
+
+	return resp
 }

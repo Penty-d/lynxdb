@@ -50,8 +50,9 @@ func (s *QueryService) currentQueryConfig() config.QueryConfig {
 
 // Explain parses and analyses a query without executing it.
 func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainResult, error) {
+	query, rewrites := spl2.NormalizeQueryWithRewrites(req.Query)
 	plan, err := s.planner.Plan(planner.PlanRequest{
-		Query: req.Query,
+		Query: query,
 		From:  req.From,
 		To:    req.To,
 	})
@@ -59,7 +60,8 @@ func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainR
 		var pe *planner.ParseError
 		if errors.As(err, &pe) {
 			return &ExplainResult{
-				IsValid: false,
+				IsValid:  false,
+				Rewrites: rewrites,
 				Errors: []ExplainError{{
 					Message:    pe.Message,
 					Suggestion: pe.Suggestion,
@@ -130,8 +132,9 @@ func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainR
 	}
 
 	return &ExplainResult{
-		IsValid: true,
-		Errors:  nil,
+		IsValid:  true,
+		Errors:   nil,
+		Rewrites: rewrites,
 		Parsed: &ExplainParsed{
 			Pipeline:          stages,
 			ResultType:        string(plan.ResultType),
