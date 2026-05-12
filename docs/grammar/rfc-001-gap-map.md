@@ -42,7 +42,7 @@ Official Splunk compatibility checked:
 | RFC requirement | Status | Reason |
 |---|---|---|
 | Full glob syntax including `**`, character classes, alternatives, and quoted glob escapes | Deferred | Requires selector AST and matcher updates beyond the current token-level glob detection. |
-| SEARCH `L030` mixed `AND`/`OR` lint with parsed shape | Partial | The lint is implemented for explicit SEARCH commands; REST/CLI/TUI metadata surfacing remains incomplete. |
+| SEARCH `L030` mixed `AND`/`OR` lint with parsed shape | Partial | The lint is implemented for explicit SEARCH commands and surfaces through REST metadata plus CLI/TUI stderr; bare-search normalization paths still need coverage. |
 | Broad-search lints and explain blocks `L032`, `L037`, source counts, skipped segments | Deferred | Requires planner and API metadata integration. |
 | Regex engine selection, PCRE2 diagnostics, and `L038`/`L039` | Deferred | Requires runtime regex engine configuration and planner literal-extraction diagnostics. |
 | `facets` fan-out normalization | Deferred | Requires prefix-aware normalizer support for command suffixes that expand the prior pipeline into `multisearch`. |
