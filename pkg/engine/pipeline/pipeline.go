@@ -632,6 +632,8 @@ func commandStageName(cmd spl2.Command) string {
 		return "Rex"
 	case *spl2.RegexCommand:
 		return "Regex"
+	case *spl2.ReplaceCommand:
+		return "Replace"
 	case *spl2.BinCommand:
 		return "Bin"
 	case *spl2.StreamstatsCommand:
@@ -1011,6 +1013,14 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		}
 
 		return NewFilterIterator(child, prog), nil
+
+	case *spl2.ReplaceCommand:
+		iter, err := NewReplaceIterator(child, c.Pairs, c.Fields)
+		if err != nil {
+			return nil, fmt.Errorf("build replace: %w", err)
+		}
+
+		return iter, nil
 
 	case *spl2.BinCommand:
 		dur := parseDuration(c.Span)

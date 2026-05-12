@@ -46,6 +46,7 @@ const (
 	TokenTimechart
 	TokenRex
 	TokenRegex
+	TokenReplace
 	TokenFields
 	TokenTable
 	TokenDedup
@@ -244,6 +245,7 @@ var tokenNames = map[TokenType]string{
 	TokenTimechart:         "TIMECHART",
 	TokenRex:               "REX",
 	TokenRegex:             "REGEX",
+	TokenReplace:           "REPLACE",
 	TokenFields:            "FIELDS",
 	TokenTable:             "TABLE",
 	TokenDedup:             "DEDUP",
@@ -402,6 +404,7 @@ var keywords = map[string]TokenType{
 	"timechart":           TokenTimechart,
 	"rex":                 TokenRex,
 	"regex":               TokenRegex,
+	"replace":             TokenReplace,
 	"fields":              TokenFields,
 	"table":               TokenTable,
 	"dedup":               TokenDedup,

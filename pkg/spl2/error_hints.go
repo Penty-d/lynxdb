@@ -7,8 +7,8 @@ import (
 
 // knownCommands is the list of all supported SPL2 command names.
 var knownCommands = []string{
-	"search", "where", "stats", "eval", "sort", "head", "tail", "reverse", "regex",
-	"timechart", "rex", "fields", "table", "dedup", "rename",
+	"search", "where", "stats", "eval", "sort", "head", "tail", "reverse",
+	"timechart", "rex", "regex", "replace", "fields", "table", "dedup", "rename",
 	"bin", "streamstats", "eventstats", "join", "append",
 	"multisearch", "transaction", "xyseries", "untable", "top", "rare", "fillnull",
 	"limit", "from", "index", "materialize",

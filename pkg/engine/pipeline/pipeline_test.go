@@ -485,6 +485,71 @@ func TestBuildFromSourceMvcombineCommand(t *testing.T) {
 	}
 }
 
+func TestBuildFromSourceReplaceCommand(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | replace 0 WITH Critical, "* localhost" WITH "localhost *" IN msg_level host`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rows := []map[string]event.Value{
+		{"msg_level": event.IntValue(0), "host": event.StringValue("web localhost"), "_raw": event.StringValue("0")},
+	}
+	iter, err := BuildFromSource(context.Background(), NewRowScanIterator(rows, 2), query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	results, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := results[0]["msg_level"].AsString(); got != "Critical" {
+		t.Errorf("msg_level: got %q, want Critical", got)
+	}
+	if got := results[0]["host"].AsString(); got != "localhost web" {
+		t.Errorf("host: got %q, want %q", got, "localhost web")
+	}
+	if got := results[0]["_raw"].AsString(); got != "0" {
+		t.Errorf("_raw: got %q, want 0", got)
+	}
+}
+
+func TestBuildFromSourceReplaceSkipsInternalWithoutIn(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | replace 0 WITH zero`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rows := []map[string]event.Value{
+		{"level": event.StringValue("0"), "_raw": event.StringValue("0")},
+	}
+	iter, err := BuildFromSource(context.Background(), NewRowScanIterator(rows, 2), query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	results, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := results[0]["level"].AsString(); got != "zero" {
+		t.Errorf("level: got %q, want zero", got)
+	}
+	if got := results[0]["_raw"].AsString(); got != "0" {
+		t.Errorf("_raw: got %q, want 0", got)
+	}
+}
+
 func TestPipelineEndToEnd(t *testing.T) {
 	// FROM idx | WHERE status >= 500 | stats count
 	events := makeEvents(100)

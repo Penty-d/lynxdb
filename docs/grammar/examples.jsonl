@@ -138,6 +138,7 @@
 {"nl": "Unpack JSON field", "query": "| unpack_json field=data", "category": "structured"}
 {"nl": "Unpack logfmt", "query": "| unpack_logfmt field=_raw", "category": "structured"}
 {"nl": "Unroll array field", "query": "| unroll tags", "category": "structured"}
+{"nl": "Replace numeric severity values with names", "query": "| replace 0 WITH Critical, 1 WITH Error IN msg_level", "category": "transform"}
 {"nl": "Expand multivalue field", "query": "| mvexpand tags", "category": "structured"}
 {"nl": "Expand first two multivalue values", "query": "| mvexpand limit=2 tags", "category": "structured"}
 {"nl": "Pack fields into JSON", "query": "| pack_json _time, source, level as event", "category": "structured"}

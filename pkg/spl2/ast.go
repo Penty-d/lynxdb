@@ -237,6 +237,22 @@ func (c *RegexCommand) String() string {
 	return fmt.Sprintf("regex %s%s%q", field, op, c.Pattern)
 }
 
+// ReplaceCommand represents: | replace old WITH new [, ...] [IN field, ...].
+type ReplaceCommand struct {
+	Pairs  []ReplacePair
+	Fields []string
+}
+
+type ReplacePair struct {
+	Old string
+	New string
+}
+
+func (*ReplaceCommand) commandNode() {}
+func (c *ReplaceCommand) String() string {
+	return fmt.Sprintf("replace <%d pairs>", len(c.Pairs))
+}
+
 // FieldsCommand represents: fields <field1>, <field2>, ...
 type FieldsCommand struct {
 	Fields []string

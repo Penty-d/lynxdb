@@ -369,6 +369,8 @@ func (p *Parser) parseCommand() ([]Command, error) {
 			return singleCmd(p.parseLynxParseBody())
 		}
 		return singleCmd(p.parseRegex())
+	case TokenReplace:
+		return singleCmd(p.parseReplace())
 	case TokenFields:
 		return singleCmd(p.parseFields())
 	case TokenTable:
@@ -1318,6 +1320,81 @@ func (p *Parser) parseRegex() (*RegexCommand, error) {
 	return cmd, nil
 }
 
+func (p *Parser) parseReplace() (*ReplaceCommand, error) {
+	p.advance() // consume "replace"
+
+	cmd := &ReplaceCommand{}
+	for p.peek().Type != TokenPipe && p.peek().Type != TokenEOF && p.peek().Type != TokenRBracket {
+		if p.peek().Type == TokenComma {
+			p.advance()
+			continue
+		}
+		if p.peek().Type == TokenIn {
+			p.advance()
+			fields, err := p.parseReplaceFields()
+			if err != nil {
+				return nil, err
+			}
+			cmd.Fields = fields
+			break
+		}
+
+		oldValue, err := p.readReplaceValue("replace old value")
+		if err != nil {
+			return nil, err
+		}
+		if !isNamedOption(p.peek(), "with") {
+			tok := p.peek()
+			return nil, fmt.Errorf("spl2: replace expects WITH after %q, got %s %q at position %d", oldValue, tok.Type, tok.Literal, tok.Pos)
+		}
+		p.advance()
+		newValue, err := p.readReplaceValue("replace new value")
+		if err != nil {
+			return nil, err
+		}
+		cmd.Pairs = append(cmd.Pairs, ReplacePair{Old: oldValue, New: newValue})
+	}
+	if len(cmd.Pairs) == 0 {
+		return nil, fmt.Errorf("spl2: replace requires at least one old WITH new pair")
+	}
+
+	return cmd, nil
+}
+
+func (p *Parser) parseReplaceFields() ([]string, error) {
+	var fields []string
+	for p.peek().Type != TokenPipe && p.peek().Type != TokenEOF && p.peek().Type != TokenRBracket {
+		if p.peek().Type == TokenComma {
+			p.advance()
+			continue
+		}
+		field, err := p.expectIdent()
+		if err != nil {
+			return nil, fmt.Errorf("spl2: replace IN requires field names")
+		}
+		fields = append(fields, field.Literal)
+	}
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("spl2: replace IN requires at least one field")
+	}
+
+	return fields, nil
+}
+
+func (p *Parser) readReplaceValue(name string) (string, error) {
+	tok := p.peek()
+	switch tok.Type {
+	case TokenString, TokenIdent, TokenNumber, TokenGlob:
+		p.advance()
+		return tok.Literal, nil
+	case TokenStar:
+		p.advance()
+		return "*", nil
+	default:
+		return "", fmt.Errorf("spl2: %s requires a value", name)
+	}
+}
+
 func (p *Parser) parseFields() (*FieldsCommand, error) {
 	p.advance() // consume "fields"
 	cmd := &FieldsCommand{}
@@ -2050,7 +2127,7 @@ func (p *Parser) readSpanValue() string {
 		}
 
 		return span
-	case TokenIdent:
+	case TokenIdent, TokenReplace:
 		p.advance()
 
 		return tok.Literal

@@ -209,6 +209,8 @@ func commandName(cmd spl2.Command) string {
 		return "timechart"
 	case *spl2.RexCommand:
 		return "rex"
+	case *spl2.ReplaceCommand:
+		return "replace"
 	case *spl2.BinCommand:
 		return "bin"
 	case *spl2.StreamstatsCommand:
@@ -543,6 +545,9 @@ func annotatePipelineFields(query *spl2.Query, catalogFields []string) []Pipelin
 			stage.Description = fmt.Sprintf("tail %d", c.Count)
 
 		case *spl2.DedupCommand:
+			stage.Description = truncateDesc(c.String(), 80)
+
+		case *spl2.ReplaceCommand:
 			stage.Description = truncateDesc(c.String(), 80)
 
 		case *spl2.BinCommand:

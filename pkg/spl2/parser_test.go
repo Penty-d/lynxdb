@@ -1998,6 +1998,29 @@ func TestParse_MvcombineCommand(t *testing.T) {
 	}
 }
 
+func TestParse_ReplaceCommand(t *testing.T) {
+	q, err := Parse(`FROM main | replace 0 WITH Critical, "* localhost" WITH "localhost *" IN msg_level host`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd, ok := q.Commands[0].(*ReplaceCommand)
+	if !ok {
+		t.Fatalf("expected ReplaceCommand, got %T", q.Commands[0])
+	}
+	if len(cmd.Pairs) != 2 {
+		t.Fatalf("pairs: got %d, want 2", len(cmd.Pairs))
+	}
+	if cmd.Pairs[0] != (ReplacePair{Old: "0", New: "Critical"}) {
+		t.Errorf("pair[0]: got %+v", cmd.Pairs[0])
+	}
+	if cmd.Pairs[1] != (ReplacePair{Old: "* localhost", New: "localhost *"}) {
+		t.Errorf("pair[1]: got %+v", cmd.Pairs[1])
+	}
+	if len(cmd.Fields) != 2 || cmd.Fields[0] != "msg_level" || cmd.Fields[1] != "host" {
+		t.Errorf("fields: got %v, want [msg_level host]", cmd.Fields)
+	}
+}
+
 func TestParse_FieldsRemoveGlobPattern(t *testing.T) {
 	q, err := Parse(`FROM main | fields - pg.*`)
 	if err != nil {

@@ -431,6 +431,13 @@ func commandAccessedFields(cmd spl2.Command, cols map[string]bool) {
 		cols[c.SourceField] = true
 	case *spl2.JsonCommand:
 		cols[c.SourceField] = true
+	case *spl2.ReplaceCommand:
+		if len(c.Fields) == 0 {
+			cols["*"] = true
+		}
+		for _, f := range c.Fields {
+			cols[f] = true
+		}
 	case *spl2.UnrollCommand:
 		cols[c.Field] = true
 		for _, f := range c.ExtraFields {
