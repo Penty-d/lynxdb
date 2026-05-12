@@ -2987,7 +2987,7 @@ func normalizeAggFuncName(name string) string {
 		return "avg"
 	case "median", "p50":
 		return "perc50"
-	case "distinct_count":
+	case "distinct_count", "estdc":
 		return "dc"
 	case "p75":
 		return "perc75"

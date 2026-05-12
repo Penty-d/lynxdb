@@ -1608,6 +1608,7 @@ func TestParse_StatsAggregateAliases(t *testing.T) {
 		{`| stats mean(duration) as mean_duration`, "avg"},
 		{`| stats median(duration) as median_duration`, "perc50"},
 		{`| stats distinct_count(user) as users`, "dc"},
+		{`| stats estdc(user) as estimated_users`, "dc"},
 	}
 
 	for _, tt := range tests {

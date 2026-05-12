@@ -647,7 +647,7 @@ func TestServer_StatsAggregateAliases(t *testing.T) {
 	}
 
 	searchBody, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats mean(duration_ms) as avg_dur, median(duration_ms) as p50_dur, distinct_count(user) as users`,
+		"q": `FROM main | stats mean(duration_ms) as avg_dur, median(duration_ms) as p50_dur, distinct_count(user) as users, estdc(user) as estimated_users`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(searchBody))
 	if err != nil {
@@ -690,6 +690,9 @@ func TestServer_StatsAggregateAliases(t *testing.T) {
 	}
 	if got := row[colIndex("users")].(float64); got != 2 {
 		t.Errorf("users: got %v, want 2", got)
+	}
+	if got := row[colIndex("estimated_users")].(float64); got != 2 {
+		t.Errorf("estimated_users: got %v, want 2", got)
 	}
 }
 

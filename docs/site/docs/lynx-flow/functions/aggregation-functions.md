@@ -57,6 +57,7 @@ Count of unique values.
 ```spl
 | stats dc(user_id) AS unique_users by endpoint
 | stats dc(source) AS source_count
+| stats estdc(user_id) AS estimated_unique_users
 ```
 
 ## values
