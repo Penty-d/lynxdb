@@ -522,7 +522,9 @@ func resolveTimeRange(tr *spl2.SourceTimeRange, now time.Time) (earliest, latest
 
 	// End bound: either explicit range end or "now".
 	if tr.End != "" {
-		if strings.HasPrefix(tr.End, "@") {
+		if strings.EqualFold(tr.End, "now") {
+			latest = now
+		} else if strings.HasPrefix(tr.End, "@") {
 			latest = snapTime(now, tr.End[1:])
 		} else {
 			latest = resolveRelativeTime(tr.End, now)

@@ -2306,6 +2306,9 @@ func (p *Parser) parseSourceTimeRange() (*SourceTimeRange, error) {
 			if p.peek().Type == TokenDuration {
 				endTok := p.advance()
 				tr.End = endTok.Literal
+			} else if p.peek().Type == TokenIdent && strings.EqualFold(p.peek().Literal, "now") {
+				p.advance()
+				tr.End = "now"
 			} else if p.peek().Type == TokenAt {
 				// End is snap: -7d.@d
 				p.advance()

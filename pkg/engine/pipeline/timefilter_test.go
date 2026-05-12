@@ -34,6 +34,12 @@ func TestResolveTimeRangeSignedDurations(t *testing.T) {
 			wantEarliest: now.Add(-time.Hour),
 			wantLatest:   now.Add(30 * time.Minute),
 		},
+		{
+			name:         "explicit range ending now",
+			timeRange:    &spl2.SourceTimeRange{Relative: "-5m", End: "now"},
+			wantEarliest: now.Add(-5 * time.Minute),
+			wantLatest:   now,
+		},
 	}
 
 	for _, tt := range tests {

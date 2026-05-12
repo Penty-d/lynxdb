@@ -401,23 +401,66 @@ func extractValue(s string) (value, rest string) {
 // buildFromWithRest constructs a normalized query from an extracted index name
 // and the remaining query text.
 func buildFromWithRest(indexName, rest string) string {
+	earliest, latest, rest := extractTimeModifierPrefix(rest)
+	source := "FROM " + indexName
+	if earliest != "" {
+		source += "[" + earliest
+		if latest != "" {
+			source += ".." + latest
+		}
+		source += "]"
+	}
+
 	if rest == "" {
-		return "FROM " + indexName
+		return source
 	}
 
 	// Already a pipe — attach directly: FROM idx | stats ...
 	if strings.HasPrefix(rest, "|") {
-		return "FROM " + indexName + " " + rest
+		return source + " " + rest
 	}
 
 	// Remaining text starts with a known command — insert pipe.
 	word := firstToken(rest)
 	if isKnownCommand(strings.ToLower(word)) {
-		return "FROM " + indexName + " | " + rest
+		return source + " | " + rest
 	}
 
 	// Otherwise treat remainder as implicit search terms.
-	return "FROM " + indexName + " | search " + rest
+	return source + " | search " + rest
+}
+
+func extractTimeModifierPrefix(rest string) (earliest, latest, remaining string) {
+	remaining = strings.TrimSpace(rest)
+	for {
+		lower := strings.ToLower(remaining)
+		switch {
+		case strings.HasPrefix(lower, "earliest="):
+			value, next := extractValue(remaining[len("earliest="):])
+			if value == "" {
+				return earliest, latest, remaining
+			}
+			earliest = normalizeTimeModifierValue(value)
+			remaining = strings.TrimSpace(next)
+		case strings.HasPrefix(lower, "latest="):
+			value, next := extractValue(remaining[len("latest="):])
+			if value == "" {
+				return earliest, latest, remaining
+			}
+			latest = normalizeTimeModifierValue(value)
+			remaining = strings.TrimSpace(next)
+		default:
+			return earliest, latest, remaining
+		}
+	}
+}
+
+func normalizeTimeModifierValue(value string) string {
+	if strings.EqualFold(value, "now()") {
+		return "now"
+	}
+
+	return value
 }
 
 // isKnownCommand reports whether name (lowercase) is a recognized SPL2 command.

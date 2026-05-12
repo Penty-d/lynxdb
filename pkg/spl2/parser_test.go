@@ -534,6 +534,12 @@ func TestParse_SourceTimeRangeSignedDurations(t *testing.T) {
 			wantEnd:      "+30m",
 		},
 		{
+			name:         "range ending now",
+			input:        "FROM jobs[-5m..now] | head 1",
+			wantRelative: "-5m",
+			wantEnd:      "now",
+		},
+		{
 			name:         "duration snap suffix",
 			input:        "FROM jobs[-1d@d] | head 1",
 			wantRelative: "-1d@d",
