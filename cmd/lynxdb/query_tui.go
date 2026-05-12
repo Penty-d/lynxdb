@@ -47,6 +47,7 @@ type searchModel struct {
 	query     string
 	earliest  string
 	latest    string
+	noLint    bool
 	jobID     string
 	startTime time.Time
 	width     int
@@ -75,7 +76,7 @@ type searchModel struct {
 	err      error // original error for type-aware rendering in Execute()
 }
 
-func newSearchModel(c *client.Client, query, earliest, latest string) searchModel {
+func newSearchModel(c *client.Client, query, earliest, latest string, noLint bool) searchModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = ui.Stdout.Accent
@@ -86,27 +87,38 @@ func newSearchModel(c *client.Client, query, earliest, latest string) searchMode
 		query:     query,
 		earliest:  earliest,
 		latest:    latest,
+		noLint:    noLint,
 		startTime: time.Now(),
 		width:     120,
 	}
 }
 
 func (m searchModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, submitJobCmd(m.client, m.query, m.earliest, m.latest))
+	return tea.Batch(m.spinner.Tick, submitJobCmd(m.client, m.query, m.earliest, m.latest, m.noLint))
 }
 
-func submitJobCmd(c *client.Client, query, earliest, latest string) tea.Cmd {
+func submitJobCmd(c *client.Client, query, earliest, latest string, noLint bool) tea.Cmd {
 	return func() tea.Msg {
-		job, err := c.QueryAsync(context.Background(), query, earliest, latest)
+		wait := float64(0)
+		result, err := c.Query(context.Background(), client.QueryRequest{
+			Q:    query,
+			From: earliest,
+			To:   latest,
+			Wait: &wait,
+			Lint: lintRequestValue(noLint),
+		})
 		if err != nil {
 			return searchErrMsg{err}
 		}
+		if result.Job == nil {
+			return searchErrMsg{fmt.Errorf("lynxdb: expected async job response, got %s", result.Type)}
+		}
 
-		if job.JobID == "" {
+		if result.Job.JobID == "" {
 			return searchErrMsg{fmt.Errorf("missing job_id in response")}
 		}
 
-		return jobCreatedMsg(job.JobID)
+		return jobCreatedMsg(result.Job.JobID)
 	}
 }
 
@@ -366,9 +378,9 @@ func (m searchModel) renderProgress() string {
 // doQueryTUI runs a TUI-mode query with a progress spinner on stderr and
 // formatted results on stdout. This allows all --format values (json, csv,
 // table, etc.) to work correctly while still showing interactive progress.
-func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEmpty bool, analyze string) error {
+func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint bool) error {
 	c := apiClient()
-	m := newSearchModel(c, query, earliest, latest)
+	m := newSearchModel(c, query, earliest, latest, noLint)
 
 	p := tea.NewProgram(m, tea.WithOutput(os.Stderr))
 

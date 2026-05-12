@@ -34,8 +34,8 @@ Official Splunk compatibility checked:
 | Function catalog | Many eval and aggregate functions parse and execute | RFC aggregate/eval catalog needs a parser, VM, and editor cross-check for missing functions and aliases. |
 | Command catalog | Native SPL2/LynxFlow commands plus several helpers parse | SPL compatibility commands such as `chart`, `fieldformat`, `regex`, `replace`, `reverse`, `mvexpand`, `makeresults`, `union`, and optional capability commands remain incomplete. |
 | Editor assistance | Autocomplete covers commands, fields, values, regex snippets, time values, and templates | Ranking reasons and disable switches are not surfaced as RFC `meta.suggestions` behavior. |
-| REST lint metadata | Sync and completed hybrid query responses expose `meta.lints` for implemented lints; `lint: false` disables them | Async job completion, CLI, and TUI lint rendering are not wired yet. |
-| CLI/TUI assistance | Shell autocomplete exists | Query-context autocomplete and lint/rewrite preview are not aligned with the web catalog yet. |
+| REST lint metadata | Sync and completed hybrid query responses expose `meta.lints` for implemented lints; `lint: false` disables them | Async job completion and lint rendering are not wired yet. |
+| CLI/TUI assistance | Shell autocomplete exists, and `lynxdb query --no-lint` passes `lint:false` for server-backed query execution | Query-context autocomplete and lint/rewrite preview are not aligned with the web catalog yet. |
 
 ## Missing Or Deferred
 
@@ -49,5 +49,5 @@ Official Splunk compatibility checked:
 | `compare previous <dur>` previous-window replay | Partial | Command parses, but RFC replay semantics need verification and tests. |
 | `use <fragment>` expansion | Partial | Command parses, but fragment resolution and missing-fragment diagnostics need full RFC tests. |
 | REST `meta.rewrites`, `meta.suggestions`, `meta.explain` | Deferred | Requires API contract expansion without changing result row shape. |
-| CLI `--show-rewritten`, `--no-lint`, and TUI rewrite/lint blocks | Deferred | Requires CLI/TUI option and rendering changes after structured rewrite/lint data exists. |
+| CLI `--show-rewritten` and TUI rewrite/lint blocks | Deferred | `--no-lint` now disables server-side advisory lints; rewrite rendering still requires structured rewrite data. |
 | Grammar source sharing between Go parser and web/CLI catalogs | Partial | Web now shares an editor catalog, but Go parser catalogs are still manually mirrored. |

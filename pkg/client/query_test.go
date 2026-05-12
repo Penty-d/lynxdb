@@ -57,6 +57,46 @@ func TestQuery_SyncEvents(t *testing.T) {
 	}
 }
 
+func TestQuery_LintOptionAndMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req QueryRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Lint == nil || *req.Lint {
+			t.Fatalf("Lint = %v, want pointer to false", req.Lint)
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"type":     "events",
+				"events":   []map[string]interface{}{},
+				"total":    0,
+				"has_more": false,
+			},
+			"meta": map[string]interface{}{
+				"lints": []map[string]interface{}{
+					{"code": "L002", "message": "Default source", "position": 0},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	lint := false
+	c := NewClient(WithBaseURL(srv.URL))
+	result, err := c.Query(context.Background(), QueryRequest{Q: "error", Lint: &lint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Meta.Lints) != 1 {
+		t.Fatalf("len(Meta.Lints) = %d, want 1", len(result.Meta.Lints))
+	}
+	if result.Meta.Lints[0].Code != "L002" {
+		t.Errorf("lint code = %q, want L002", result.Meta.Lints[0].Code)
+	}
+}
+
 func TestQuery_SyncAggregate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

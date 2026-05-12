@@ -12,6 +12,14 @@ type Meta struct {
 	QueryID         string       `json:"query_id,omitempty"`
 	SegmentsErrored int          `json:"segments_errored,omitempty"`
 	Stats           *SearchStats `json:"stats,omitempty"`
+	Lints           []QueryLint  `json:"lints,omitempty"`
+}
+
+// QueryLint is an advisory query warning returned in response metadata.
+type QueryLint struct {
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Position int    `json:"position"`
 }
 
 // SearchStats holds detailed query execution statistics from the server.
@@ -145,6 +153,7 @@ type QueryRequest struct {
 	Format  string   `json:"format,omitempty"`
 	Wait    *float64 `json:"wait,omitempty"`
 	Profile string   `json:"profile,omitempty"` // "basic", "full", "trace"
+	Lint    *bool    `json:"lint,omitempty"`    // false disables advisory query lints
 }
 
 // QueryResult is the polymorphic response from Query().

@@ -139,6 +139,7 @@ lynxdb query [SPL2 query] [flags]
 | `--fail-on-empty` | | `false` | Exit with code 6 if no results |
 | `--copy` | | `false` | Copy results to clipboard as TSV |
 | `--explain` | | `false` | Show query plan without executing |
+| `--no-lint` | | `false` | Disable advisory query lints in server mode |
 
 The query argument is required unless `--queries-file` is set. `FROM main` is automatically prepended if the query starts with `|` or a command name.
 

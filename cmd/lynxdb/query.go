@@ -52,6 +52,7 @@ func newQueryCmd() *cobra.Command {
 		copyFlag    bool
 		explain     bool
 		rawMode     bool
+		noLint      bool
 		queriesFile string
 		queryParams []string
 	)
@@ -92,7 +93,7 @@ func newQueryCmd() *cobra.Command {
 			stdinPiped := isStdinPiped()
 
 			if queriesFile != "" {
-				return runQueriesFile(queriesFile, stdinPiped, file, source, sourcetype, outputFile, since, from, to, timeout, failEmpty, analyze, maxMemory, rawMode)
+				return runQueriesFile(queriesFile, stdinPiped, file, source, sourcetype, outputFile, since, from, to, timeout, failEmpty, analyze, maxMemory, rawMode, noLint)
 			}
 
 			if explain {
@@ -114,7 +115,7 @@ func newQueryCmd() *cobra.Command {
 
 			SaveLastQuery(query, since, from, to)
 
-			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze)
+			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze, noLint)
 			if err != nil {
 				return err
 			}
@@ -143,6 +144,7 @@ func newQueryCmd() *cobra.Command {
 	f.BoolVar(&copyFlag, "copy", false, "Copy results to clipboard as TSV")
 	f.BoolVar(&explain, "explain", false, "Show query plan without executing")
 	f.BoolVar(&rawMode, "raw", false, "Disable auto-format detection (treat input as plain text)")
+	f.BoolVar(&noLint, "no-lint", false, "Disable advisory query lints in server mode")
 	f.StringArrayVarP(&queryParams, "param", "D", nil, "Set query parameter: --param name=value")
 
 	// Allow bare --analyze (no value) to default to "basic".
@@ -164,7 +166,7 @@ type queriesFileEnvelope struct {
 	Error      string                   `json:"error"`
 }
 
-func runQueriesFile(path string, stdinPiped bool, file, source, sourcetype, outputFile, since, from, to, timeout string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {
+func runQueriesFile(path string, stdinPiped bool, file, source, sourcetype, outputFile, since, from, to, timeout string, failEmpty bool, analyze, maxMemory string, rawMode, noLint bool) error {
 	queries, err := readQueriesFile(path)
 	if err != nil {
 		return err
@@ -197,7 +199,7 @@ func runQueriesFile(path string, stdinPiped bool, file, source, sourcetype, outp
 
 	enc := json.NewEncoder(w)
 	for _, q := range queries {
-		rows, runErr := runSingleQueryFromFileInput(q.Line, file, source, sourcetype, since, from, to, timeout, analyze, maxMemory, rawMode, stdinData)
+		rows, runErr := runSingleQueryFromFileInput(q.Line, file, source, sourcetype, since, from, to, timeout, analyze, maxMemory, rawMode, noLint, stdinData)
 		env := queriesFileEnvelope{
 			Query:      q.Line,
 			LineNumber: q.LineNumber,
@@ -225,14 +227,24 @@ func readQueriesFile(path string) ([]sigmaqueries.Query, error) {
 	return sigmaqueries.ReadFile(path)
 }
 
-func runSingleQueryFromFileInput(query, file, source, sourcetype, since, from, to, timeout, analyze, maxMemory string, rawMode bool, stdinData []byte) ([]map[string]interface{}, error) {
+func lintRequestValue(noLint bool) *bool {
+	if !noLint {
+		return nil
+	}
+
+	lint := false
+
+	return &lint
+}
+
+func runSingleQueryFromFileInput(query, file, source, sourcetype, since, from, to, timeout, analyze, maxMemory string, rawMode, noLint bool, stdinData []byte) ([]map[string]interface{}, error) {
 	switch {
 	case file != "":
 		return queryRowsFromFile(query, file, source, sourcetype, maxMemory, rawMode)
 	case stdinData != nil:
 		return queryRowsFromReader(query, bytes.NewReader(stdinData), "stdin", source, sourcetype, maxMemory, rawMode)
 	default:
-		return queryRowsFromServer(query, since, from, to, timeout, analyze)
+		return queryRowsFromServer(query, since, from, to, timeout, analyze, noLint)
 	}
 }
 
@@ -332,7 +344,7 @@ func queryRowsFromReader(query string, reader io.Reader, defaultSource, source, 
 	return result.Rows, nil
 }
 
-func queryRowsFromServer(query, since, from, to, timeout, analyze string) ([]map[string]interface{}, error) {
+func queryRowsFromServer(query, since, from, to, timeout, analyze string, noLint bool) ([]map[string]interface{}, error) {
 	var earliest, latest string
 	if since != "" {
 		tr, err := timerange.FromSince(since, time.Now())
@@ -368,6 +380,7 @@ func queryRowsFromServer(query, since, from, to, timeout, analyze string) ([]map
 		From:    earliest,
 		To:      latest,
 		Profile: analyze,
+		Lint:    lintRequestValue(noLint),
 	})
 	if err != nil {
 		return nil, &queryError{inner: err, query: query}
@@ -593,7 +606,7 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 	return nil
 }
 
-func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string) error {
+func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string, noLint bool) error {
 	var earliest, latest string
 	if since != "" {
 		tr, err := timerange.FromSince(since, time.Now())
@@ -625,13 +638,13 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 	}
 
 	if isTTY() {
-		return doQueryTUI(ctx, query, since, earliest, latest, failEmpty, analyze)
+		return doQueryTUI(ctx, query, since, earliest, latest, failEmpty, analyze, noLint)
 	}
 
-	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze)
+	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint)
 }
 
-func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string) error {
+func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint bool) error {
 	start := time.Now()
 
 	result, err := apiClient().Query(ctx, client.QueryRequest{
@@ -639,6 +652,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 		From:    earliest,
 		To:      latest,
 		Profile: analyze,
+		Lint:    lintRequestValue(noLint),
 	})
 	if err != nil {
 		return &queryError{inner: err, query: query}
