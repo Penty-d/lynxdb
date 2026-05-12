@@ -50,6 +50,9 @@ func TestNormalizeQuery(t *testing.T) {
 		{name: "index with earliest latest now", input: "index=nginx earliest=-5m latest=now", want: "FROM nginx[-5m..now]"},
 		{name: "index with earliest latest now function", input: "index=nginx earliest=-5m latest=now()", want: "FROM nginx[-5m..now]"},
 		{name: "index with time modifiers and search", input: "index=nginx earliest=-4h latest=-2h status=500", want: "FROM nginx[-4h..-2h] | search status=500"},
+		{name: "index with daysago", input: "index=nginx daysago=7", want: "FROM nginx[-7d]"},
+		{name: "index with hoursago and endhoursago", input: "index=nginx hoursago=4 endhoursago=2 status=500", want: "FROM nginx[-4h..-2h] | search status=500"},
+		{name: "index with minutesago", input: "index=nginx minutesago=30 | stats count", want: "FROM nginx[-30m] | stats count"},
 
 		// index IN (...) rewriting
 		{name: "index IN quoted", input: `index IN ("nginx", "postgres")`, want: "FROM nginx, postgres"},

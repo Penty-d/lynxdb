@@ -488,6 +488,54 @@ func extractTimeModifierPrefix(rest string) (searchTimeModifiers, string) {
 			}
 			mods.indexLatest = normalizeTimeModifierValue(value)
 			remaining = strings.TrimSpace(next)
+		case strings.HasPrefix(lower, "daysago="):
+			value, next := extractValue(remaining[len("daysago="):])
+			if dur := deprecatedAgoDuration(value, "d"); dur != "" {
+				mods.earliest = dur
+				remaining = strings.TrimSpace(next)
+				continue
+			}
+			return mods, remaining
+		case strings.HasPrefix(lower, "hoursago="):
+			value, next := extractValue(remaining[len("hoursago="):])
+			if dur := deprecatedAgoDuration(value, "h"); dur != "" {
+				mods.earliest = dur
+				remaining = strings.TrimSpace(next)
+				continue
+			}
+			return mods, remaining
+		case strings.HasPrefix(lower, "minutesago="):
+			value, next := extractValue(remaining[len("minutesago="):])
+			if dur := deprecatedAgoDuration(value, "m"); dur != "" {
+				mods.earliest = dur
+				remaining = strings.TrimSpace(next)
+				continue
+			}
+			return mods, remaining
+		case strings.HasPrefix(lower, "enddaysago="):
+			value, next := extractValue(remaining[len("enddaysago="):])
+			if dur := deprecatedAgoDuration(value, "d"); dur != "" {
+				mods.latest = dur
+				remaining = strings.TrimSpace(next)
+				continue
+			}
+			return mods, remaining
+		case strings.HasPrefix(lower, "endhoursago="):
+			value, next := extractValue(remaining[len("endhoursago="):])
+			if dur := deprecatedAgoDuration(value, "h"); dur != "" {
+				mods.latest = dur
+				remaining = strings.TrimSpace(next)
+				continue
+			}
+			return mods, remaining
+		case strings.HasPrefix(lower, "endminutesago="):
+			value, next := extractValue(remaining[len("endminutesago="):])
+			if dur := deprecatedAgoDuration(value, "m"); dur != "" {
+				mods.latest = dur
+				remaining = strings.TrimSpace(next)
+				continue
+			}
+			return mods, remaining
 		default:
 			return mods, remaining
 		}
@@ -500,6 +548,19 @@ func normalizeTimeModifierValue(value string) string {
 	}
 
 	return value
+}
+
+func deprecatedAgoDuration(value, unit string) string {
+	if value == "" {
+		return ""
+	}
+	for _, ch := range value {
+		if ch < '0' || ch > '9' {
+			return ""
+		}
+	}
+
+	return "-" + value + unit
 }
 
 func buildIndexTimeWhere(mods searchTimeModifiers, now time.Time) string {
