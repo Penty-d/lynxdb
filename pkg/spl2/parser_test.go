@@ -1887,6 +1887,26 @@ func TestParse_MakeresultsCommand(t *testing.T) {
 	}
 }
 
+func TestParse_UntableCommand(t *testing.T) {
+	q, err := Parse(`FROM main | untable host metric value`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd, ok := q.Commands[0].(*UntableCommand)
+	if !ok {
+		t.Fatalf("expected UntableCommand, got %T", q.Commands[0])
+	}
+	if cmd.XField != "host" {
+		t.Errorf("x field: got %q, want host", cmd.XField)
+	}
+	if cmd.YNameField != "metric" {
+		t.Errorf("y name field: got %q, want metric", cmd.YNameField)
+	}
+	if cmd.YDataField != "value" {
+		t.Errorf("y data field: got %q, want value", cmd.YDataField)
+	}
+}
+
 func TestParse_FieldsRemoveGlobPattern(t *testing.T) {
 	q, err := Parse(`FROM main | fields - pg.*`)
 	if err != nil {

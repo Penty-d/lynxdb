@@ -1281,6 +1281,7 @@ Every SPL2 command has a Lynx Flow counterpart. Both syntaxes are first-class.
 | `APPEND` | `append` | Identical |
 | `MULTISEARCH` | `multisearch` | Identical |
 | `TRANSACTION` | `transaction` | Identical |
+| `UNTABLE` | `untable` | Identical |
 | `XYSERIES` | `xyseries` | Identical |
 | `FILLNULL` | `fillnull` | Lynx Flow adds `??` operator |
 | `MATERIALIZE` | `materialize` | Identical |

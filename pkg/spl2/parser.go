@@ -393,6 +393,8 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return singleCmd(p.parseTransaction())
 	case TokenXyseries:
 		return singleCmd(p.parseXYSeries())
+	case TokenUntable:
+		return singleCmd(p.parseUntable())
 	case TokenTop:
 		return p.parseTopOrTopby()
 	case TokenRare:
@@ -1623,6 +1625,25 @@ func (p *Parser) parseXYSeries() (*XYSeriesCommand, error) {
 	}
 
 	return &XYSeriesCommand{XField: x.Literal, YField: y.Literal, ValueField: v.Literal}, nil
+}
+
+func (p *Parser) parseUntable() (*UntableCommand, error) {
+	p.advance() // consume "untable"
+
+	x, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	yName, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	yData, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+
+	return &UntableCommand{XField: x.Literal, YNameField: yName.Literal, YDataField: yData.Literal}, nil
 }
 
 // parseTop parses: top [N] <field> [by <field>].

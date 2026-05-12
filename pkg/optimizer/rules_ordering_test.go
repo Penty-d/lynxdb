@@ -727,6 +727,7 @@ func TestOrderingBehavior(t *testing.T) {
 		{"MultisearchCommand", &spl2.MultisearchCommand{}, OrderDestroying},
 		{"TransactionCommand", &spl2.TransactionCommand{}, OrderDestroying},
 		{"XYSeriesCommand", &spl2.XYSeriesCommand{}, OrderDestroying},
+		{"UntableCommand", &spl2.UntableCommand{}, OrderDestroying},
 	}
 
 	for _, tt := range tests {

@@ -377,6 +377,18 @@ func (c *XYSeriesCommand) String() string {
 	return fmt.Sprintf("xyseries %s %s %s", c.XField, c.YField, c.ValueField)
 }
 
+// UntableCommand represents: UNTABLE <x_field> <y_name_field> <y_data_field>.
+type UntableCommand struct {
+	XField     string
+	YNameField string
+	YDataField string
+}
+
+func (*UntableCommand) commandNode() {}
+func (c *UntableCommand) String() string {
+	return fmt.Sprintf("untable %s %s %s", c.XField, c.YNameField, c.YDataField)
+}
+
 // TopCommand represents: top [N] <field> [by <field>].
 type TopCommand struct {
 	N       int

@@ -508,6 +508,22 @@ func TestCountStarOptimization_NotWithUnroll(t *testing.T) {
 	}
 }
 
+func TestCountStarOptimization_NotWithUntable(t *testing.T) {
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.UntableCommand{XField: "host", YNameField: "metric", YDataField: "value"},
+			&spl2.StatsCommand{
+				Aggregations: []spl2.AggExpr{{Func: "count", Alias: "count"}},
+			},
+		},
+	}
+	rule := &countStarOptimizationRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("countStarOnly should NOT fire when UntableCommand precedes STATS count")
+	}
+}
+
 func TestCountStarOptimization_NotWithGroupBy(t *testing.T) {
 	q := &spl2.Query{
 		Commands: []spl2.Command{

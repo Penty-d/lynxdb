@@ -58,6 +58,7 @@ const (
 	TokenMultisearch
 	TokenTransaction
 	TokenXyseries
+	TokenUntable
 	TokenTop
 	TokenRare
 	TokenFillnull
@@ -252,6 +253,7 @@ var tokenNames = map[TokenType]string{
 	TokenMultisearch:       "MULTISEARCH",
 	TokenTransaction:       "TRANSACTION",
 	TokenXyseries:          "XYSERIES",
+	TokenUntable:           "UNTABLE",
 	TokenTop:               "TOP",
 	TokenRare:              "RARE",
 	TokenFillnull:          "FILLNULL",
@@ -406,6 +408,7 @@ var keywords = map[string]TokenType{
 	"multisearch":         TokenMultisearch,
 	"transaction":         TokenTransaction,
 	"xyseries":            TokenXyseries,
+	"untable":             TokenUntable,
 	"top":                 TokenTop,
 	"rare":                TokenRare,
 	"fillnull":            TokenFillnull,

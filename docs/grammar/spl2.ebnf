@@ -17,7 +17,7 @@ command          = search_cmd | where_cmd | stats_cmd | eval_cmd | sort_cmd
                  | dedup_cmd | rex_cmd | regex_cmd | bin_cmd | timechart_cmd
                  | top_cmd | rare_cmd | fillnull_cmd | streamstats_cmd
                  | eventstats_cmd | join_cmd | append_cmd | transaction_cmd
-                 | xyseries_cmd | materialize_cmd | from_cmd | views_cmd
+                 | xyseries_cmd | untable_cmd | materialize_cmd | from_cmd | views_cmd
                  | dropview_cmd | glimpse_cmd | describe_cmd | tee_cmd
                  | rollup_cmd | sessionize_cmd | correlate_cmd | topology_cmd
                  | unpack_json_cmd | unpack_logfmt_cmd | json_cmd | unroll_cmd
@@ -161,6 +161,7 @@ transaction_cmd  = "transaction" field
 (* ─── XYSERIES command ─── *)
 
 xyseries_cmd     = "xyseries" field field field ;
+untable_cmd      = "untable" field field field ;
 
 (* ─── Materialized views ─── *)
 

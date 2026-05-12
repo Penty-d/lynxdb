@@ -295,6 +295,50 @@ func TestBuildPipelineMakeresultsCommand(t *testing.T) {
 	}
 }
 
+func TestBuildFromSourceUntableCommand(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | untable host metric value`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rows := []map[string]event.Value{
+		{
+			"host":   event.StringValue("h1"),
+			"count":  event.IntValue(7),
+			"errors": event.IntValue(2),
+		},
+	}
+	iter, err := BuildFromSource(context.Background(), NewRowScanIterator(rows, 2), query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	results, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d rows, want 2", len(results))
+	}
+	if got := results[0]["host"].AsString(); got != "h1" {
+		t.Errorf("first host: got %q, want h1", got)
+	}
+	if got := results[0]["metric"].AsString(); got != "count" {
+		t.Errorf("first metric: got %q, want count", got)
+	}
+	if got := results[0]["value"].AsInt(); got != 7 {
+		t.Errorf("first value: got %d, want 7", got)
+	}
+	if got := results[1]["metric"].AsString(); got != "errors" {
+		t.Errorf("second metric: got %q, want errors", got)
+	}
+}
+
 func TestPipelineEndToEnd(t *testing.T) {
 	// FROM idx | WHERE status >= 500 | stats count
 	events := makeEvents(100)

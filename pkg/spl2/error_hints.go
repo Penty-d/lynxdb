@@ -10,7 +10,7 @@ var knownCommands = []string{
 	"search", "where", "stats", "eval", "sort", "head", "tail", "reverse", "regex",
 	"timechart", "rex", "fields", "table", "dedup", "rename",
 	"bin", "streamstats", "eventstats", "join", "append",
-	"multisearch", "transaction", "xyseries", "top", "rare", "fillnull",
+	"multisearch", "transaction", "xyseries", "untable", "top", "rare", "fillnull",
 	"limit", "from", "index", "materialize",
 	"unpack_json", "unpack_logfmt", "unpack_syslog", "unpack_combined",
 	"unpack_clf", "unpack_nginx_error", "unpack_cef", "unpack_kv",

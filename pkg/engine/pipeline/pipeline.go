@@ -646,6 +646,8 @@ func commandStageName(cmd spl2.Command) string {
 		return "Multisearch"
 	case *spl2.XYSeriesCommand:
 		return "XYSeries"
+	case *spl2.UntableCommand:
+		return "Untable"
 	case *spl2.TransactionCommand:
 		return "Transaction"
 	case *spl2.TopCommand:
@@ -1101,6 +1103,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 
 	case *spl2.XYSeriesCommand:
 		return NewXYSeriesIteratorWithSpill(child, c.XField, c.YField, c.ValueField, qc.batchSize, qc.newCoordinatedAccount("xyseries", reservationAggregate), qc.spillMgr), nil
+
+	case *spl2.UntableCommand:
+		return NewUntableIterator(child, c.XField, c.YNameField, c.YDataField, qc.batchSize), nil
 
 	case *spl2.TransactionCommand:
 		dur := parseDuration(c.MaxSpan)

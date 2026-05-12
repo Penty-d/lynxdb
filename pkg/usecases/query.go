@@ -225,6 +225,8 @@ func commandName(cmd spl2.Command) string {
 		return "transaction"
 	case *spl2.XYSeriesCommand:
 		return "xyseries"
+	case *spl2.UntableCommand:
+		return "untable"
 	case *spl2.TopCommand:
 		return "top"
 	case *spl2.RareCommand:
@@ -622,6 +624,15 @@ func annotatePipelineFields(query *spl2.Query, catalogFields []string) []Pipelin
 		case *spl2.XYSeriesCommand:
 			// XYSeries pivots data — output fields are unknowable at parse time.
 			fieldsUnknown = true
+			stage.Description = truncateDesc(c.String(), 80)
+
+		case *spl2.UntableCommand:
+			// Untable changes row count and condenses dynamic input fields.
+			newFields := []string{c.XField, c.YNameField, c.YDataField}
+			removed = diffFields(fields.order, newFields)
+			added = newFields
+			setReplace(fields, newFields...)
+			fieldsUnknown = false
 			stage.Description = truncateDesc(c.String(), 80)
 
 		case *spl2.FillnullCommand:
