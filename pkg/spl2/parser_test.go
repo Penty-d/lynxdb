@@ -1597,6 +1597,67 @@ func TestParse_StatsAggregateAliases(t *testing.T) {
 	}
 }
 
+func TestParse_StatsPercentileSuffixAliases(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantFunc string
+	}{
+		{`| stats percentile95(duration) as p95`, "perc95"},
+		{`| stats exactperc95(duration) as p95`, "perc95"},
+		{`| stats upperperc95(duration) as p95`, "perc95"},
+		{`| stats percentile25(duration) as p25`, "perc25"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.input, err)
+			}
+			stats, ok := q.Commands[0].(*StatsCommand)
+			if !ok {
+				t.Fatalf("cmd[0]: expected StatsCommand, got %T", q.Commands[0])
+			}
+			if got := stats.Aggregations[0].Func; got != tt.wantFunc {
+				t.Errorf("Func: got %q, want %q", got, tt.wantFunc)
+			}
+		})
+	}
+}
+
+func TestParse_StatsGenericPercentileAliases(t *testing.T) {
+	tests := []struct {
+		input    string
+		wantFunc string
+	}{
+		{`| stats perc(duration, 95) as p95`, "perc95"},
+		{`| stats percentile(duration, 95) as p95`, "perc95"},
+		{`| stats exactperc(duration, 95) as p95`, "perc95"},
+		{`| stats upperperc(duration, 95) as p95`, "perc95"},
+		{`| stats percentile(duration, 25) as p25`, "perc25"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.input, err)
+			}
+			stats, ok := q.Commands[0].(*StatsCommand)
+			if !ok {
+				t.Fatalf("cmd[0]: expected StatsCommand, got %T", q.Commands[0])
+			}
+			agg := stats.Aggregations[0]
+			if agg.Func != tt.wantFunc {
+				t.Errorf("Func: got %q, want %q", agg.Func, tt.wantFunc)
+			}
+			if len(agg.Args) != 1 {
+				t.Fatalf("Args: got %d, want 1", len(agg.Args))
+			}
+		})
+	}
+}
+
 func TestParse_StatsMultiplePercentileAliases(t *testing.T) {
 	// Verify multiple percentile aliases in a single stats command.
 	q, err := Parse(`| stats p50(dur), p99(dur), count by service`)

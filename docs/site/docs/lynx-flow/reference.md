@@ -1126,7 +1126,7 @@ Used in `group compute`, `every compute`, `running`, `enrich`, `stats`, `timecha
 | `earliest(<field>)` / `first(<field>)` | First value by time | `earliest(status) as first_status` |
 | `latest(<field>)` / `last(<field>)` | Last value by time | `latest(status) as last_status` |
 
-Only the fixed percentile aggregations above are supported. Variable-percentile syntax such as `percentile(field, 99.9)` is not currently implemented.
+Generic forms such as `perc(field, 95)` and `percentile(field, 95)` normalize to the fixed percentile aggregations above when the percentile is one of the supported values. Arbitrary variable-percentile syntax such as `percentile(field, 99.9)` is not currently implemented.
 
 All aggregation functions skip null values except `count()` (no argument).
 

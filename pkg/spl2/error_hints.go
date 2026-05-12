@@ -36,8 +36,9 @@ var knownFunctions = []string{
 	"isnotnull", "isnull", "null", "strftime", "max", "min",
 	// Aggregation functions
 	"count", "sum", "avg", "mean", "dc", "distinct_count", "values", "stdev",
-	"perc25", "perc50", "perc75", "perc90", "perc95", "perc99",
+	"perc", "perc25", "perc50", "perc75", "perc90", "perc95", "perc99",
 	"earliest", "latest", "first", "last", "median", "percentile",
+	"percentile95", "exactperc", "exactperc95", "upperperc", "upperperc95",
 	// JSON functions
 	"json_extract", "json_valid", "json_keys", "json_array_length",
 	"json_object", "json_array", "json_type", "json_set", "json_remove",

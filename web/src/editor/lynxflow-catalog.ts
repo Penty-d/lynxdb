@@ -122,9 +122,10 @@ export const OPERATORS: readonly string[] = [
 export const AGG_FUNCTIONS: readonly string[] = [
   "count()", "sum()", "avg()", "mean()", "min()", "max()", "dc()", "distinct_count()",
   "values()", "list()", "first()", "last()", "earliest()", "latest()", "stdev()",
-  "stdevp()", "var()", "varp()", "range()", "median()", "mode()", "perc50()",
-  "perc75()", "perc90()", "perc95()", "perc99()", "percentile()", "exactperc95()",
-  "upperperc95()", "per_second()", "per_minute()", "per_hour()", "rate()",
+  "stdevp()", "var()", "varp()", "range()", "median()", "mode()", "perc25()",
+  "perc()", "perc50()", "perc75()", "perc90()", "perc95()", "perc99()", "percentile()",
+  "percentile95()", "exactperc()", "exactperc95()", "upperperc()", "upperperc95()",
+  "per_second()", "per_minute()", "per_hour()", "rate()",
 ];
 
 export const LATENCY_AGG_SHORTHANDS: readonly string[] = [

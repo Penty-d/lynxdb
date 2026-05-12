@@ -142,7 +142,7 @@ The previous query had an error:
   Hint: did you mean "percentile"?
 
 Available aggregation functions: count, sum, avg, min, max, dc, values, stdev,
-percentile, perc50, perc75, perc90, perc95, perc99, earliest, latest
+perc, percentile, perc25, perc50, perc75, perc90, perc95, perc99, earliest, latest
 
 Please correct the query.
 ```

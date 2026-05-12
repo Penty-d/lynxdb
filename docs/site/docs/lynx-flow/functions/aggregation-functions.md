@@ -79,7 +79,7 @@ Compute percentile values with the fixed percentile aggregations: `perc25`, `per
   by endpoint
 ```
 
-`perc50` is the median. Percentiles use the t-digest algorithm for memory-efficient approximate computation. Variable-percentile syntax such as `percentile(duration_ms, 99.9)` is not currently supported.
+`perc50` is the median. Generic forms such as `perc(duration_ms, 95)` and `percentile(duration_ms, 95)` normalize to the fixed percentile aggregations when the percentile is one of the supported values. Arbitrary variable-percentile syntax such as `percentile(duration_ms, 99.9)` is not currently supported.
 
 ## earliest / latest
 

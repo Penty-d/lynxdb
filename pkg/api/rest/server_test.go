@@ -693,6 +693,66 @@ func TestServer_StatsAggregateAliases(t *testing.T) {
 	}
 }
 
+func TestServer_StatsPercentileSuffixAliases(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	now := time.Now()
+	events := make([]*event.Event, 0, 3)
+	for i := 0; i < 3; i++ {
+		ev := event.NewEvent(now.Add(time.Duration(i)*time.Second), "duration_ms=20")
+		ev.Index = "main"
+		ev.Host = "web-00"
+		ev.Source = "/var/log/app.log"
+		ev.SourceType = "json"
+		ev.SetField("duration_ms", event.FloatValue(20))
+		events = append(events, ev)
+	}
+	if err := srv.engine.Ingest(events); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": `FROM main | stats percentile95(duration_ms) as p95, exactperc95(duration_ms) as exact_p95, upperperc95(duration_ms) as upper_p95, percentile(duration_ms, 95) as generic_p95`,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST query: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := result["data"].(map[string]interface{})
+	cols := data["columns"].([]interface{})
+	rows := data["rows"].([]interface{})
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(rows))
+	}
+	row := rows[0].([]interface{})
+	for _, name := range []string{"p95", "exact_p95", "upper_p95", "generic_p95"} {
+		found := false
+		for i, col := range cols {
+			if fmt.Sprint(col) == name {
+				found = true
+				if got := row[i].(float64); got != 20 {
+					t.Errorf("%s: got %v, want 20", name, got)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("missing column %q in %v", name, cols)
+		}
+	}
+}
+
 // New Three-Mode Query Tests
 
 func TestQuery_SyncMode(t *testing.T) {

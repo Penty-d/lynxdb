@@ -2946,7 +2946,8 @@ func (p *Parser) parseAggList() ([]AggExpr, error) {
 		}
 		p.advance() // consume )
 
-		agg := AggExpr{Func: normalizeAggFuncName(funcName), Args: args}
+		normalizedFunc, normalizedArgs := normalizeAggFuncAndArgs(funcName, args)
+		agg := AggExpr{Func: normalizedFunc, Args: normalizedArgs}
 
 		// Optional "as alias".
 		if p.peek().Type == TokenAs {
@@ -2969,7 +2970,8 @@ func (p *Parser) parseAggList() ([]AggExpr, error) {
 }
 
 func normalizeAggFuncName(name string) string {
-	switch strings.ToLower(name) {
+	lower := strings.ToLower(name)
+	switch lower {
 	case "mean":
 		return "avg"
 	case "median", "p50":
@@ -2985,8 +2987,52 @@ func normalizeAggFuncName(name string) string {
 	case "p99":
 		return "perc99"
 	default:
+		if suffix := supportedPercentileSuffix(lower); suffix != "" {
+			return "perc" + suffix
+		}
 		return name
 	}
+}
+
+func normalizeAggFuncAndArgs(name string, args []Expr) (string, []Expr) {
+	switch strings.ToLower(name) {
+	case "perc", "percentile", "exactperc", "upperperc":
+		if len(args) == 2 {
+			if suffix := supportedPercentileArg(args[1]); suffix != "" {
+				return "perc" + suffix, args[:1]
+			}
+		}
+	}
+
+	return normalizeAggFuncName(name), args
+}
+
+func supportedPercentileArg(expr Expr) string {
+	lit, ok := expr.(*LiteralExpr)
+	if !ok {
+		return ""
+	}
+
+	switch lit.Value {
+	case "25", "50", "75", "90", "95", "99":
+		return lit.Value
+	}
+
+	return ""
+}
+
+func supportedPercentileSuffix(name string) string {
+	for _, prefix := range []string{"percentile", "exactperc", "upperperc"} {
+		if strings.HasPrefix(name, prefix) {
+			suffix := strings.TrimPrefix(name, prefix)
+			switch suffix {
+			case "25", "50", "75", "90", "95", "99":
+				return suffix
+			}
+		}
+	}
+
+	return ""
 }
 
 func (p *Parser) parseIdentList() ([]string, error) {
@@ -3602,7 +3648,8 @@ func (p *Parser) parseSingleAgg() (AggExpr, error) {
 	}
 	p.advance() // consume )
 
-	agg := AggExpr{Func: normalizeAggFuncName(funcTok.Literal), Args: args}
+	normalizedFunc, normalizedArgs := normalizeAggFuncAndArgs(funcTok.Literal, args)
+	agg := AggExpr{Func: normalizedFunc, Args: normalizedArgs}
 	if p.peek().Type == TokenAs {
 		p.advance()
 		alias, err := p.expectIdent()
