@@ -11,7 +11,7 @@ var knownCommands = []string{
 	"timechart", "rex", "regex", "replace", "fieldformat", "fields", "table", "dedup", "rename",
 	"bin", "streamstats", "eventstats", "join", "append", "appendcols", "appendpipe",
 	"multisearch", "union", "transaction", "xyseries", "untable", "top", "rare", "fillnull",
-	"limit", "from", "index", "materialize",
+	"from", "index", "materialize",
 	"unpack_json", "unpack_logfmt", "unpack_syslog", "unpack_combined",
 	"unpack_clf", "unpack_nginx_error", "unpack_cef", "unpack_kv",
 	"unpack_docker", "unpack_redis", "unpack_apache_error",
