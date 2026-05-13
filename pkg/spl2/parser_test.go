@@ -432,6 +432,16 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "transaction field",
+			input: `FROM main | transaction maxspan=30m "session id"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*TransactionCommand)
+				if cmd.Field != "session id" {
+					t.Fatalf("transaction field: got %q, want session id", cmd.Field)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
