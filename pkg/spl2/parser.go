@@ -1251,8 +1251,11 @@ func (p *Parser) parseSessionize() (*SessionizeCommand, error) {
 		if _, err := p.expect(TokenEq); err != nil {
 			return nil, err
 		}
-		dur := p.advance()
-		cmd.MaxPause = dur.Literal
+		span := p.readSpanValue()
+		if span == "" {
+			return nil, fmt.Errorf("spl2: sessionize: expected duration after maxpause=")
+		}
+		cmd.MaxPause = span
 	}
 
 	if p.peek().Type == TokenBy {

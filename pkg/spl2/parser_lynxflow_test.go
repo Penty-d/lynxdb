@@ -957,6 +957,26 @@ func TestLynxFlow_TransactionCanonicalOptionOrder(t *testing.T) {
 	}
 }
 
+func TestLynxFlow_SessionizeMaxPauseDuration(t *testing.T) {
+	q, err := Parse(`from app | sessionize maxpause=5m by session_id`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("Commands: got %d, want 1", len(q.Commands))
+	}
+	sessionize, ok := q.Commands[0].(*SessionizeCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected SessionizeCommand, got %T", q.Commands[0])
+	}
+	if sessionize.MaxPause != "5m" {
+		t.Errorf("MaxPause: got %q, want 5m", sessionize.MaxPause)
+	}
+	if len(sessionize.GroupBy) != 1 || sessionize.GroupBy[0] != "session_id" {
+		t.Errorf("GroupBy: got %v, want [session_id]", sessionize.GroupBy)
+	}
+}
+
 func TestLynxFlow_StreamstatsModifierKeywords(t *testing.T) {
 	q, err := Parse(`from app | streamstats current=false window=5 count() as n`)
 	if err != nil {
