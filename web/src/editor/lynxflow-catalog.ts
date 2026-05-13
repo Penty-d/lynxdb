@@ -150,7 +150,7 @@ export const AGG_FUNCTIONS: readonly string[] = [
   "count()", "sum()", "sumsq()", "avg()", "mean()", "min()", "max()", "dc()", "distinct_count()", "estdc()", "estdc_error()",
   "values()", "list()", "first()", "last()", "earliest()", "earliest_time()", "latest()", "latest_time()", "stdev()",
   "stdevp()", "var()", "varp()", "range()", "median()", "mode()", "perc25()",
-  "perc()", "perc50()", "perc75()", "perc90()", "perc95()", "perc99()", "percentile()",
+  "perc()", "perc50()", "perc75()", "perc90()", "perc95()", "perc99()", "p50()", "p75()", "p90()", "p95()", "p99()", "percentile()",
   "percentile95()", "exactperc()", "exactperc95()", "upperperc()", "upperperc95()",
   "per_second()", "per_minute()", "per_hour()", "per_day()", "rate()",
 ];

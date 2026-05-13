@@ -47,6 +47,7 @@ var knownAggregateFunctions = []string{
 	"stdev", "stdevp", "var", "varp", "range",
 	"per_second", "per_minute", "per_hour", "per_day",
 	"perc", "perc25", "perc50", "perc75", "perc90", "perc95", "perc99",
+	"p50", "p75", "p90", "p95", "p99",
 	"earliest", "earliest_time", "latest", "latest_time", "first", "last", "median", "percentile", "rate",
 	"percentile95", "exactperc", "exactperc95", "upperperc", "upperperc95",
 }

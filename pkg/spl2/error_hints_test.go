@@ -205,6 +205,19 @@ func TestSuggestFunction(t *testing.T) {
 	}
 }
 
+func TestKnownAggregateFunctionsIncludesLynxAliases(t *testing.T) {
+	have := make(map[string]bool)
+	for _, fn := range KnownAggregateFunctions() {
+		have[fn] = true
+	}
+
+	for _, fn := range []string{"p50", "p75", "p90", "p95", "p99"} {
+		if !have[fn] {
+			t.Fatalf("missing aggregate alias %q", fn)
+		}
+	}
+}
+
 func TestSuggestTypeMismatch(t *testing.T) {
 	errMsg := "cannot compare string to int"
 	hint := SuggestFix(errMsg, nil)
