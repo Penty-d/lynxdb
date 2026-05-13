@@ -399,9 +399,24 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 			wantCodes: []string{LintDoubleQuotedName},
 		},
 		{
+			name:      "quoted source in list",
+			query:     `from app, "my logs" | head 1`,
+			wantCodes: []string{LintDoubleQuotedName},
+		},
+		{
 			name:      "quoted index equals",
 			query:     `index="my logs" | head 1`,
 			wantCodes: []string{LintIndexRewrite, LintDoubleQuotedName},
+		},
+		{
+			name:      "chart split field",
+			query:     `from app | chart count() over "host name" by "status code"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
+			name:      "fieldformat field",
+			query:     `from app | fieldformat "display name" = tostring(status)`,
+			wantCodes: []string{LintDoubleQuotedName},
 		},
 		{
 			name:      "field option",
@@ -416,6 +431,11 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 		{
 			name:      "string value",
 			query:     `from app | where level = "ERROR"`,
+			wantCodes: nil,
+		},
+		{
+			name:      "search phrase after from word",
+			query:     `from app | search from "quoted phrase"`,
 			wantCodes: nil,
 		},
 		{

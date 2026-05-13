@@ -275,7 +275,12 @@ func lintDefaultSource(prog *Program, tokens []Token) []QueryLint {
 
 func lintDoubleQuotedNames(tokens []Token) []QueryLint {
 	var lints []QueryLint
+	seen := make(map[int]bool)
 	add := func(pos int) {
+		if seen[pos] {
+			return
+		}
+		seen[pos] = true
 		lints = append(lints, QueryLint{
 			Code:     LintDoubleQuotedName,
 			Message:  "Canon: single quotes `'my-field'` for names with special characters",
@@ -287,7 +292,14 @@ func lintDoubleQuotedNames(tokens []Token) []QueryLint {
 		tok := tokens[i]
 		switch tok.Type {
 		case TokenFrom:
-			if peekTokenType(tokens, i+1) == TokenString {
+			cmdType := segmentCommandType(tokens, i)
+			if cmdType == TokenFrom {
+				for j := i + 1; j < len(tokens) && !isSegmentBoundary(tokens[j].Type); j++ {
+					if tokens[j].Type == TokenString {
+						add(tokens[j].Pos)
+					}
+				}
+			} else if isUnpackCommandType(cmdType) && peekTokenType(tokens, i+1) == TokenString {
 				add(tokens[i+1].Pos)
 			}
 		case TokenIndex:
@@ -295,6 +307,16 @@ func lintDoubleQuotedNames(tokens []Token) []QueryLint {
 				add(tokens[i+1].Pos)
 			} else if peekTokenType(tokens, i+1) == TokenEq && peekTokenType(tokens, i+2) == TokenString {
 				add(tokens[i+2].Pos)
+			}
+		case TokenChart:
+			for j := i + 1; j < len(tokens) && !isSegmentBoundary(tokens[j].Type); j++ {
+				if (tokens[j].Type == TokenOver || tokens[j].Type == TokenBy) && peekTokenType(tokens, j+1) == TokenString {
+					add(tokens[j+1].Pos)
+				}
+			}
+		case TokenFieldformat:
+			if peekTokenType(tokens, i+1) == TokenString {
+				add(tokens[i+1].Pos)
 			}
 		case TokenAs:
 			if peekTokenType(tokens, i+1) == TokenString {
@@ -316,6 +338,40 @@ func lintDoubleQuotedNames(tokens []Token) []QueryLint {
 	}
 
 	return lints
+}
+
+func segmentCommandType(tokens []Token, pos int) TokenType {
+	start := 0
+	for i := pos - 1; i >= 0; i-- {
+		if tokens[i].Type == TokenPipe || tokens[i].Type == TokenSemicolon || tokens[i].Type == TokenLBracket {
+			start = i + 1
+			break
+		}
+	}
+	for i := start; i < len(tokens) && i <= pos; i++ {
+		if tokens[i].Type != TokenEOF {
+			return tokens[i].Type
+		}
+	}
+
+	return TokenEOF
+}
+
+func isSegmentBoundary(t TokenType) bool {
+	return t == TokenPipe || t == TokenSemicolon || t == TokenRBracket || t == TokenEOF
+}
+
+func isUnpackCommandType(t TokenType) bool {
+	switch t {
+	case TokenUnpackJSON, TokenUnpackLogfmt, TokenUnpackSyslog, TokenUnpackCombined,
+		TokenUnpackCLF, TokenUnpackNginxError, TokenUnpackCEF, TokenUnpackKV,
+		TokenUnpackDocker, TokenUnpackRedis, TokenUnpackApacheError, TokenUnpackPostgres,
+		TokenUnpackMySQLSlow, TokenUnpackHAProxy, TokenUnpackLEEF, TokenUnpackW3C,
+		TokenUnpackPattern:
+		return true
+	default:
+		return false
+	}
 }
 
 func isFieldNameOption(name string) bool {

@@ -42,6 +42,7 @@ Source contract: `docs/grammar/RFC.md`.
 | Optional capability commands parse and report capability-required execution errors | `pkg/spl2/parser.go`, `pkg/engine/pipeline/pipeline.go`, `pkg/spl2/parser_test.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | `use <fragment>` parses and expands named pipeline fragments with missing-fragment and cycle diagnostics | `pkg/spl2/parser.go`, `pkg/spl2/fragment.go`, `pkg/spl2/fragment_test.go` |
 | SEARCH `L030` mixed `AND`/`OR` lint covers explicit `search` and normalized free-hand search inputs | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
+| `L012` covers double-quoted legacy names in accepted source, alias, option, unpack field-list, chart split, and fieldformat positions | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
 | Execution-backed `L032`/`L037` lints flag high-count `FROM *` and broad all-source search responses from resolved source and segment stats with configurable source and segment thresholds | `pkg/api/rest/query.go`, `pkg/api/rest/jobs.go`, `pkg/api/rest/server_test.go`, `pkg/config/config.go`, `pkg/server/types.go` |
 | Static `L039` flags PCRE2-only regex constructs such as lookaround, backreferences, atomic groups, and possessive quantifiers | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
@@ -77,7 +78,7 @@ Official Splunk compatibility checked:
 |---|---|---|
 | Source selectors | `FROM`, `INDEX`, lists, RFC glob matching, source exclude globs, `*`, CTE refs, and compact time ranges parse | Some source-scope diagnostics still need coverage against the RFC rewrite contract. |
 | Lints | Compatibility hints, parse suggestions, and post-parse `L001`/`L002`/`L003`/`L004`/`L005`/`L010`/`L011`/`L012`/`L013`/`L020`/`L022`/`L030`/`L031`/`L032`/`L033`/`L034`/`L035`/`L036`/`L037`/`L038`/`L039` exist | Coverage still needs a full RFC cross-check across source diagnostics, quoted identifiers, and function/command catalogs. |
-| Quoted identifier canon | Single-quoted identifiers now parse as canonical names and double-quoted names remain accepted in legacy positions with `L012` | Some less-common double-quoted legacy name positions may still need coverage. |
+| Quoted identifier canon | Single-quoted identifiers now parse as canonical names and double-quoted names accepted by the parser emit `L012` in covered legacy positions | Full double-quoted legacy field-name compatibility still needs an explicit RFC-vs-parser scope decision. |
 | Function catalog | Many eval and aggregate functions parse and execute; common aggregate aliases and time aggregates now normalize before planning | RFC aggregate/eval catalog needs a full parser, VM, and editor cross-check for missing functions and aliases. |
 | Command catalog | Native SPL2/LynxFlow commands, several helpers, and optional capability command syntax parse; profile-excluded Splunk commands reject with `L021` | Optional capability command execution semantics remain deferred. |
 | Editor assistance | Autocomplete covers commands, fields, values, regex snippets, time values, and templates | Ranking reasons and disable switches are not surfaced as RFC `meta.suggestions` behavior. |
