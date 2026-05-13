@@ -675,6 +675,57 @@ func TestLintQuery_TautologicalSearchWideRange(t *testing.T) {
 	}
 }
 
+func TestLintQuery_UnquotedOperatorValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCodes []string
+	}{
+		{
+			name:      "path value",
+			query:     `from app | search path=/api/v1`,
+			wantCodes: []string{LintUnquotedOpValue},
+		},
+		{
+			name:      "in list value",
+			query:     `from app | search service IN (api+worker, web)`,
+			wantCodes: []string{LintUnquotedOpValue},
+		},
+		{
+			name:      "quoted path value",
+			query:     `from app | search path="/api/v1"`,
+			wantCodes: nil,
+		},
+		{
+			name:      "hyphenated value",
+			query:     `from app | search host=web-1`,
+			wantCodes: nil,
+		},
+		{
+			name:      "where arithmetic is not a search literal value",
+			query:     `from app | where duration_ms > latency_ms/2`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLintProgram_RequiresSuccessfulParse(t *testing.T) {
 	_, err := LintQuery(`from app | stats count(`)
 	if err == nil {

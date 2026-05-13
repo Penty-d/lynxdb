@@ -28,6 +28,7 @@ const (
 	LintDeprecatedSort     = "L022"
 	LintMixedSearchAndOr   = "L030"
 	LintDeepSearchNesting  = "L031"
+	LintUnquotedOpValue    = "L033"
 	LintReservedFieldName  = "L034"
 	LintTautologicalSearch = "L035"
 	LintDefaultMetricField = "L036"
@@ -81,7 +82,7 @@ func lintReason(code string) string {
 		return "compat"
 	case LintStatsCountWide:
 		return "schema"
-	case LintOptionAfterArg, LintAmbiguousDedupArgs, LintDoubleQuotedName, LintCountWithoutParens, LintDeprecatedSort, LintReservedFieldName, LintRawExactCompare:
+	case LintOptionAfterArg, LintAmbiguousDedupArgs, LintDoubleQuotedName, LintCountWithoutParens, LintDeprecatedSort, LintUnquotedOpValue, LintReservedFieldName, LintRawExactCompare:
 		return "canon"
 	default:
 		return "canon"
@@ -173,6 +174,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	lints = append(lints, lintDeprecatedSortSyntax(tokens)...)
 	lints = append(lints, lintMixedSearchAndOr(input, tokens)...)
 	lints = append(lints, lintDeepSearchNesting(prog)...)
+	lints = append(lints, lintUnquotedOperatorValues(input, tokens)...)
 	lints = append(lints, lintReservedFieldNames(tokens)...)
 	lints = append(lints, lintTautologicalSearchWideRange(prog)...)
 	lints = append(lints, lintDefaultMetricField(tokens)...)
@@ -715,6 +717,110 @@ func reservedFieldNameLint(tok Token) QueryLint {
 		Code:     LintReservedFieldName,
 		Message:  "Use single quotes for reserved-word field names",
 		Position: tok.Pos,
+	}
+}
+
+func lintUnquotedOperatorValues(input string, tokens []Token) []QueryLint {
+	var lints []QueryLint
+
+	for i := 0; i < len(tokens); i++ {
+		if tokens[i].Type != TokenSearch {
+			continue
+		}
+		if i+1 >= len(tokens) || tokens[i+1].Type == TokenPipe || tokens[i+1].Type == TokenEOF {
+			continue
+		}
+
+		start := tokens[i+1].Pos
+		end := len(input)
+		for j := i + 1; j < len(tokens); j++ {
+			switch tokens[j].Type {
+			case TokenPipe, TokenRBracket, TokenSemicolon, TokenEOF, TokenAt:
+				end = tokens[j].Pos
+				j = len(tokens)
+			}
+		}
+		if start < 0 || start >= len(input) || end < start {
+			continue
+		}
+
+		lints = append(lints, lintUnquotedOperatorValuesInSearch(input[start:end], start)...)
+	}
+
+	return lints
+}
+
+func lintUnquotedOperatorValuesInSearch(expr string, basePos int) []QueryLint {
+	searchTokens, err := NewSearchLexer(expr).Tokenize()
+	if err != nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for i := 0; i < len(searchTokens); i++ {
+		tok := searchTokens[i]
+		if tok.Type != STokWord {
+			continue
+		}
+
+		next := peekSearchTokenType(searchTokens, i+1)
+		if isSearchComparisonOp(next) {
+			val := peekSearchToken(searchTokens, i+2)
+			if shouldLintUnquotedOperatorValue(expr, val) {
+				lints = append(lints, unquotedOperatorValueLint(basePos+val.Pos))
+			}
+			continue
+		}
+
+		if next == STokIN && peekSearchTokenType(searchTokens, i+2) == STokLParen {
+			for j := i + 3; j < len(searchTokens); j++ {
+				switch searchTokens[j].Type {
+				case STokRParen, STokEOF:
+					i = j
+					goto nextSearchToken
+				case STokWord:
+					if shouldLintUnquotedOperatorValue(expr, searchTokens[j]) {
+						lints = append(lints, unquotedOperatorValueLint(basePos+searchTokens[j].Pos))
+					}
+				}
+			}
+		}
+	nextSearchToken:
+	}
+
+	return lints
+}
+
+func peekSearchToken(tokens []SearchToken, idx int) SearchToken {
+	if idx >= 0 && idx < len(tokens) {
+		return tokens[idx]
+	}
+	return SearchToken{Type: STokEOF}
+}
+
+func peekSearchTokenType(tokens []SearchToken, idx int) SearchTokenType {
+	return peekSearchToken(tokens, idx).Type
+}
+
+func shouldLintUnquotedOperatorValue(expr string, tok SearchToken) bool {
+	if tok.Type != STokWord || tok.Literal == "" {
+		return false
+	}
+	if tok.Pos >= 0 && tok.Pos < len(expr) && expr[tok.Pos] == '\'' {
+		return false
+	}
+	return containsValueOperatorChar(tok.Literal)
+}
+
+func containsValueOperatorChar(value string) bool {
+	return strings.ContainsAny(value, "/+%?&=()<>!,")
+}
+
+func unquotedOperatorValueLint(pos int) QueryLint {
+	return QueryLint{
+		Code:     LintUnquotedOpValue,
+		Message:  "Use double quotes for literal values containing spaces or operators",
+		Position: pos,
 	}
 }
 
