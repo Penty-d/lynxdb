@@ -20,7 +20,8 @@ command          = search_cmd | where_cmd | stats_cmd | eval_cmd | sort_cmd
                  | dedup_cmd | rex_cmd | regex_cmd | replace_cmd | fieldformat_cmd | bin_cmd | timechart_cmd
                  | chart_cmd
                  | top_cmd | rare_cmd | fillnull_cmd | streamstats_cmd
-                 | eventstats_cmd | join_cmd | append_cmd | appendcols_cmd | appendpipe_cmd | union_cmd | transaction_cmd
+                 | eventstats_cmd | join_cmd | append_cmd | appendcols_cmd | appendpipe_cmd
+                 | multisearch_cmd | union_cmd | transaction_cmd
                  | xyseries_cmd | untable_cmd | materialize_cmd | from_cmd | views_cmd
                  | dropview_cmd | glimpse_cmd | describe_cmd | use_cmd | outliers_cmd
                  | compare_cmd | patterns_cmd | trace_cmd | tee_cmd
@@ -167,6 +168,7 @@ appendcols_cmd   = "appendcols" { appendcols_option } subsearch ;
 appendcols_option = ( "override" "=" ( "true" | "false" ) )
                   | ( ( "maxout" | "maxtime" | "timeout" ) "=" number ) ;
 appendpipe_cmd   = "appendpipe" [ "run_in_preview" "=" ( "true" | "false" ) ] subsearch ;
+multisearch_cmd  = "multisearch" { subsearch } ;
 union_cmd        = "union" { union_option } ( union_source | subsearch )
                    { ","? ( union_source | subsearch ) } ;
 union_option     = ( "maxout" | "maxtime" | "timeout" ) "=" number ;
