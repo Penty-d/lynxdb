@@ -442,6 +442,32 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "sort fields",
+			input: `FROM main | sort -"duration ms", +"status code"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*SortCommand)
+				if len(cmd.Fields) != 2 {
+					t.Fatalf("sort fields: got %v", cmd.Fields)
+				}
+				if cmd.Fields[0].Name != "duration ms" || !cmd.Fields[0].Desc {
+					t.Fatalf("sort field[0]: got %+v", cmd.Fields[0])
+				}
+				if cmd.Fields[1].Name != "status code" || cmd.Fields[1].Desc {
+					t.Fatalf("sort field[1]: got %+v", cmd.Fields[1])
+				}
+			},
+		},
+		{
+			name:  "sort by field",
+			input: `FROM main | sort by "duration ms" desc`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*SortCommand)
+				if len(cmd.Fields) != 1 || cmd.Fields[0].Name != "duration ms" || !cmd.Fields[0].Desc {
+					t.Fatalf("sort by fields: got %+v", cmd.Fields)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

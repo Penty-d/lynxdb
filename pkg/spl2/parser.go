@@ -842,7 +842,7 @@ func (p *Parser) parseSort() (*SortCommand, error) {
 		if tok.Type == TokenMinus {
 			p.advance()
 			name := p.peek()
-			if !isIdentLike(name.Type) {
+			if !isIdentLike(name.Type) && name.Type != TokenString {
 				return nil, fmt.Errorf("spl2: expected field name after - in sort, got %s", name.Type)
 			}
 			p.advance()
@@ -850,12 +850,12 @@ func (p *Parser) parseSort() (*SortCommand, error) {
 		} else if tok.Type == TokenPlus {
 			p.advance()
 			name := p.peek()
-			if !isIdentLike(name.Type) {
+			if !isIdentLike(name.Type) && name.Type != TokenString {
 				return nil, fmt.Errorf("spl2: expected field name after + in sort, got %s", name.Type)
 			}
 			p.advance()
 			fields = append(fields, SortField{Name: name.Literal})
-		} else if isIdentLike(tok.Type) {
+		} else if isIdentLike(tok.Type) || tok.Type == TokenString {
 			p.advance()
 			name := tok.Literal
 			desc := false
@@ -3947,7 +3947,7 @@ func (p *Parser) parseOrderByFields() (*SortCommand, error) {
 			p.advance()
 			tok = p.peek()
 		}
-		if !isIdentLike(tok.Type) {
+		if !isIdentLike(tok.Type) && tok.Type != TokenString {
 			if desc {
 				return nil, fmt.Errorf("spl2: expected field name after '-' in order by at position %d", tok.Pos)
 			}
