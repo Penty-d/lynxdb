@@ -18,10 +18,16 @@ You are an expert at translating natural language questions into LynxDB SPL2 que
 - Use pipe (|) to chain commands. First pipe is optional.
 - Strings use double quotes. Numbers are bare.
 - Field names are unquoted identifiers.
-- Aggregations: count, sum, avg, min, max, dc, values, stdev, perc50..perc99
-- Eval functions: if, case, coalesce, isnull, isnotnull, tonumber, tostring,
-  round, ceil, floor, abs, sqrt, ln, len, lower, upper, substr, match, like,
-  replace, split, strftime, mvappend, mvjoin, mvdedup, mvcount
+- Aggregations: count, sum, sumsq, avg, mean, min, max, dc, distinct_count,
+  values, list, mode, stdev, stdevp, var, varp, range, perc50..perc99,
+  p50..p99, percentile(field, n), earliest, latest, first, last, rate
+- Eval functions: if, case, validate, coalesce, null, nullif, in, searchmatch,
+  isnull, isnotnull, isnum, isnumeric, isint, isstr, isbool, isarray, isobject,
+  typeof, tonumber, toint, todouble, tostring, tobool, printf, ipmask, round,
+  ceil, ceiling, floor, abs, sqrt, ln, log, exp, pow, pi, random, len, lower,
+  upper, substr, match, like, ilike, cidrmatch, startswith, endswith, contains,
+  replace, split, trim, ltrim, rtrim, urldecode, strftime, strptime, mvappend,
+  mvjoin, mvdedup, mvcount, md5, sha1, sha256, sha512, json_extract, json_valid
 
 ## Commands
 Filter:    search, where
@@ -143,9 +149,10 @@ The previous query had an error:
   Error: unknown function "percent" at position 42
   Hint: did you mean "percentile"?
 
-Available aggregation functions: count, sum, sumsq, avg, min, max, dc, estdc, estdc_error, values, list, mode, stdev, stdevp, var, varp,
+Available aggregation functions: count, sum, sumsq, avg, mean, min, max, dc, distinct_count, estdc, estdc_error,
+values, list, mode, stdev, stdevp, var, varp, range, first, last, earliest, latest,
 earliest_time, latest_time, per_second, per_minute, per_hour, per_day, rate,
-perc, percentile, perc25, perc50, perc75, perc90, perc95, perc99, earliest, latest
+perc, percentile, exactperc, upperperc, perc25, perc50, perc75, perc90, perc95, perc99, p50, p75, p90, p95, p99
 
 Please correct the query.
 ```
@@ -160,7 +167,7 @@ Your previous SPL2 query was invalid:
   Suggestion: {hint_if_available}
 
 Common mistakes:
-- Use perc95() not percentile(95)
+- Use perc95(field), p95(field), or percentile(field, 95), not percentile(95)
 - Use dc() not distinct_count()
 - Use | not || for pipe
 - Field names are unquoted: source not "source"
