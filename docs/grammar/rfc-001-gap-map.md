@@ -57,6 +57,7 @@ Official Splunk compatibility checked:
 | Topic | Result |
 |---|---|
 | Boolean operator precedence and `XOR` support | Splunk docs say `search` evaluates `OR` before `AND` and does not support `XOR`; `where` and `eval` evaluate `AND`, then `OR`, then `XOR`. |
+| SEARCH case sensitivity | Splunk docs say searches are case-insensitive by default and `CASE(<term>)` performs case-sensitive matching for terms and field values. LynxDB keeps SEARCH keyword and field-value glob matching case-insensitive for SPL compatibility; source and field-list glob matching remains case-sensitive. This is an intentional compatibility exception to the RFC's general glob-default statement. |
 | Time aggregate functions | Splunk docs limit `per_second`, `per_minute`, `per_hour`, and `per_day` to `timechart`; `rate` uses `latest`, `earliest`, `latest_time`, and `earliest_time` semantics. |
 | Chart command | Splunk docs define `chart` as a transforming command requiring a statistical function, with `OVER <row-split> BY <column-split>` equivalent to `BY <row-split> <column-split>` for row/column splits. LynxDB implements grouped aggregation and one-aggregate split pivots; advanced chart options are deferred. |
 | Reverse command | Splunk docs define `reverse` as reversing result row order without changing which rows are returned. |
