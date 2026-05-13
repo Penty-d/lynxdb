@@ -287,30 +287,30 @@ running_cmd      = "running" agg_list [ "by" ident_list ] ;
 
 (* ─── Enrichment / lookup ─── *)
 
-enrich_cmd       = "enrich" ident "on" field ;
-lookup_cmd       = "lookup" ident field [ "as" ident ] ;
+enrich_cmd       = "enrich" agg_list [ "by" ident_list ] ;
+lookup_cmd       = "lookup" ident "on" field ;
 
 (* ─── Parsing ─── *)
 
-parse_cmd        = "parse" field quoted_string "as" ident_list ;
-explode_cmd      = "explode" field [ "delim" "=" quoted_string ] ;
-pack_cmd         = "pack" ident_list [ "as" ident ] ;
+parse_cmd        = "parse" ident "(" field [ "," quoted_string ] ")"
+                   [ "as" ident ] [ "extract" "(" ident_list ")" ] [ "if_missing" ] ;
+explode_cmd      = "explode" ident_list [ "as" ident ] ;
+pack_cmd         = "pack" [ ident_list ] "into" ident ;
 
 (* ─── Analytics shortcuts ─── *)
 
-latency_cmd      = "latency" [ field ] [ "by" ident_list ]
-                   [ "percentiles" "=" number_list ] ;
-errors_cmd       = "errors" [ field ] [ "by" ident_list ] ;
-rate_cmd         = "rate" [ field ] [ "span" "=" span_value ]
-                   [ "by" ident_list ] ;
+latency_cmd      = "latency" field "every" span_value [ "by" ident_list ]
+                   [ "compute" latency_agg_list ] ;
+latency_agg_list = ident { "," ident } ;
+errors_cmd       = "errors" [ "by" ident_list ] [ "compute" agg_list ] ;
+rate_cmd         = "rate" [ "per" span_value ] [ "by" ident_list ] ;
 proportion_cmd   = "proportion" expr "as" field
                    [ "every" span_value ] [ "by" ident_list ] ;
 impact_cmd       = "impact" [ agg_expr ] "by" ident_list ;
 baseline_cmd     = "baseline" field "window" "=" number [ "by" ident_list ] ;
 changes_cmd      = "changes" field [ "by" ident_list ] ;
 exemplars_cmd    = "exemplars" [ number ] [ "by" ident_list ] ;
-percentiles_cmd  = "percentiles" field { "," field } [ "by" ident_list ]
-                   [ "p" "=" number_list ] ;
+percentiles_cmd  = "percentiles" field [ "by" ident_list ] ;
 slowest_cmd      = "slowest" [ number ] [ field ] [ "by" ident_list ] ;
 
 (* ─── Expressions ─── *)
