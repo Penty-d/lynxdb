@@ -734,6 +734,17 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return err
 		}
 		c.prog.EmitOp(OpStrftime)
+	case "strptime":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("strptime expects 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpStrptime)
 	case "md5":
 		return c.compileHash(e, OpMD5)
 	case "sha1":

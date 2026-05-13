@@ -137,6 +137,7 @@ const (
 	OpSHA512    Opcode = 0xC5
 	OpPrintf    Opcode = 0xC6
 	OpIPMask    Opcode = 0xC7
+	OpStrptime  Opcode = 0xC8
 
 	// Network (operand: 2-byte CIDR pool index).
 	OpCIDRMatch Opcode = 0xE0 // net.IPNet.Contains
@@ -271,6 +272,7 @@ var definitions = map[Opcode]*Definition{
 	OpSHA512:    {"OpSHA512", nil},
 	OpPrintf:    {"OpPrintf", []int{2}},
 	OpIPMask:    {"OpIPMask", nil},
+	OpStrptime:  {"OpStrptime", nil},
 
 	OpCIDRMatch: {"OpCIDRMatch", []int{2}},
 

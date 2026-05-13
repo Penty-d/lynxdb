@@ -537,6 +537,29 @@ func TestCompileIPMask(t *testing.T) {
 	}
 }
 
+func TestCompileStrptime(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "strptime",
+		Args: []spl2.Expr{
+			&spl2.LiteralExpr{Value: `"2024-05-01 12:34:56"`},
+			&spl2.LiteralExpr{Value: `"%Y-%m-%d %H:%M:%S"`},
+		},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	result, err := vm.Execute(prog, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AsInt() != 1714566896 {
+		t.Fatalf("got %d, want 1714566896", result.AsInt())
+	}
+}
+
 func TestCompileIsNull(t *testing.T) {
 	expr := &spl2.FuncCallExpr{
 		Name: "isnull",

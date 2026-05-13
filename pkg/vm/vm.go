@@ -1018,6 +1018,12 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			vm.sp--
 			vm.stack[vm.sp-1] = strftimeValue(ts, format)
 
+		case OpStrptime:
+			format := vm.stack[vm.sp-1]
+			ts := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = strptimeValue(ts, format)
+
 		case OpMD5:
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = hashValue(a, "md5")
@@ -1957,6 +1963,19 @@ func strftimeValue(ts, format event.Value) event.Value {
 	goFmt := splTimeToGo(fmtStr)
 
 	return event.StringValue(t.Format(goFmt))
+}
+
+func strptimeValue(ts, format event.Value) event.Value {
+	if ts.IsNull() || format.IsNull() {
+		return event.NullValue()
+	}
+	layout := splTimeToGo(valueToString(format))
+	t, err := time.ParseInLocation(layout, valueToString(ts), time.UTC)
+	if err != nil {
+		return event.NullValue()
+	}
+
+	return event.IntValue(t.Unix())
 }
 
 func hashValue(v event.Value, algorithm string) event.Value {
