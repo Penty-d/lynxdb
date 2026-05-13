@@ -249,6 +249,49 @@ func TestCompileCaseFunction(t *testing.T) {
 	}
 }
 
+func TestCompileValidateFunction(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "validate",
+		Args: []spl2.Expr{
+			&spl2.CompareExpr{
+				Left:  &spl2.FieldExpr{Name: "status"},
+				Op:    ">=",
+				Right: &spl2.LiteralExpr{Value: "200"},
+			},
+			&spl2.LiteralExpr{Value: `"too low"`},
+			&spl2.CompareExpr{
+				Left:  &spl2.FieldExpr{Name: "status"},
+				Op:    "<",
+				Right: &spl2.LiteralExpr{Value: "300"},
+			},
+			&spl2.LiteralExpr{Value: `"too high"`},
+		},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	tests := []struct {
+		status int64
+		want   event.Value
+	}{
+		{99, event.StringValue("too low")},
+		{200, event.NullValue()},
+		{404, event.StringValue("too high")},
+	}
+	for _, tt := range tests {
+		result, err := vm.Execute(prog, map[string]event.Value{"status": event.IntValue(tt.status)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !valuesEqual(result, tt.want) {
+			t.Fatalf("status=%d: got %v, want %v", tt.status, result, tt.want)
+		}
+	}
+}
+
 func TestCompileCoalesce(t *testing.T) {
 	expr := &spl2.FuncCallExpr{
 		Name: "coalesce",

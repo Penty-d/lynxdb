@@ -413,6 +413,8 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 		return c.compileIf(e)
 	case "case":
 		return c.compileCase(e)
+	case "validate":
+		return c.compileValidate(e)
 	case "coalesce":
 		return c.compileCoalesce(e)
 	case "null":
@@ -1054,6 +1056,34 @@ func (c *compiler) compileCase(e *spl2.FuncCallExpr) error {
 	} else {
 		c.prog.EmitOp(OpConstNull)
 	}
+
+	endPos := c.prog.Len()
+	for _, je := range jumpEnds {
+		c.prog.PatchUint16(je+1, uint16(endPos))
+	}
+
+	return nil
+}
+
+func (c *compiler) compileValidate(e *spl2.FuncCallExpr) error {
+	if len(e.Args) == 0 || len(e.Args)%2 != 0 {
+		return fmt.Errorf("validate expects condition/value pairs, got %d arguments", len(e.Args))
+	}
+	var jumpEnds []int
+	for i := 0; i < len(e.Args); i += 2 {
+		if err := c.compileExpr(e.Args[i]); err != nil {
+			return err
+		}
+		jumpTrue := c.prog.EmitOp(OpJumpIfTrue, 0)
+		if err := c.compileExpr(e.Args[i+1]); err != nil {
+			return err
+		}
+		jumpEnd := c.prog.EmitOp(OpJump, 0)
+		jumpEnds = append(jumpEnds, jumpEnd)
+		nextCheck := c.prog.Len()
+		c.prog.PatchUint16(jumpTrue+1, uint16(nextCheck))
+	}
+	c.prog.EmitOp(OpConstNull)
 
 	endPos := c.prog.Len()
 	for _, je := range jumpEnds {

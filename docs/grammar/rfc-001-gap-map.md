@@ -47,7 +47,7 @@ Source contract: `docs/grammar/RFC.md`.
 | Static `L039` flags PCRE2-only regex constructs such as lookaround, backreferences, atomic groups, and possessive quantifiers | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
 | `L003` source-prefix diagnostics cover rewritten `index=`, `index <name>`, `index IN`, `index NOT IN`, and `index!=` forms without flagging SEARCH-context `index=` predicates | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
-| Eval functions `like`, `nullif`, `in`, `printf`, `ipmask`, `toint`, `todouble`, `tobool`, `isbool`, `typeof`, `trim`, `ltrim`, `rtrim`, `urldecode`, `md5`, `sha1`, `sha256`, `sha512`, `strftime`, `strptime`, `log`, `exp`, `pow`, `pi`, variadic `max`, and variadic `min` compile and execute through VM opcodes and are present in hint/editor catalogs | `pkg/vm/compiler.go`, `pkg/vm/vm.go`, `pkg/vm/vm_test.go`, `pkg/vm/compiler_test.go`, `pkg/spl2/error_hints.go`, `web/src/editor/lynxflow-catalog.ts` |
+| Eval functions `like`, `validate`, `nullif`, `in`, `printf`, `ipmask`, `toint`, `todouble`, `tobool`, `isbool`, `typeof`, `trim`, `ltrim`, `rtrim`, `urldecode`, `md5`, `sha1`, `sha256`, `sha512`, `strftime`, `strptime`, `log`, `exp`, `pow`, `pi`, variadic `max`, and variadic `min` compile and execute through VM opcodes and are present in hint/editor catalogs | `pkg/vm/compiler.go`, `pkg/vm/vm.go`, `pkg/vm/vm_test.go`, `pkg/vm/compiler_test.go`, `pkg/spl2/error_hints.go`, `web/src/editor/lynxflow-catalog.ts` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
 | Web autocomplete and highlighting share one editor catalog | `web/src/editor/lynxflow-catalog.ts`, `web/src/editor/autocomplete.ts`, `web/src/editor/lynxflow-lang.ts` |
 | EBNF includes currently implemented LynxFlow sugar | `docs/grammar/spl2.ebnf`, `cmd/lynxdb/grammar_data/spl2.ebnf` |
@@ -76,6 +76,7 @@ Official Splunk compatibility checked:
 | Math eval functions | Splunk docs define `log(x)` as base 10, `log(x, base)` as explicit-base logarithm, `ln(x)` as natural logarithm, `exp(x)` as e raised to x, `pow(x, y)` as exponentiation, and `pi()` as a no-argument constant. |
 | `ipmask` eval function | Splunk docs define `ipmask(mask, ip)` as applying a valid IPv4 mask to a valid IPv4 address through bitwise `AND`; `255.255.255.0` and `10.20.30.120` return `10.20.30.0`. |
 | Time eval functions | Splunk docs define `strftime(time, format)` as rendering Unix time and `strptime(str, format)` as parsing human-readable time into Unix time. |
+| `validate` eval function | Splunk docs define `validate(condition, value, ...)` as returning the value paired with the first false condition and null when all conditions are true. |
 
 ## Partial
 
