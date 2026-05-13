@@ -44,6 +44,7 @@ const (
 	LintTautologicalSearch   = "L035"
 	LintDefaultMetricField   = "L036"
 	LintNoExtractablePattern = "L038"
+	LintPCRE2RegexFeature    = "L039"
 )
 
 const (
@@ -127,7 +128,7 @@ func equivalentText(message string) string {
 
 func lintReason(code string) string {
 	switch code {
-	case LintLeadingWildcard, LintTautologicalSearch, LintNoExtractablePattern:
+	case LintLeadingWildcard, LintTautologicalSearch, LintNoExtractablePattern, LintPCRE2RegexFeature:
 		return "slow"
 	case LintDefaultSource, LintIndexRewrite, LintUnsupportedCommand, LintMixedSearchAndOr, LintDefaultMetricField:
 		return "compat"
@@ -144,7 +145,7 @@ func lintReason(code string) string {
 
 func lintSeverity(code string) string {
 	switch code {
-	case LintLeadingWildcard, LintStatsCountWide, LintRawExactCompare, LintMixedSearchAndOr, LintDeepSearchNesting, LintTautologicalSearch, LintNoExtractablePattern:
+	case LintLeadingWildcard, LintStatsCountWide, LintRawExactCompare, LintMixedSearchAndOr, LintDeepSearchNesting, LintTautologicalSearch, LintNoExtractablePattern, LintPCRE2RegexFeature:
 		return LintSeverityWarning
 	default:
 		return LintSeverityNotice
@@ -233,6 +234,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	lints = append(lints, lintTautologicalSearchWideRange(prog)...)
 	lints = append(lints, lintDefaultMetricField(tokens)...)
 	lints = append(lints, lintNoExtractablePatterns(prog)...)
+	lints = append(lints, lintPCRE2RegexFeatures(prog)...)
 
 	return lints, nil
 }
@@ -1581,6 +1583,151 @@ func noExtractablePatternLint() QueryLint {
 	return QueryLint{
 		Code:     LintNoExtractablePattern,
 		Message:  "Pattern cannot be prefiltered efficiently; add a literal anchor if possible",
+		Position: 0,
+	}
+}
+
+func lintPCRE2RegexFeatures(prog *Program) []QueryLint {
+	if prog == nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for _, ds := range prog.Datasets {
+		lints = append(lints, lintPCRE2RegexFeaturesInQuery(ds.Query)...)
+	}
+	lints = append(lints, lintPCRE2RegexFeaturesInQuery(prog.Main)...)
+
+	return lints
+}
+
+func lintPCRE2RegexFeaturesInQuery(q *Query) []QueryLint {
+	if q == nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for _, cmd := range q.Commands {
+		switch c := cmd.(type) {
+		case *RegexCommand:
+			if regexRequiresPCRE2(c.Pattern) {
+				lints = append(lints, pcre2RegexFeatureLint())
+			}
+		case *RexCommand:
+			if regexRequiresPCRE2(c.Pattern) {
+				lints = append(lints, pcre2RegexFeatureLint())
+			}
+		case *WhereCommand:
+			lints = append(lints, lintPCRE2RegexFeaturesInExpr(c.Expr)...)
+		case *JoinCommand:
+			lints = append(lints, lintPCRE2RegexFeaturesInQuery(c.Subquery)...)
+		case *AppendCommand:
+			lints = append(lints, lintPCRE2RegexFeaturesInQuery(c.Subquery)...)
+		case *MultisearchCommand:
+			for _, sub := range c.Searches {
+				lints = append(lints, lintPCRE2RegexFeaturesInQuery(sub)...)
+			}
+		}
+	}
+
+	return lints
+}
+
+func lintPCRE2RegexFeaturesInExpr(expr Expr) []QueryLint {
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		lints := lintPCRE2RegexFeaturesInExpr(e.Left)
+		return append(lints, lintPCRE2RegexFeaturesInExpr(e.Right)...)
+	case *NotExpr:
+		return lintPCRE2RegexFeaturesInExpr(e.Expr)
+	case *CompareExpr:
+		var lints []QueryLint
+		lints = append(lints, lintPCRE2RegexFeaturesInExpr(e.Left)...)
+		lints = append(lints, lintPCRE2RegexFeaturesInExpr(e.Right)...)
+		if strings.EqualFold(e.Op, "=~") || strings.EqualFold(e.Op, "!~") {
+			if pattern, ok := literalExprValue(e.Right); ok && regexRequiresPCRE2(pattern) {
+				lints = append(lints, pcre2RegexFeatureLint())
+			}
+		}
+		return lints
+	case *InExpr:
+		var lints []QueryLint
+		lints = append(lints, lintPCRE2RegexFeaturesInExpr(e.Field)...)
+		for _, value := range e.Values {
+			lints = append(lints, lintPCRE2RegexFeaturesInExpr(value)...)
+		}
+		return lints
+	case *ArithExpr:
+		lints := lintPCRE2RegexFeaturesInExpr(e.Left)
+		return append(lints, lintPCRE2RegexFeaturesInExpr(e.Right)...)
+	case *FuncCallExpr:
+		var lints []QueryLint
+		for _, arg := range e.Args {
+			lints = append(lints, lintPCRE2RegexFeaturesInExpr(arg)...)
+		}
+		return lints
+	}
+
+	return nil
+}
+
+func regexRequiresPCRE2(pattern string) bool {
+	inClass := false
+	escaped := false
+	for i := 0; i < len(pattern); i++ {
+		ch := pattern[i]
+		if escaped {
+			switch ch {
+			case '1', '2', '3', '4', '5', '6', '7', '8', '9', 'K', 'R':
+				return true
+			case 'k':
+				if i+1 < len(pattern) && pattern[i+1] == '<' {
+					return true
+				}
+			}
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == '[' {
+			inClass = true
+			continue
+		}
+		if ch == ']' {
+			inClass = false
+			continue
+		}
+		if inClass {
+			continue
+		}
+		if ch == '(' && i+2 < len(pattern) && pattern[i+1] == '?' {
+			switch pattern[i+2] {
+			case '=', '!', '>', '(':
+				return true
+			case '<':
+				if i+3 < len(pattern) && (pattern[i+3] == '=' || pattern[i+3] == '!') {
+					return true
+				}
+			}
+		}
+		if i+1 < len(pattern) && pattern[i+1] == '+' {
+			switch ch {
+			case '*', '+', '?', '}':
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func pcre2RegexFeatureLint() QueryLint {
+	return QueryLint{
+		Code:     LintPCRE2RegexFeature,
+		Message:  "This requires `--regex-engine=pcre2` and may be slower",
 		Position: 0,
 	}
 }

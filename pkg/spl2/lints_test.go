@@ -949,6 +949,62 @@ func TestLintQuery_NoExtractablePattern(t *testing.T) {
 	}
 }
 
+func TestLintQuery_PCRE2RegexFeatures(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCodes []string
+	}{
+		{
+			name:      "regex command lookahead",
+			query:     `from app | regex "error(?= fatal)"`,
+			wantCodes: []string{LintPCRE2RegexFeature},
+		},
+		{
+			name:      "where regex lookbehind",
+			query:     `from app | where _raw =~ "(?<=error) fatal"`,
+			wantCodes: []string{LintPCRE2RegexFeature},
+		},
+		{
+			name:      "rex backreference",
+			query:     `from app | rex field=_raw "(error)\1"`,
+			wantCodes: []string{LintPCRE2RegexFeature},
+		},
+		{
+			name:      "possessive quantifier",
+			query:     `from app | regex "error.*+"`,
+			wantCodes: []string{LintPCRE2RegexFeature},
+		},
+		{
+			name:      "linear regex",
+			query:     `from app | regex "error|fatal"`,
+			wantCodes: nil,
+		},
+		{
+			name:      "named capture stays linear",
+			query:     `from app | rex field=_raw "(?P<level>ERROR|WARN)"`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLintProgram_RequiresSuccessfulParse(t *testing.T) {
 	_, err := LintQuery(`from app | stats count(`)
 	if err == nil {
