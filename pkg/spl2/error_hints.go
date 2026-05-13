@@ -28,8 +28,8 @@ var knownCommands = []string{
 	"use", "outliers", "compare", "patterns", "trace", "rollup", "correlate", "sessionize", "topology",
 }
 
-// knownFunctions is the list of all supported eval/aggregation functions.
-var knownFunctions = []string{
+// knownEvalFunctions is the list of supported eval functions.
+var knownEvalFunctions = []string{
 	// Eval functions
 	"if", "case", "validate", "match", "searchmatch", "like", "ilike", "cidrmatch", "coalesce", "in", "printf", "ipmask",
 	"tonumber", "toint", "todouble", "tostring", "tobool",
@@ -39,17 +39,70 @@ var knownFunctions = []string{
 	"isnotnull", "isnull", "nullif", "isnum", "isnumeric", "isint", "isstr", "isbool", "isarray", "isobject", "typeof",
 	"null", "strftime", "strptime", "startswith", "endswith", "contains", "max", "min",
 	"md5", "sha1", "sha256", "sha512",
-	// Aggregation functions
+}
+
+// knownAggregateFunctions is the list of supported aggregate functions.
+var knownAggregateFunctions = []string{
 	"count", "sum", "sumsq", "avg", "mean", "dc", "distinct_count", "estdc", "estdc_error", "values", "list", "mode",
 	"stdev", "stdevp", "var", "varp", "range",
 	"per_second", "per_minute", "per_hour", "per_day",
 	"perc", "perc25", "perc50", "perc75", "perc90", "perc95", "perc99",
 	"earliest", "earliest_time", "latest", "latest_time", "first", "last", "median", "percentile", "rate",
 	"percentile95", "exactperc", "exactperc95", "upperperc", "upperperc95",
-	// JSON functions
+}
+
+// knownJSONFunctions is the list of supported JSON functions.
+var knownJSONFunctions = []string{
 	"json_extract", "json_valid", "json_keys", "json_array_length",
 	"json_object", "json_array", "json_type", "json_set", "json_remove",
 	"json_merge",
+}
+
+// knownFunctions is the list of all supported eval/aggregation functions.
+var knownFunctions = appendCatalogs(knownEvalFunctions, knownAggregateFunctions, knownJSONFunctions)
+
+func appendCatalogs(groups ...[]string) []string {
+	total := 0
+	for _, group := range groups {
+		total += len(group)
+	}
+
+	out := make([]string, 0, total)
+	for _, group := range groups {
+		out = append(out, group...)
+	}
+	return out
+}
+
+func copyCatalog(in []string) []string {
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+// KnownCommands returns the supported SPL2 and LynxFlow command catalog.
+func KnownCommands() []string {
+	return copyCatalog(knownCommands)
+}
+
+// KnownEvalFunctions returns the supported eval function catalog.
+func KnownEvalFunctions() []string {
+	return copyCatalog(knownEvalFunctions)
+}
+
+// KnownAggregateFunctions returns the supported aggregate function catalog.
+func KnownAggregateFunctions() []string {
+	return copyCatalog(knownAggregateFunctions)
+}
+
+// KnownJSONFunctions returns the supported JSON function catalog.
+func KnownJSONFunctions() []string {
+	return copyCatalog(knownJSONFunctions)
+}
+
+// KnownFunctions returns the full supported function catalog.
+func KnownFunctions() []string {
+	return copyCatalog(knownFunctions)
 }
 
 // SuggestFix examines a parse or execution error and returns a hint string

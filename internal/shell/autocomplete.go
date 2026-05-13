@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // builtinFields are always present in the completion list regardless of
@@ -30,32 +31,9 @@ func NewCompleter() *Completer {
 	copy(fields, builtinFields)
 
 	return &Completer{
-		commands: []string{
-			"FROM", "INDEX", "SEARCH", "WHERE", "STATS", "EVAL", "SORT", "HEAD", "TAIL", "REVERSE",
-			"TIMECHART", "CHART", "REX", "REGEX", "REPLACE", "FIELDFORMAT", "FIELDS", "TABLE", "DEDUP", "RENAME", "BIN",
-			"STREAMSTATS", "EVENTSTATS", "JOIN", "APPEND", "APPENDCOLS", "APPENDPIPE", "MULTISEARCH", "UNION", "TRANSACTION",
-			"XYSERIES", "UNTABLE", "TOP", "RARE", "FILLNULL", "MATERIALIZE", "VIEWS", "DROPVIEW",
-			"UNPACK_JSON", "UNPACK_LOGFMT", "UNPACK_SYSLOG", "UNPACK_COMBINED", "UNPACK_CLF", "UNPACK_NGINX_ERROR",
-			"UNPACK_CEF", "UNPACK_KV", "UNPACK_DOCKER", "UNPACK_REDIS", "UNPACK_APACHE_ERROR", "UNPACK_POSTGRES",
-			"UNPACK_MYSQL_SLOW", "UNPACK_HAPROXY", "UNPACK_LEEF", "UNPACK_W3C", "UNPACK_PATTERN", "JSON",
-			"UNROLL", "MVEXPAND", "EXPAND", "MAKERESULTS", "MAKEMV", "MVCOMBINE", "NOMV", "PACK_JSON", "TEE",
-			"ADDINFO", "CONVERT", "FIELDSUMMARY", "FLATTEN", "IPLOCATION", "TAGS", "TYPER", "THRU", "TIMEWRAP", "TSTATS", "MSTATS",
-			"LET", "KEEP", "OMIT", "SELECT", "GROUP", "EVERY", "BUCKET", "ORDER", "TAKE",
-			"RANK", "TOPBY", "BOTTOMBY", "BOTTOM", "RUNNING", "ENRICH", "PARSE", "EXPLODE",
-			"PACK", "LOOKUP", "LATENCY", "ERRORS", "RATE", "PROPORTION", "IMPACT", "BASELINE",
-			"CHANGES", "EXEMPLARS", "PERCENTILES", "SLOWEST", "GLIMPSE", "DESCRIBE", "USE", "OUTLIERS", "COMPARE",
-			"PATTERNS", "TRACE", "ROLLUP", "CORRELATE", "SESSIONIZE", "TOPOLOGY",
-		},
-		aggFuncs: []string{
-			"count", "sum", "avg", "min", "max", "dc", "values",
-			"stdev", "perc50", "perc75", "perc90", "perc95", "perc99",
-			"earliest", "latest",
-		},
-		evalFuncs: []string{
-			"IF", "CASE", "match", "coalesce", "tonumber", "tostring",
-			"round", "substr", "lower", "upper", "len", "ln",
-			"mvjoin", "mvappend", "mvdedup", "isnotnull", "isnull", "strftime",
-		},
+		commands:  uppercaseCatalog(spl2.KnownCommands()),
+		aggFuncs:  spl2.KnownAggregateFunctions(),
+		evalFuncs: appendCatalogs(spl2.KnownEvalFunctions(), spl2.KnownJSONFunctions()),
 		keywords: []string{
 			"BY", "AS", "AND", "OR", "NOT", "IN", "SPAN",
 			"ASC", "DESC", "TRUE", "FALSE", "NULL",
@@ -68,6 +46,27 @@ func NewCompleter() *Completer {
 		},
 		fields: fields,
 	}
+}
+
+func uppercaseCatalog(in []string) []string {
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = strings.ToUpper(s)
+	}
+	return out
+}
+
+func appendCatalogs(groups ...[]string) []string {
+	total := 0
+	for _, group := range groups {
+		total += len(group)
+	}
+
+	out := make([]string, 0, total)
+	for _, group := range groups {
+		out = append(out, group...)
+	}
+	return out
 }
 
 // SetFields updates the dynamic field names for completion, preserving
@@ -192,7 +191,12 @@ func (c *Completer) Suggest(value string) []string {
 			candidates = append(candidates, c.matchPrefixCI(word, c.fields)...)
 
 		// Field-selection contexts: suggest field names.
-		case "by", "where", "eval", "sort", "table", "fields", "keep", "omit",
+		case "where", "eval":
+			candidates = c.matchPrefixCI(word, c.evalFuncs)
+			candidates = append(candidates, c.matchPrefixCI(word, c.fields)...)
+			candidates = append(candidates, c.matchPrefixCI(word, c.keywords)...)
+
+		case "by", "sort", "table", "fields", "keep", "omit",
 			"dedup", "rename", "top", "rare", "join", "on":
 			candidates = c.matchPrefixCI(word, c.fields)
 
@@ -435,7 +439,12 @@ func (c *Completer) SuggestAll(value string) []CompletionItem {
 			items = c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.aggFuncs), "", KindFunction)
 			items = append(items, c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.fields), "", KindField)...)
 
-		case "by", "where", "eval", "sort", "table", "fields", "keep", "omit",
+		case "where", "eval":
+			items = c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.evalFuncs), "", KindFunction)
+			items = append(items, c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.fields), "", KindField)...)
+			items = append(items, c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.keywords), "", KindKeyword)...)
+
+		case "by", "sort", "table", "fields", "keep", "omit",
 			"dedup", "rename", "top", "rare", "join", "on":
 			items = c.buildItems(value, replaceStart, c.matchPrefixCI(word, c.fields), "", KindField)
 
