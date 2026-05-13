@@ -1324,7 +1324,7 @@ func lintLeadingWildcardsInSearch(expr SearchExpr) []QueryLint {
 			return []QueryLint{leadingWildcardLint()}
 		}
 	case *SearchCompareExpr:
-		if e.Value != "*" && strings.HasPrefix(e.Value, "*") {
+		if searchCompareHasLeadingWildcard(e) {
 			return []QueryLint{leadingWildcardLint()}
 		}
 	case *SearchInExpr:
@@ -1379,12 +1379,22 @@ func lintLeadingWildcardsInExpr(expr Expr) []QueryLint {
 func exprHasLeadingWildcard(expr Expr) bool {
 	switch e := expr.(type) {
 	case *LiteralExpr:
-		return strings.HasPrefix(e.Value, "*")
+		return strings.HasPrefix(e.Value, "*") || strings.HasPrefix(e.Value, "%")
 	case *GlobExpr:
 		return strings.HasPrefix(e.Pattern, "*")
 	default:
 		return false
 	}
+}
+
+func searchCompareHasLeadingWildcard(e *SearchCompareExpr) bool {
+	if e.Value == "*" || e.Value == "%" {
+		return false
+	}
+	if e.Op == OpLike {
+		return strings.HasPrefix(e.Value, "%")
+	}
+	return strings.HasPrefix(e.Value, "*")
 }
 
 func leadingWildcardLint() QueryLint {

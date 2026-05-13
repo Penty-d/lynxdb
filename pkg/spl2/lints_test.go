@@ -166,8 +166,18 @@ func TestLintQuery_LeadingWildcard(t *testing.T) {
 			wantCodes: []string{LintLeadingWildcard},
 		},
 		{
-			name:      "where like",
+			name:      "where like glob-style",
 			query:     `from app | where host like "*web"`,
+			wantCodes: []string{LintLeadingWildcard},
+		},
+		{
+			name:      "where like sql-style",
+			query:     `from app | where host like "%web"`,
+			wantCodes: []string{LintLeadingWildcard},
+		},
+		{
+			name:      "search like sql-style",
+			query:     `from app | search host LIKE "%web"`,
 			wantCodes: []string{LintLeadingWildcard},
 		},
 		{
@@ -260,7 +270,7 @@ func TestLintQuery_RawExactCompare(t *testing.T) {
 		{
 			name:      "raw like",
 			query:     `from app | where _raw like "%panic%"`,
-			wantCodes: nil,
+			wantCodes: []string{LintLeadingWildcard},
 		},
 		{
 			name:      "other field equality",
@@ -760,7 +770,7 @@ func TestLintQuery_NoExtractablePattern(t *testing.T) {
 		{
 			name:      "raw like without ngram",
 			query:     `from app | where _raw like "%e%"`,
-			wantCodes: []string{LintNoExtractablePattern},
+			wantCodes: []string{LintLeadingWildcard, LintNoExtractablePattern},
 		},
 	}
 
