@@ -257,6 +257,12 @@ func (q *QueryConfig) validate() error {
 	if q.MaxQueryLength < 0 {
 		return validationErr("query", "max_query_length", fmt.Sprintf("%d", q.MaxQueryLength), "must not be negative (0 = unlimited)")
 	}
+	if q.BroadSourceLintThreshold < 0 {
+		return validationErr("query", "broad_source_lint_threshold", fmt.Sprintf("%d", q.BroadSourceLintThreshold), "must not be negative")
+	}
+	if q.BroadSegmentLintThreshold < 0 {
+		return validationErr("query", "broad_segment_lint_threshold", fmt.Sprintf("%d", q.BroadSegmentLintThreshold), "must not be negative")
+	}
 
 	return nil
 }

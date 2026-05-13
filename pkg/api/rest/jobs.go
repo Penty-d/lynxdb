@@ -102,7 +102,7 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	default:
 		results = buildEventsResponse(snap.Results, defaultLimit, 0)
 	}
-	lints := lintsWithBroadScope(snap.Lints, snap.Query, &snap.Stats, snap.LintsEnabled, snap.LintLimit, snap.LintFull)
+	lints := lintsWithBroadScope(snap.Lints, snap.Query, &snap.Stats, s.currentQueryConfig(), snap.LintsEnabled, snap.LintLimit, snap.LintFull)
 	respondData(w, http.StatusOK, map[string]interface{}{
 		"type":         "job",
 		"job_id":       snap.ID,

@@ -185,6 +185,12 @@ const (
 	// LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD is the skip bitmap when this fraction of rows match.
 	// YAML key: query.bitmap_selectivity_threshold. Default: 0.9.
 	LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD = "LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD"
+	// LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD is the segment count that triggers broad-search lint.
+	// YAML key: query.broad_segment_lint_threshold. Default: 1000.
+	LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD = "LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD"
+	// LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD is the source count that triggers all-source and broad-search lints.
+	// YAML key: query.broad_source_lint_threshold. Default: 10.
+	LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD = "LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD"
 	// LYNXDB_QUERY_DEDUP_EXACT is the use exact string matching for dedup.
 	// YAML key: query.dedup_exact. Default: false.
 	LYNXDB_QUERY_DEDUP_EXACT = "LYNXDB_QUERY_DEDUP_EXACT"

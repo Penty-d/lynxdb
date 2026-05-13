@@ -95,6 +95,8 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_LISTEN", "0.0.0.0:4000")
 	t.Setenv("LYNXDB_LOG_LEVEL", "debug")
 	t.Setenv("LYNXDB_QUERY_MAX_CONCURRENT", "50")
+	t.Setenv("LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD", "7")
+	t.Setenv("LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD", "77")
 	t.Setenv("LYNXDB_STORAGE_COMPRESSION", "zstd")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION", "9.0.1")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "logs")
@@ -121,6 +123,12 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg.Query.MaxConcurrent != 50 {
 		t.Errorf("MaxConcurrent: got %d", cfg.Query.MaxConcurrent)
+	}
+	if cfg.Query.BroadSourceLintThreshold != 7 {
+		t.Errorf("BroadSourceLintThreshold: got %d", cfg.Query.BroadSourceLintThreshold)
+	}
+	if cfg.Query.BroadSegmentLintThreshold != 77 {
+		t.Errorf("BroadSegmentLintThreshold: got %d", cfg.Query.BroadSegmentLintThreshold)
 	}
 	if cfg.Storage.Compression != "zstd" {
 		t.Errorf("Compression: got %q", cfg.Storage.Compression)

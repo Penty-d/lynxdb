@@ -2008,7 +2008,7 @@ func TestQuery_BroadScopeLints(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	ingestIndexedTestEvents(t, srv.Addr(), broadSourceLintThreshold+1)
+	ingestIndexedTestEvents(t, srv.Addr(), config.DefaultConfig().Query.BroadSourceLintThreshold+1)
 
 	post := func(body map[string]interface{}) map[string]interface{} {
 		t.Helper()
@@ -2084,6 +2084,35 @@ func TestQuery_BroadScopeLints(t *testing.T) {
 		}
 	}
 	t.Fatal("timeout waiting for broad-search async job")
+}
+
+func TestQuery_BroadScopeLintThresholdConfig(t *testing.T) {
+	queryCfg := config.DefaultConfig().Query
+	queryCfg.SpillDir = t.TempDir()
+	queryCfg.BroadSourceLintThreshold = 3
+	queryCfg.BroadSegmentLintThreshold = 1000
+	srv, cleanup := startTestServerWithConfig(t, Config{Query: queryCfg})
+	defer cleanup()
+
+	ingestIndexedTestEvents(t, srv.Addr(), 3)
+
+	raw, _ := json.Marshal(map[string]interface{}{"q": `FROM * | head 1`})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	meta, _ := result["meta"].(map[string]interface{})
+	if codes := metaLintCodes(meta); !lintCodesContain(codes, spl2.LintAllSourcesHigh) {
+		t.Fatalf("configured broad-source lint codes: got %v, want %s", codes, spl2.LintAllSourcesHigh)
+	}
 }
 
 func TestErrorFormat(t *testing.T) {

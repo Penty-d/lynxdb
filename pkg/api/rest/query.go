@@ -145,7 +145,7 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 
 			return
 		}
-		writeSyncResultFromUsecase(w, result, limit, req.Offset, normalizedQuery,
+		writeSyncResultFromUsecase(w, result, limit, req.Offset, normalizedQuery, queryCfg,
 			!(req.Lint != nil && !*req.Lint), req.LintLimit, req.LintFull)
 	} else {
 		writeJobHandleFromUsecase(w, result)
@@ -214,7 +214,7 @@ func handlePlanError(w http.ResponseWriter, err error) {
 }
 
 // writeSyncResultFromUsecase writes 200 with full results from a SubmitResult.
-func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitResult, limit, offset int, query string, lintsEnabled bool, lintLimit int, lintFull bool) {
+func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitResult, limit, offset int, query string, queryCfg config.QueryConfig, lintsEnabled bool, lintLimit int, lintFull bool) {
 	var data interface{}
 	switch result.ResultType {
 	case server.ResultTypeAggregate, server.ResultTypeTimechart:
@@ -225,7 +225,7 @@ func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitRe
 		data = buildEventsResponse(result.Results, limit, offset)
 	}
 
-	lints := lintsWithBroadScope(result.Lints, query, &result.Stats, lintsEnabled, lintLimit, lintFull)
+	lints := lintsWithBroadScope(result.Lints, query, &result.Stats, queryCfg, lintsEnabled, lintLimit, lintFull)
 	respondData(w, http.StatusOK, data,
 		WithTookMS(result.Stats.ElapsedMS),
 		WithScanned(result.Stats.RowsScanned),
@@ -239,17 +239,13 @@ func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitRe
 		WithExplain(explainFromSearchStats(&result.Stats, query)))
 }
 
-const (
-	broadSourceLintThreshold  = 10
-	broadSegmentLintThreshold = 1000
-	restDefaultLintLimit      = 5
-)
+const restDefaultLintLimit = 5
 
-func lintsWithBroadScope(lints []spl2.QueryLint, query string, stats *server.SearchStats, enabled bool, limit int, full bool) []spl2.QueryLint {
+func lintsWithBroadScope(lints []spl2.QueryLint, query string, stats *server.SearchStats, queryCfg config.QueryConfig, enabled bool, limit int, full bool) []spl2.QueryLint {
 	if !enabled || stats == nil {
 		return lints
 	}
-	extra := broadScopeLints(query, stats)
+	extra := broadScopeLints(query, stats, queryCfg)
 	if len(extra) == 0 {
 		return lints
 	}
@@ -274,21 +270,22 @@ func lintsWithBroadScope(lints []spl2.QueryLint, query string, stats *server.Sea
 	return append([]spl2.QueryLint(nil), combined[:limit]...)
 }
 
-func broadScopeLints(query string, stats *server.SearchStats) []spl2.QueryLint {
+func broadScopeLints(query string, stats *server.SearchStats, queryCfg config.QueryConfig) []spl2.QueryLint {
 	allSources, hasSearch := broadScopeQueryShape(query)
 	if !allSources {
 		return nil
 	}
 	sourceCount := sourceScopeCount(stats)
 	segmentCount := stats.SegmentsTotal
-	if hasSearch && (sourceCount >= broadSourceLintThreshold || segmentCount >= broadSegmentLintThreshold) {
+	sourceThreshold, segmentThreshold := broadLintThresholds(queryCfg)
+	if hasSearch && ((sourceThreshold > 0 && sourceCount >= sourceThreshold) || (segmentThreshold > 0 && segmentCount >= segmentThreshold)) {
 		return []spl2.QueryLint{{
 			Code:     spl2.LintBroadSearch,
 			Message:  fmt.Sprintf("Broad search over %d sources; narrow with `FROM`, `source=`, or a time range", sourceCount),
 			Position: 0,
 		}}
 	}
-	if sourceCount >= broadSourceLintThreshold {
+	if sourceThreshold > 0 && sourceCount >= sourceThreshold {
 		return []spl2.QueryLint{{
 			Code:     spl2.LintAllSourcesHigh,
 			Message:  "Narrow the source with `FROM <source>` or `source=<name>`",
@@ -297,6 +294,20 @@ func broadScopeLints(query string, stats *server.SearchStats) []spl2.QueryLint {
 	}
 
 	return nil
+}
+
+func broadLintThresholds(queryCfg config.QueryConfig) (sourceThreshold, segmentThreshold int) {
+	defaults := config.DefaultConfig().Query
+	sourceThreshold = queryCfg.BroadSourceLintThreshold
+	if sourceThreshold == 0 {
+		sourceThreshold = defaults.BroadSourceLintThreshold
+	}
+	segmentThreshold = queryCfg.BroadSegmentLintThreshold
+	if segmentThreshold == 0 {
+		segmentThreshold = defaults.BroadSegmentLintThreshold
+	}
+
+	return sourceThreshold, segmentThreshold
 }
 
 func broadScopeQueryShape(query string) (allSources bool, hasSearch bool) {

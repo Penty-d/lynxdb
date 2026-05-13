@@ -168,6 +168,38 @@ query:
   job_gc_interval: "1m"
 ```
 
+## Advisory Lints
+
+### Broad Source Threshold
+
+The number of resolved sources that triggers the advisory all-source lint (`L032`) for `FROM *` queries.
+
+| Config Key | `query.broad_source_lint_threshold` |
+|---|---|
+| **Env Var** | `LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD` |
+| **Default** | `10` |
+| **Hot-Reloadable** | Yes |
+
+```yaml
+query:
+  broad_source_lint_threshold: 10
+```
+
+### Broad Search Segment Threshold
+
+The number of searched segments that can trigger the advisory broad-search lint (`L037`) for all-source searches.
+
+| Config Key | `query.broad_segment_lint_threshold` |
+|---|---|
+| **Env Var** | `LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD` |
+| **Default** | `1000` |
+| **Hot-Reloadable** | Yes |
+
+```yaml
+query:
+  broad_segment_lint_threshold: 1000
+```
+
 ## Complete Example
 
 ```yaml
@@ -177,6 +209,8 @@ query:
   max_concurrent: 20
   default_result_limit: 1000
   max_result_limit: 50000
+  broad_source_lint_threshold: 10
+  broad_segment_lint_threshold: 1000
   job_ttl: "10m"
   job_gc_interval: "1m"
 ```

@@ -201,6 +201,14 @@ type QueryConfig struct {
 	// Default: 1048576 (1MB). Set to 0 to disable the limit.
 	MaxQueryLength int `yaml:"max_query_length" json:"max_query_length"`
 
+	// BroadSourceLintThreshold is the selected source count that triggers
+	// advisory all-source and broad-search lints. Default: 10.
+	BroadSourceLintThreshold int `yaml:"broad_source_lint_threshold" json:"broad_source_lint_threshold"`
+
+	// BroadSegmentLintThreshold is the selected segment count that triggers
+	// advisory broad-search lints. Default: 1000.
+	BroadSegmentLintThreshold int `yaml:"broad_segment_lint_threshold" json:"broad_segment_lint_threshold"`
+
 	// PreviewSize is the maximum number of rows included in SSE progress
 	// preview events while a query is running. 0 disables preview.
 	// Default: 50.
@@ -450,6 +458,8 @@ func DefaultConfig() *Config {
 			BitmapSelectivityThreshold: 0.9,
 			SlowQueryThresholdMs:       1000,    // 1 second
 			MaxQueryLength:             1 << 20, // 1 MB
+			BroadSourceLintThreshold:   10,
+			BroadSegmentLintThreshold:  1000,
 			PreviewSize:                50,
 		},
 

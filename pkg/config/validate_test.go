@@ -102,6 +102,8 @@ func TestValidateQuery(t *testing.T) {
 		}, "must be >= max_query_memory_bytes"},
 		// F11: MaxQueryMemory validation
 		{"negative max_query_memory", func(q *QueryConfig) { q.MaxQueryMemory = -1 }, "query.max_query_memory_bytes"},
+		{"negative broad source lint threshold", func(q *QueryConfig) { q.BroadSourceLintThreshold = -1 }, "query.broad_source_lint_threshold"},
+		{"negative broad segment lint threshold", func(q *QueryConfig) { q.BroadSegmentLintThreshold = -1 }, "query.broad_segment_lint_threshold"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

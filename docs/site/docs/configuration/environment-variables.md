@@ -105,6 +105,8 @@ lynxdb server
 | `LYNXDB_QUERY_SPILL_DIR` | `query.spill_dir` | (os tempdir) |
 | `LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS` | `query.slow_query_threshold_ms` | `1000` |
 | `LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD` | `query.bitmap_selectivity_threshold` | `0.9` |
+| `LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD` | `query.broad_source_lint_threshold` | `10` |
+| `LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD` | `query.broad_segment_lint_threshold` | `1000` |
 | `LYNXDB_QUERY_MAX_BRANCH_PARALLELISM` | `query.max_branch_parallelism` | `0` (GOMAXPROCS) |
 | `LYNXDB_QUERY_DEDUP_EXACT` | `query.dedup_exact` | `false` |
 | `LYNXDB_QUERY_JOB_TTL` | `query.job_ttl` | `5m` |

@@ -940,6 +940,28 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Query.MaxBranchParallelism) }},
+	{LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD, "query.broad_source_lint_threshold",
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return err
+			}
+			c.Query.BroadSourceLintThreshold = n
+
+			return nil
+		},
+		func(c *Config) string { return strconv.Itoa(c.Query.BroadSourceLintThreshold) }},
+	{LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD, "query.broad_segment_lint_threshold",
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return err
+			}
+			c.Query.BroadSegmentLintThreshold = n
+
+			return nil
+		},
+		func(c *Config) string { return strconv.Itoa(c.Query.BroadSegmentLintThreshold) }},
 
 	// Storage — additional bindings
 	{LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT, "storage.remote_fetch_timeout",
