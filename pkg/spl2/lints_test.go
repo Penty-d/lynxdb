@@ -509,6 +509,11 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
 		},
 		{
+			name:      "slowest command",
+			query:     `from app | slowest 5 "uri path" by "duration ms"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
 			name:      "transaction command",
 			query:     `from app | transaction startswith="login event" "session id" endswith="logout event"`,
 			wantCodes: []string{LintDoubleQuotedName},

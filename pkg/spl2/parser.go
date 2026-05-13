@@ -5139,8 +5139,8 @@ func (p *Parser) parseSlowestCmd() ([]Command, error) {
 	var groupField string
 	durField := "duration_ms" // default
 
-	// Peek: if next token is an ident and it's NOT "by", it's the group field.
-	if isIdentLike(p.peek().Type) && p.peek().Type != TokenBy {
+	// Peek: if next token is a field name and it's NOT "by", it's the group field.
+	if (isIdentLike(p.peek().Type) || p.peek().Type == TokenString) && p.peek().Type != TokenBy {
 		groupField = p.advance().Literal
 	}
 

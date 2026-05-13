@@ -675,6 +675,23 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "slowest fields",
+			input: `FROM main | slowest 5 "uri path" by "duration ms"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*StatsCommand)
+				if got, want := cmd.GroupBy, []string{"uri path"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("slowest group by: got %v, want %v", got, want)
+				}
+				if len(cmd.Aggregations) != 1 || len(cmd.Aggregations[0].Args) != 1 {
+					t.Fatalf("slowest aggregations: got %+v", cmd.Aggregations)
+				}
+				field, ok := cmd.Aggregations[0].Args[0].(*FieldExpr)
+				if !ok || field.Name != "duration ms" {
+					t.Fatalf("slowest duration field: got %#v", cmd.Aggregations[0].Args[0])
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

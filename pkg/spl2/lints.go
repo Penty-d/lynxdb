@@ -397,6 +397,12 @@ func lintDoubleQuotedNames(tokens []Token) []QueryLint {
 					add(tokens[j].Pos)
 				}
 			}
+		case TokenSlowest:
+			for j := i + 1; j < len(tokens) && !isSegmentBoundary(tokens[j].Type); j++ {
+				if tokens[j].Type == TokenString {
+					add(tokens[j].Pos)
+				}
+			}
 		case TokenTransaction:
 			for j := i + 1; j < len(tokens) && !isSegmentBoundary(tokens[j].Type); j++ {
 				if tokens[j].Type == TokenString && peekTokenType(tokens, j-1) != TokenEq {
