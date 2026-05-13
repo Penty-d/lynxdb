@@ -205,13 +205,13 @@ func TestSuggestFunction(t *testing.T) {
 	}
 }
 
-func TestKnownAggregateFunctionsIncludesLynxAliases(t *testing.T) {
+func TestKnownAggregateFunctionsIncludesSupportedAggregates(t *testing.T) {
 	have := make(map[string]bool)
 	for _, fn := range KnownAggregateFunctions() {
 		have[fn] = true
 	}
 
-	for _, fn := range []string{"p50", "p75", "p90", "p95", "p99"} {
+	for _, fn := range []string{"min", "max", "p50", "p75", "p90", "p95", "p99"} {
 		if !have[fn] {
 			t.Fatalf("missing aggregate alias %q", fn)
 		}

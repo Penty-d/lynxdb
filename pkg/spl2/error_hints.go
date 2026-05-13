@@ -43,7 +43,7 @@ var knownEvalFunctions = []string{
 
 // knownAggregateFunctions is the list of supported aggregate functions.
 var knownAggregateFunctions = []string{
-	"count", "sum", "sumsq", "avg", "mean", "dc", "distinct_count", "estdc", "estdc_error", "values", "list", "mode",
+	"count", "sum", "sumsq", "avg", "mean", "min", "max", "dc", "distinct_count", "estdc", "estdc_error", "values", "list", "mode",
 	"stdev", "stdevp", "var", "varp", "range",
 	"per_second", "per_minute", "per_hour", "per_day",
 	"perc", "perc25", "perc50", "perc75", "perc90", "perc95", "perc99",
