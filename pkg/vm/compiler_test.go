@@ -484,6 +484,39 @@ func TestCompileInExpr(t *testing.T) {
 	}
 }
 
+func TestCompileInFunction(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "in",
+		Args: []spl2.Expr{
+			&spl2.FieldExpr{Name: "status"},
+			&spl2.LiteralExpr{Value: "200"},
+			&spl2.LiteralExpr{Value: "201"},
+			&spl2.LiteralExpr{Value: "204"},
+		},
+	}
+	prog, err := CompilePredicate(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	result, err := vm.Execute(prog, map[string]event.Value{"status": event.IntValue(204)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AsBool() {
+		t.Errorf("expected true for in(204, 200, 201, 204)")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"status": event.IntValue(500)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AsBool() {
+		t.Errorf("expected false for in(500, 200, 201, 204)")
+	}
+}
+
 func TestCompileShortCircuitAND(t *testing.T) {
 	// false AND x — should NOT evaluate x (x is a missing field, would cause no issue
 	// but we verify the result is false without needing x)

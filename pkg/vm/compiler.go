@@ -425,6 +425,19 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return fmt.Errorf("nullif expects 2 arguments, got %d", len(e.Args))
 		}
 		return c.compileNullIf(e.Args[0], e.Args[1])
+	case "in":
+		if len(e.Args) < 2 {
+			return fmt.Errorf("in expects at least 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		for _, arg := range e.Args[1:] {
+			if err := c.compileExpr(arg); err != nil {
+				return err
+			}
+		}
+		c.prog.EmitOp(OpInList, len(e.Args)-1)
 	case "isnull":
 		if len(e.Args) != 1 {
 			return fmt.Errorf("isnull expects 1 argument, got %d", len(e.Args))

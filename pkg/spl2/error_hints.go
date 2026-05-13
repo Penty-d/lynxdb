@@ -31,7 +31,7 @@ var knownCommands = []string{
 // knownFunctions is the list of all supported eval/aggregation functions.
 var knownFunctions = []string{
 	// Eval functions
-	"if", "case", "match", "like", "ilike", "cidrmatch", "coalesce",
+	"if", "case", "match", "like", "ilike", "cidrmatch", "coalesce", "in",
 	"tonumber", "toint", "todouble", "tostring", "tobool",
 	"round", "substr", "lower", "upper", "len", "ln", "log", "exp", "pow", "pi",
 	"abs", "ceil", "ceiling", "floor", "sqrt", "mvjoin", "mvappend", "mvdedup", "mvcount",
