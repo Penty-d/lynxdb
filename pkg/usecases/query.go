@@ -945,6 +945,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		if lintErr != nil {
 			lints, _ = spl2.LintProgram(plan.RawQuery, plan.Program)
 		}
+		lints = spl2.PrepareQueryLints(lints)
 		lints = applyLintOutputLimit(lints, req.LintLimit, req.LintFull)
 	}
 	job.SetAdvisoryMetadata(warnings, lints, req.Rewrites)

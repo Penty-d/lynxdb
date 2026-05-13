@@ -1827,6 +1827,13 @@ func TestQuery_LintOutputControls(t *testing.T) {
 	if len(defaultLints) != 5 {
 		t.Fatalf("default meta.lints: got %d, want 5 (%#v)", len(defaultLints), defaultMeta["lints"])
 	}
+	firstLint, _ := defaultLints[0].(map[string]interface{})
+	if reason, _ := firstLint["reason"].(string); reason == "" {
+		t.Fatalf("default meta.lints[0] missing reason: %#v", firstLint)
+	}
+	if severity, _ := firstLint["severity"].(string); severity == "" {
+		t.Fatalf("default meta.lints[0] missing severity: %#v", firstLint)
+	}
 
 	limitedMeta := post(map[string]interface{}{"q": query, "lint_limit": 2})
 	limitedLints, _ := limitedMeta["lints"].([]interface{})

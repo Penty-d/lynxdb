@@ -2,6 +2,43 @@ package spl2
 
 import "testing"
 
+func TestPrepareQueryLints_AnnotatesAndSorts(t *testing.T) {
+	lints := []QueryLint{
+		{Code: LintDoubleQuotedName, Message: "canon", Position: 2},
+		{Code: LintLeadingWildcard, Message: "slow", Position: 10},
+		{Code: LintRawExactCompare, Message: "raw", Position: 1},
+		{Code: LintDefaultSource, Message: "default", Position: 0},
+	}
+
+	got := PrepareQueryLints(lints)
+	wantCodes := []string{
+		LintRawExactCompare,
+		LintLeadingWildcard,
+		LintDefaultSource,
+		LintDoubleQuotedName,
+	}
+	if len(got) != len(wantCodes) {
+		t.Fatalf("len(PrepareQueryLints) = %d, want %d", len(got), len(wantCodes))
+	}
+	for i, want := range wantCodes {
+		if got[i].Code != want {
+			t.Fatalf("got[%d].Code = %q, want %q; lints=%+v", i, got[i].Code, want, got)
+		}
+		if got[i].Reason == "" {
+			t.Fatalf("got[%d].Reason is empty: %+v", i, got[i])
+		}
+		if got[i].Severity == "" {
+			t.Fatalf("got[%d].Severity is empty: %+v", i, got[i])
+		}
+	}
+	if got[0].Severity != LintSeverityWarning || got[0].Reason != "canon" {
+		t.Fatalf("first lint annotation = severity %q reason %q, want warning/canon", got[0].Severity, got[0].Reason)
+	}
+	if lints[0].Reason != "" || lints[0].Severity != "" {
+		t.Fatalf("PrepareQueryLints mutated input: %+v", lints[0])
+	}
+}
+
 func TestLintQuery_CountWithoutParens(t *testing.T) {
 	tests := []struct {
 		name      string

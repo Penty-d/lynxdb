@@ -1,11 +1,16 @@
 package spl2
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // QueryLint is a post-parse warning for syntactically valid queries.
 type QueryLint struct {
 	Code     string `json:"code"`
 	Message  string `json:"message"`
+	Reason   string `json:"reason,omitempty"`
+	Severity string `json:"severity,omitempty"`
 	Position int    `json:"position"`
 }
 
@@ -27,6 +32,88 @@ const (
 	LintTautologicalSearch = "L035"
 	LintDefaultMetricField = "L036"
 )
+
+const (
+	LintSeverityWarning = "warning"
+	LintSeverityNotice  = "notice"
+)
+
+// PrepareQueryLints enriches lints for API/UX presentation and returns them in
+// the RFC display order: more severe lints first, then earlier query positions.
+func PrepareQueryLints(lints []QueryLint) []QueryLint {
+	if len(lints) == 0 {
+		return lints
+	}
+
+	out := append([]QueryLint(nil), lints...)
+	for i := range out {
+		if out[i].Reason == "" {
+			out[i].Reason = lintReason(out[i].Code)
+		}
+		if out[i].Severity == "" {
+			out[i].Severity = lintSeverity(out[i].Code)
+		}
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		leftRank := lintSeverityRank(out[i].Severity)
+		rightRank := lintSeverityRank(out[j].Severity)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if out[i].Position != out[j].Position {
+			return lintPositionRank(out[i].Position) < lintPositionRank(out[j].Position)
+		}
+		if out[i].Code != out[j].Code {
+			return out[i].Code < out[j].Code
+		}
+		return out[i].Message < out[j].Message
+	})
+
+	return out
+}
+
+func lintReason(code string) string {
+	switch code {
+	case LintLeadingWildcard, LintTautologicalSearch:
+		return "slow"
+	case LintDefaultSource, LintIndexRewrite, LintUnsupportedCommand, LintMixedSearchAndOr, LintDefaultMetricField:
+		return "compat"
+	case LintStatsCountWide:
+		return "schema"
+	case LintOptionAfterArg, LintAmbiguousDedupArgs, LintDoubleQuotedName, LintCountWithoutParens, LintDeprecatedSort, LintReservedFieldName, LintRawExactCompare:
+		return "canon"
+	default:
+		return "canon"
+	}
+}
+
+func lintSeverity(code string) string {
+	switch code {
+	case LintLeadingWildcard, LintStatsCountWide, LintRawExactCompare, LintMixedSearchAndOr, LintDeepSearchNesting, LintTautologicalSearch:
+		return LintSeverityWarning
+	default:
+		return LintSeverityNotice
+	}
+}
+
+func lintSeverityRank(severity string) int {
+	switch severity {
+	case LintSeverityWarning:
+		return 0
+	case LintSeverityNotice:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func lintPositionRank(position int) int {
+	if position < 0 {
+		return int(^uint(0) >> 1)
+	}
+	return position
+}
 
 // LintQuery parses input and returns RFC lint warnings for valid queries.
 func LintQuery(input string) ([]QueryLint, error) {
