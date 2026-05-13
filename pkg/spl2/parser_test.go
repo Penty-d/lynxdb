@@ -382,6 +382,26 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "stats alias",
+			input: `FROM main | stats count() as "total count"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*StatsCommand)
+				if got, want := cmd.Aggregations[0].Alias, "total count"; got != want {
+					t.Fatalf("stats alias: got %q, want %q", got, want)
+				}
+			},
+		},
+		{
+			name:  "eval target",
+			input: `FROM main | eval "display name"=status`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*EvalCommand)
+				if got, want := cmd.Field, "display name"; got != want {
+					t.Fatalf("eval field: got %q, want %q", got, want)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

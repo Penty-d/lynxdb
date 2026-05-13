@@ -439,6 +439,16 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 			wantCodes: []string{LintDoubleQuotedName},
 		},
 		{
+			name:      "eval target",
+			query:     `from app | eval "display name" = status`,
+			wantCodes: []string{LintDoubleQuotedName},
+		},
+		{
+			name:      "let target",
+			query:     `from app | let "display name" = status`,
+			wantCodes: []string{LintDoubleQuotedName},
+		},
+		{
 			name:      "fields command",
 			query:     `from app | fields "user id", status`,
 			wantCodes: []string{LintDoubleQuotedName},

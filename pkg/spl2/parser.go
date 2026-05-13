@@ -3689,7 +3689,7 @@ func isFormatKeyword(t TokenType) bool {
 // or an ident-like keyword token. Returns an error otherwise.
 func (p *Parser) expectIdent() (Token, error) {
 	tok := p.peek()
-	if isIdentLike(tok.Type) {
+	if isIdentLike(tok.Type) || tok.Type == TokenString {
 		return p.advance(), nil
 	}
 
