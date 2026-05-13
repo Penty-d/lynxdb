@@ -24,6 +24,7 @@ const (
 	LintMixedSearchAndOr   = "L030"
 	LintDeepSearchNesting  = "L031"
 	LintReservedFieldName  = "L034"
+	LintTautologicalSearch = "L035"
 	LintDefaultMetricField = "L036"
 )
 
@@ -86,6 +87,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	lints = append(lints, lintMixedSearchAndOr(input, tokens)...)
 	lints = append(lints, lintDeepSearchNesting(prog)...)
 	lints = append(lints, lintReservedFieldNames(tokens)...)
+	lints = append(lints, lintTautologicalSearchWideRange(prog)...)
 	lints = append(lints, lintDefaultMetricField(tokens)...)
 
 	return lints, nil
@@ -409,6 +411,71 @@ func searchExprHasField(expr SearchExpr, field string) bool {
 	}
 
 	return false
+}
+
+func lintTautologicalSearchWideRange(prog *Program) []QueryLint {
+	if prog == nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for _, ds := range prog.Datasets {
+		lints = append(lints, lintTautologicalSearchWideRangeInQuery(ds.Query)...)
+	}
+	lints = append(lints, lintTautologicalSearchWideRangeInQuery(prog.Main)...)
+
+	return lints
+}
+
+func lintTautologicalSearchWideRangeInQuery(q *Query) []QueryLint {
+	if q == nil {
+		return nil
+	}
+
+	hasTimeBounds := q.Source != nil && q.Source.TimeRange != nil
+	var lints []QueryLint
+	for _, cmd := range q.Commands {
+		switch c := cmd.(type) {
+		case *SearchCommand:
+			if !hasTimeBounds && searchExprIsTautology(c.Expression) {
+				lints = append(lints, QueryLint{
+					Code:     LintTautologicalSearch,
+					Message:  "This scans everything; add a time range, source, or predicate",
+					Position: 0,
+				})
+			}
+			if searchExprHasField(c.Expression, "_time") {
+				hasTimeBounds = true
+			}
+		case *WhereCommand:
+			if exprHasField(c.Expr, "_time") {
+				hasTimeBounds = true
+			}
+		case *JoinCommand:
+			lints = append(lints, lintTautologicalSearchWideRangeInQuery(c.Subquery)...)
+		case *AppendCommand:
+			lints = append(lints, lintTautologicalSearchWideRangeInQuery(c.Subquery)...)
+		case *AppendcolsCommand:
+			lints = append(lints, lintTautologicalSearchWideRangeInQuery(c.Subquery)...)
+		case *AppendpipeCommand:
+			lints = append(lints, lintTautologicalSearchWideRangeInQuery(c.Subquery)...)
+		case *MultisearchCommand:
+			for _, sub := range c.Searches {
+				lints = append(lints, lintTautologicalSearchWideRangeInQuery(sub)...)
+			}
+		case *UnionCommand:
+			for _, sub := range c.Branches {
+				lints = append(lints, lintTautologicalSearchWideRangeInQuery(sub)...)
+			}
+		}
+	}
+
+	return lints
+}
+
+func searchExprIsTautology(expr SearchExpr) bool {
+	kw, ok := expr.(*SearchKeywordExpr)
+	return ok && kw.Value == "*"
 }
 
 func lintDefaultMetricField(tokens []Token) []QueryLint {
@@ -804,17 +871,17 @@ func lintLeadingWildcardsInSearch(expr SearchExpr) []QueryLint {
 	case *SearchNotExpr:
 		return lintLeadingWildcardsInSearch(e.Operand)
 	case *SearchKeywordExpr:
-		if strings.HasPrefix(e.Value, "*") {
+		if e.Value != "*" && strings.HasPrefix(e.Value, "*") {
 			return []QueryLint{leadingWildcardLint()}
 		}
 	case *SearchCompareExpr:
-		if strings.HasPrefix(e.Value, "*") {
+		if e.Value != "*" && strings.HasPrefix(e.Value, "*") {
 			return []QueryLint{leadingWildcardLint()}
 		}
 	case *SearchInExpr:
 		var lints []QueryLint
 		for _, value := range e.Values {
-			if strings.HasPrefix(value.Value, "*") {
+			if value.Value != "*" && strings.HasPrefix(value.Value, "*") {
 				lints = append(lints, leadingWildcardLint())
 			}
 		}

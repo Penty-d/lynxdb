@@ -587,6 +587,57 @@ func TestLintQuery_ReservedFieldNames(t *testing.T) {
 	}
 }
 
+func TestLintQuery_TautologicalSearchWideRange(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCodes []string
+	}{
+		{
+			name:      "search star",
+			query:     `from app | search *`,
+			wantCodes: []string{LintTautologicalSearch},
+		},
+		{
+			name:      "freehand star",
+			query:     `*`,
+			wantCodes: []string{LintTautologicalSearch},
+		},
+		{
+			name:      "source time range",
+			query:     `from app[-1h] | search *`,
+			wantCodes: nil,
+		},
+		{
+			name:      "time predicate before search",
+			query:     `from app | where _time >= "2025-01-01T00:00:00Z" | search *`,
+			wantCodes: nil,
+		},
+		{
+			name:      "field exists is not tautological",
+			query:     `from app | search status=*`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLintProgram_RequiresSuccessfulParse(t *testing.T) {
 	_, err := LintQuery(`from app | stats count(`)
 	if err == nil {
