@@ -773,6 +773,28 @@ func TestLintQuery_LynxFlowShortcutAvailable(t *testing.T) {
 			query:     `from app | where status >= 500 | stats count() by service`,
 			wantCodes: nil,
 		},
+		{
+			name:        "rate default span",
+			query:       `from app | timechart span=1m count() as rate`,
+			wantCodes:   []string{LintShortcutAvailable},
+			wantMessage: "Equivalent: `rate`",
+		},
+		{
+			name:        "rate span by field",
+			query:       `from app | timechart span=5m count() as rate by service`,
+			wantCodes:   []string{LintShortcutAvailable},
+			wantMessage: "Equivalent: `rate per 5m by service`",
+		},
+		{
+			name:      "already rate",
+			query:     `from app | rate per 5m by service`,
+			wantCodes: nil,
+		},
+		{
+			name:      "timechart count without rate alias keeps output name",
+			query:     `from app | timechart span=1m count()`,
+			wantCodes: nil,
+		},
 	}
 
 	for _, tt := range tests {
