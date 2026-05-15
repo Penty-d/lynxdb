@@ -31,7 +31,6 @@ func (b *BSIBuilder) BitCount() int {
 	return b.bsi.BitCount()
 }
 
-// Build returns the finished BSI.
 func (b *BSIBuilder) Build() *bsi.BSI {
 	return b.bsi
 }
