@@ -5,8 +5,8 @@ import { AuthGate } from "./components/AuthGate";
 import { CommandPalette } from "./components/CommandPalette";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { uiBase } from "./utils/base";
-import { SidebarProvider, SidebarInset } from "./components/ui/sidebar";
 import { Toaster } from "./components/ui/sonner";
+import { TooltipProvider } from "./components/ui/tooltip";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import {
   useOverlayStore,
@@ -45,23 +45,25 @@ export function App() {
   return (
     <AuthGate>
       <BrowserRouter basename={uiBase || "/"}>
-        <SidebarProvider defaultOpen={false}>
+        <TooltipProvider delayDuration={200}>
           <ShellShortcuts />
-          <Sidebar />
-          <SidebarInset>
-            <Suspense fallback={null}>
-              <Routes>
-                <Route path="/" element={<SearchView />} />
-                <Route path="/queries" element={<QueriesView />} />
-                <Route path="/status" element={<StatusView />} />
-                <Route path="/settings" element={<SettingsView />} />
-              </Routes>
-            </Suspense>
-          </SidebarInset>
+          <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
+            <Sidebar />
+            <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <Suspense fallback={null}>
+                <Routes>
+                  <Route path="/" element={<SearchView />} />
+                  <Route path="/queries" element={<QueriesView />} />
+                  <Route path="/status" element={<StatusView />} />
+                  <Route path="/settings" element={<SettingsView />} />
+                </Routes>
+              </Suspense>
+            </main>
+          </div>
           <CommandPalette />
           <HelpOverlay />
           <Toaster position="bottom-right" richColors closeButton />
-        </SidebarProvider>
+        </TooltipProvider>
       </BrowserRouter>
     </AuthGate>
   );
