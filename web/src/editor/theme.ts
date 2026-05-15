@@ -16,12 +16,12 @@ function makeTheme(dark: boolean) {
         overflow: "auto",
       },
       ".cm-content": {
-        caretColor: "var(--accent)",
+        caretColor: "var(--primary)",
         padding: "6px 12px",
         minHeight: "18px",
       },
       ".cm-cursor": {
-        borderLeftColor: "var(--accent)",
+        borderLeftColor: "var(--primary)",
       },
       "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
         backgroundColor: dark
