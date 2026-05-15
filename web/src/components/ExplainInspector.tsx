@@ -3,7 +3,8 @@ import { PipelineFlow } from "./PipelineFlow";
 import type { ExplainResult, QueryStats } from "../api/client";
 import type { DetailedStats } from "../api/client";
 import { formatMs } from "../utils/format";
-import styles from "./ExplainInspector.module.css";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
+import { Badge } from "./ui/badge";
 
 interface ExplainInspectorProps {
   explain: ExplainResult;
@@ -25,44 +26,35 @@ export function ExplainInspector({ explain, stats }: ExplainInspectorProps) {
 
   const ds = stats?.stats as DetailedStats | undefined;
 
-  const tabs: { id: TabId; label: string }[] = [
-    { id: "pipeline", label: "Pipeline" },
-    { id: "optimizer", label: "Optimizer Rules" },
-    { id: "scan", label: "Scan Plan" },
-    { id: "timing", label: "Timing" },
-  ];
-
   return (
-    <div className={styles.inspector}>
-      <div className={styles.tabBar}>
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`${styles.tab}${activeTab === tab.id ? ` ${styles.tabActive}` : ""}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+    <div className="mb-1 max-h-[300px] overflow-y-auto rounded-md border border-border bg-secondary animate-in slide-in-from-top-2 duration-150">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabId)} className="gap-0">
+        <TabsList variant="line" className="sticky top-0 z-[1] bg-secondary h-8 rounded-none border-b border-border px-1">
+          <TabsTrigger value="pipeline" className="text-xs h-7 px-2">Pipeline</TabsTrigger>
+          <TabsTrigger value="optimizer" className="text-xs h-7 px-2">Optimizer Rules</TabsTrigger>
+          <TabsTrigger value="scan" className="text-xs h-7 px-2">Scan Plan</TabsTrigger>
+          <TabsTrigger value="timing" className="text-xs h-7 px-2">Timing</TabsTrigger>
+        </TabsList>
 
-      <div className={styles.tabContent}>
-        {activeTab === "pipeline" && (
+        <TabsContent value="pipeline" className="p-2 m-0">
           <PipelineFlow
             stages={parsed.pipeline}
             optimizerRules={parsed.optimizer_rules}
           />
-        )}
+        </TabsContent>
 
-        {activeTab === "optimizer" && (
+        <TabsContent value="optimizer" className="p-2 m-0">
           <OptimizerRulesTab rules={parsed.optimizer_rules} />
-        )}
+        </TabsContent>
 
-        {activeTab === "scan" && <ScanPlanTab parsed={parsed} />}
+        <TabsContent value="scan" className="p-2 m-0">
+          <ScanPlanTab parsed={parsed} />
+        </TabsContent>
 
-        {activeTab === "timing" && <TimingTab parsed={parsed} ds={ds} />}
-      </div>
+        <TabsContent value="timing" className="p-2 m-0">
+          <TimingTab parsed={parsed} ds={ds} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -75,19 +67,21 @@ function OptimizerRulesTab({
   rules?: { name: string; description?: string; count: number }[];
 }) {
   if (!rules || rules.length === 0) {
-    return <div className={styles.emptyState}>No optimizer rules applied</div>;
+    return <div className="text-xs text-muted-foreground py-2">No optimizer rules applied</div>;
   }
 
   return (
     <div>
       {rules.map((rule) => (
-        <div key={rule.name} className={styles.ruleItem}>
-          <span className={styles.ruleName}>{formatRuleName(rule.name)}</span>
+        <div key={rule.name} className="flex items-baseline gap-2 py-1 border-b border-border last:border-0">
+          <span className="font-semibold text-xs font-mono text-foreground">{formatRuleName(rule.name)}</span>
           {rule.description && (
-            <span className={styles.ruleDesc}>{rule.description}</span>
+            <span className="text-[0.6875rem] text-muted-foreground flex-1">{rule.description}</span>
           )}
           {rule.count > 1 && (
-            <span className={styles.ruleCount}>x{rule.count}</span>
+            <Badge variant="secondary" className="text-[0.625rem] px-1 py-0 h-auto text-primary">
+              x{rule.count}
+            </Badge>
           )}
         </div>
       ))}
@@ -151,9 +145,9 @@ function ScanPlanTab({
   return (
     <div>
       {rows.map((row) => (
-        <div key={row.label} className={styles.scanRow}>
-          <span className={styles.scanLabel}>{row.label}</span>
-          <span className={styles.scanValue}>{row.value}</span>
+        <div key={row.label} className="flex gap-2 py-1 text-xs">
+          <span className="font-semibold text-muted-foreground min-w-[6.25rem] shrink-0">{row.label}</span>
+          <span className="text-muted-foreground font-mono text-[0.6875rem]">{row.value}</span>
         </div>
       ))}
     </div>
@@ -180,7 +174,7 @@ function TimingTab({
     entries.push({ label: "Pipeline", ms: ds.pipeline_ms });
 
   if (entries.length === 0) {
-    return <div className={styles.emptyState}>Timing data not available</div>;
+    return <div className="text-xs text-muted-foreground py-2">Timing data not available</div>;
   }
 
   const maxMs = Math.max(...entries.map((e) => e.ms), 1);
@@ -190,13 +184,13 @@ function TimingTab({
       {entries.map((entry) => {
         const widthPercent = Math.max((entry.ms / maxMs) * 100, 2);
         return (
-          <div key={entry.label} className={styles.timingRow}>
-            <span className={styles.timingLabel}>{entry.label}</span>
+          <div key={entry.label} className="flex items-center gap-2 py-1">
+            <span className="text-xs text-muted-foreground min-w-[4.375rem]">{entry.label}</span>
             <div
-              className={styles.timingBar}
+              className="h-1.5 rounded-full bg-primary transition-[width] duration-300"
               style={{ width: `${widthPercent}%` }}
             />
-            <span className={styles.timingValue}>{formatMs(entry.ms)}</span>
+            <span className="text-[0.6875rem] text-muted-foreground font-mono">{formatMs(entry.ms)}</span>
           </div>
         );
       })}
