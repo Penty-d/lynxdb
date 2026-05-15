@@ -19,17 +19,17 @@ interface FieldsPanelProps {
 function typeBadgeClass(abbrev: string): string {
   switch (abbrev) {
     case "str":
-      return styles.typeBadgeStr;
+      return styles.typeBadgeStr ?? "";
     case "int":
-      return styles.typeBadgeInt;
+      return styles.typeBadgeInt ?? "";
     case "flt":
-      return styles.typeBadgeFlt;
+      return styles.typeBadgeFlt ?? "";
     case "ts":
-      return styles.typeBadgeTs;
+      return styles.typeBadgeTs ?? "";
     case "bool":
-      return styles.typeBadgeBool;
+      return styles.typeBadgeBool ?? "";
     default:
-      return styles.typeBadgeStr;
+      return styles.typeBadgeStr ?? "";
   }
 }
 

@@ -85,12 +85,18 @@ function toStackedUPlotData(buckets: HistogramBucketGrouped[]): {
     new Array(buckets.length).fill(0),
   );
   for (let i = 0; i < buckets.length; i++) {
+    const bucket = buckets[i];
+    if (!bucket) continue;
     for (let s = 0; s < levels.length; s++) {
+      const level = levels[s];
+      if (!level) continue;
+      const rawArr = rawArrays[s];
+      if (!rawArr) continue;
       const count =
-        buckets[i].counts[levels[s]] ??
-        buckets[i].counts[levels[s].toUpperCase()] ??
+        bucket.counts[level] ??
+        bucket.counts[level.toUpperCase()] ??
         0;
-      rawArrays[s][i] = count;
+      rawArr[i] = count;
     }
   }
 
@@ -102,8 +108,11 @@ function toStackedUPlotData(buckets: HistogramBucketGrouped[]): {
   for (let i = 0; i < buckets.length; i++) {
     let cumulative = 0;
     for (let s = 0; s < levels.length; s++) {
-      cumulative += rawArrays[s][i];
-      stackedArrays[s][i] = cumulative;
+      const rawArr = rawArrays[s];
+      const stackedArr = stackedArrays[s];
+      if (!rawArr || !stackedArr) continue;
+      cumulative += rawArr[i] ?? 0;
+      stackedArr[i] = cumulative;
     }
     if (cumulative > maxCumulative) {
       maxCumulative = cumulative;
@@ -127,7 +136,7 @@ function formatTooltipTime(epochSec: number): string {
 }
 
 function levelColor(level: string): string {
-  return LEVEL_COLORS[level] || LEVEL_COLORS.other;
+  return LEVEL_COLORS[level] ?? LEVEL_COLORS["other"] ?? "#6e6e6e";
 }
 
 export function Timeline({
@@ -152,12 +161,14 @@ export function Timeline({
   // Tooltip handler for ungrouped mode
   const handleCursorMoveUngrouped = useCallback((u: uPlot) => {
     const idx = u.cursor.idx;
-    if (idx == null || idx < 0 || !u.data[0] || idx >= u.data[0].length) {
+    const xData = u.data[0];
+    const yData = u.data[1];
+    if (idx == null || idx < 0 || !xData || idx >= xData.length) {
       setTooltipVisible(false);
       return;
     }
-    const ts = u.data[0][idx];
-    const count = u.data[1][idx];
+    const ts = xData[idx] ?? 0;
+    const count = yData?.[idx];
     setTooltipContent([formatTooltipTime(ts), String(count ?? 0)]);
     setTooltipPos({
       x: (u.cursor.left ?? 0) + 10,
@@ -189,9 +200,10 @@ export function Timeline({
 
       const series: uPlot.Series[] = [{}]; // x-axis placeholder
       for (let s = 0; s < levels.length; s++) {
-        const color = levelColor(levels[s]);
+        const lvl = levels[s] ?? "";
+        const color = levelColor(lvl);
         series.push({
-          label: levels[s],
+          label: lvl,
           fill: color + "cc", // 80% opacity
           stroke: color,
           width: 0,
@@ -202,19 +214,22 @@ export function Timeline({
       // Tooltip for grouped mode
       const handleCursorGrouped = (u: uPlot) => {
         const idx = u.cursor.idx;
-        if (idx == null || idx < 0 || !u.data[0] || idx >= u.data[0].length) {
+        const xData = u.data[0];
+        if (idx == null || idx < 0 || !xData || idx >= xData.length) {
           setTooltipVisible(false);
           return;
         }
-        const ts = u.data[0][idx];
+        const ts = xData[idx] ?? 0;
         const lines = [formatTooltipTime(ts)];
         // Show per-level breakdown (top to bottom = reverse of stacking)
         for (let s = levels.length - 1; s >= 0; s--) {
-          const cumVal = u.data[s + 1][idx] ?? 0;
-          const prevVal = s > 0 ? (u.data[s][idx] ?? 0) : 0;
+          const cumArr = u.data[s + 1];
+          const prevArr = s > 0 ? u.data[s] : undefined;
+          const cumVal = cumArr?.[idx] ?? 0;
+          const prevVal = s > 0 ? (prevArr?.[idx] ?? 0) : 0;
           const raw = cumVal - prevVal;
           if (raw > 0) {
-            lines.push(`${levels[s]}: ${raw}`);
+            lines.push(`${levels[s] ?? ""}: ${raw}`);
           }
         }
         setTooltipContent(lines);
@@ -469,16 +484,20 @@ function barsPaths(widthFactor: number): uPlot.Series.PathBuilder {
   return (u: uPlot, seriesIdx: number, _idx0: number, _idx1: number) => {
     const xData = u.data[0];
     const yData = u.data[seriesIdx];
-    const xScale = u.scales.x;
-    const yScale = u.scales.y;
+    const xScale = u.scales["x"];
+    const yScale = u.scales["y"];
 
-    if (!xData || !yData || xData.length < 2) {
+    if (!xData || !yData || xData.length < 2 || !xScale || !yScale) {
       return null;
     }
 
-    const dataSpacing = xData.length > 1 ? xData[1] - xData[0] : 60;
-    const xMin = xScale.min ?? xData[0];
-    const xMax = xScale.max ?? xData[xData.length - 1];
+    // Both values are guaranteed defined: xData.length >= 2
+    const x0 = xData[0] ?? 0;
+    const x1 = xData[1] ?? 0;
+    const xLast = xData[xData.length - 1] ?? 0;
+    const dataSpacing = xData.length > 1 ? x1 - x0 : 60;
+    const xMin = xScale.min ?? x0;
+    const xMax = xScale.max ?? xLast;
     const plotWidth = u.bbox.width;
     const xRange = xMax - xMin || 1;
     const barWidthPx = Math.max(
@@ -498,7 +517,7 @@ function barsPaths(widthFactor: number): uPlot.Series.PathBuilder {
     for (let i = 0; i < xData.length; i++) {
       const xVal = xData[i];
       const yVal = yData[i];
-      if (yVal == null || yVal === 0) continue;
+      if (xVal == null || yVal == null || yVal === 0) continue;
 
       const cx = plotLeft + ((xVal - xMin) / xRange) * plotWidth;
       const barH = ((yVal - yMin) / (yMax - yMin)) * plotHeight;
@@ -530,19 +549,22 @@ function stackedBarsPaths(
   return (u: uPlot, seriesIdx: number, _idx0: number, _idx1: number) => {
     const xData = u.data[0];
     const yData = u.data[seriesIdx];
-    const xScale = u.scales.x;
-    const yScale = u.scales.y;
+    const xScale = u.scales["x"];
+    const yScale = u.scales["y"];
 
-    if (!xData || !yData || xData.length < 2) {
+    if (!xData || !yData || xData.length < 2 || !xScale || !yScale) {
       return null;
     }
 
     // Previous stacked series data (the bottom of this bar segment)
     const prevData = seriesLevel > 0 ? u.data[seriesIdx - 1] : null;
 
-    const dataSpacing = xData.length > 1 ? xData[1] - xData[0] : 60;
-    const xMin = xScale.min ?? xData[0];
-    const xMax = xScale.max ?? xData[xData.length - 1];
+    const x0 = xData[0] ?? 0;
+    const x1 = xData[1] ?? 0;
+    const xLast = xData[xData.length - 1] ?? 0;
+    const dataSpacing = xData.length > 1 ? x1 - x0 : 60;
+    const xMin = xScale.min ?? x0;
+    const xMax = xScale.max ?? xLast;
     const plotWidth = u.bbox.width;
     const xRange = xMax - xMin || 1;
     const barWidthPx = Math.max(
@@ -561,6 +583,7 @@ function stackedBarsPaths(
 
     for (let i = 0; i < xData.length; i++) {
       const xVal = xData[i];
+      if (xVal == null) continue;
       const topVal = yData[i] ?? 0;
       const bottomVal = prevData ? (prevData[i] ?? 0) : 0;
       if (topVal <= bottomVal) continue;

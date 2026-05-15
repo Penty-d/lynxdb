@@ -38,7 +38,9 @@ function mapRulesToStages(
     if (!targets) continue;
 
     for (let i = 0; i < stages.length; i++) {
-      const cmd = stages[i].command.toUpperCase();
+      const stage = stages[i];
+      if (!stage) continue;
+      const cmd = stage.command.toUpperCase();
       if (targets.includes(cmd)) {
         const existing = result.get(i) ?? [];
         existing.push(rule);

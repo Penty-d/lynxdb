@@ -17,7 +17,7 @@ export function extractDiagnostics(
   const diagnostics: Diagnostic[] = [];
   for (const err of explainResult.errors) {
     const match = err.message.match(POSITION_REGEX);
-    const pos = match ? parseInt(match[1], 10) : 0;
+    const pos = match ? parseInt(match[1] ?? "0", 10) : 0;
 
     // Keep the marker inside the document. When the reported position is at
     // or past the end, anchor it on the last character so CodeMirror never

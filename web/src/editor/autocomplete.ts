@@ -164,7 +164,7 @@ async function lynxflowCompletion(
   // --- After regex operators -> regex snippets ---
   const regexMatch = beforeCursor.match(/(?:=~|!~)(\s*["']?[^"'\s|()]*)$/);
   if (regexMatch) {
-    const typedPattern = regexMatch[1].trimStart();
+    const typedPattern = (regexMatch[1] ?? "").trimStart();
     return {
       from: context.pos - typedPattern.length,
       options: REGEX_TEMPLATES,
@@ -178,9 +178,9 @@ async function lynxflowCompletion(
     /([A-Za-z_][A-Za-z0-9_.:-]*)\s*(?:==|!=|=|<=|>=|<|>)(\s*["']?([^"'\s|()]*))$/,
   );
   if (fieldValueMatch) {
-    const fieldName = fieldValueMatch[1];
-    const typedValue = fieldValueMatch[2].trimStart();
-    const partialValue = fieldValueMatch[3];
+    const fieldName = fieldValueMatch[1] ?? "";
+    const typedValue = (fieldValueMatch[2] ?? "").trimStart();
+    const partialValue = fieldValueMatch[3] ?? "";
     // Verify it's a known field
     const isKnownField =
       BUILTIN_FIELDS.includes(fieldName) ||
@@ -207,7 +207,7 @@ async function lynxflowCompletion(
   );
   if (timeMatch) {
     return {
-      from: context.pos - timeMatch[1].length,
+      from: context.pos - (timeMatch[1] ?? "").length,
       options: TIME_VALUES,
       filter: true,
     };

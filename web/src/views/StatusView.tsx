@@ -34,11 +34,11 @@ function nested(
 function healthClass(health: string): string {
   switch (health) {
     case "healthy":
-      return styles.healthHealthy;
+      return styles.healthHealthy ?? "";
     case "degraded":
-      return styles.healthDegraded;
+      return styles.healthDegraded ?? "";
     default:
-      return styles.healthUnhealthy;
+      return styles.healthUnhealthy ?? "";
   }
 }
 

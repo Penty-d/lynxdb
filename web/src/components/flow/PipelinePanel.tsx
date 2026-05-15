@@ -28,6 +28,8 @@ export function PipelinePanel({
 
   const selected = stages[selectedIndex] ?? stages[stages.length - 1];
 
+  if (!selected) return null;
+
   return (
     <div className={styles.pipelinePanel}>
       {/* Hero: Fields for selected stage */}

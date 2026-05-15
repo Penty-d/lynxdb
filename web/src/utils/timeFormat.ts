@@ -42,8 +42,8 @@ export function parseRelativeExpression(
   const match = trimmed.match(re);
   if (!match) return null;
 
-  const fromPart = match[1]; // e.g. "2h"
-  const toPart = match[2]; // e.g. "30m ago" or "now"
+  const fromPart = match[1] ?? ""; // e.g. "2h"
+  const toPart = match[2] ?? ""; // e.g. "30m ago" or "now"
 
   const fromVal = `-${fromPart}`;
   let toVal: string;
@@ -54,7 +54,7 @@ export function parseRelativeExpression(
     // Strip " ago" suffix to get the duration part
     const toMatch = toPart.match(/^(\d+[smhdw])\s+ago$/i);
     if (!toMatch) return null;
-    toVal = `-${toMatch[1]}`;
+    toVal = `-${toMatch[1] ?? ""}`;
   }
 
   return { from: fromVal, to: toVal };

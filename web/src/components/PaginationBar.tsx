@@ -39,10 +39,13 @@ function computePageNumbers(
   const result: (number | "...")[] = [];
 
   for (let i = 0; i < sorted.length; i++) {
-    if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
+    const curr = sorted[i];
+    const prev = sorted[i - 1];
+    if (curr === undefined) continue;
+    if (i > 0 && prev !== undefined && curr - prev > 1) {
       result.push("...");
     }
-    result.push(sorted[i]);
+    result.push(curr);
   }
 
   return result;
