@@ -114,7 +114,8 @@ export async function executeQuery(
   if (to) body.to = to;
   if (limit) body.limit = limit;
   if (offset) body.offset = offset;
-  if (variables && Object.keys(variables).length > 0) body.variables = variables;
+  if (variables && Object.keys(variables).length > 0)
+    body.variables = variables;
 
   const resp = await apiFetch(`${BASE}/api/v1/query`, {
     method: "POST",
@@ -125,9 +126,7 @@ export async function executeQuery(
     const err = await resp
       .json()
       .catch(() => ({ error: { message: resp.statusText } }));
-    throw new Error(
-      err.error?.message || err.data?.error || resp.statusText,
-    );
+    throw new Error(err.error?.message || err.data?.error || resp.statusText);
   }
 
   const json = await resp.json();
@@ -314,9 +313,7 @@ export async function fetchExplain(
     const err = await resp
       .json()
       .catch(() => ({ error: { message: resp.statusText } }));
-    throw new Error(
-      err.error?.message || err.data?.error || resp.statusText,
-    );
+    throw new Error(err.error?.message || err.data?.error || resp.statusText);
   }
   const json = await resp.json();
   return json.data as ExplainResult;
@@ -354,11 +351,7 @@ export async function fetchViewDetail(name: string): Promise<ViewDetail> {
 
 // Re-export streaming types for convenience
 
-export type {
-  HybridResult,
-  StreamCallbacks,
-  ProgressData,
-} from "./streaming";
+export type { HybridResult, StreamCallbacks, ProgressData } from "./streaming";
 
 export {
   submitHybridQuery,

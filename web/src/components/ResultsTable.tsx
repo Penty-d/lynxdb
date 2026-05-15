@@ -1,4 +1,11 @@
-import { useRef, useState, useCallback, useLayoutEffect, useEffect, useMemo } from "preact/hooks";
+import {
+  useRef,
+  useState,
+  useCallback,
+  useLayoutEffect,
+  useEffect,
+  useMemo,
+} from "preact/hooks";
 import { ChevronRight, ChevronDown } from "lucide-preact";
 import type { QueryResult, EventsResult, AggregateResult } from "../api/client";
 import { updateSortInQuery, parseSortFromQuery } from "../utils/sortQuery";
@@ -84,7 +91,10 @@ function truncate(value: unknown, maxLen = 200): string {
 }
 
 function isNumeric(value: unknown): boolean {
-  return typeof value === "number" || (typeof value === "string" && value !== "" && !isNaN(Number(value)));
+  return (
+    typeof value === "number" ||
+    (typeof value === "string" && value !== "" && !isNaN(Number(value)))
+  );
 }
 
 /** Derive columns from events: _time first, then _raw, _source, source, then alphabetical */
@@ -231,7 +241,8 @@ export function ResultsTable({
       const startX = e.clientX;
       // Get the actual rendered width of the column header cell
       const headerCell = target.parentElement;
-      const startWidth = columnWidths[colName] || headerCell?.offsetWidth || 180;
+      const startWidth =
+        columnWidths[colName] || headerCell?.offsetWidth || 180;
 
       setResizingCol(colName);
 
@@ -253,19 +264,16 @@ export function ResultsTable({
     [columnWidths],
   );
 
-  const handleResizeDblClick = useCallback(
-    (e: MouseEvent, colName: string) => {
-      e.preventDefault();
-      e.stopPropagation();
-      // Remove stored width to reset to auto-fit (max-content)
-      setColumnWidths((prev) => {
-        const next = { ...prev };
-        delete next[colName];
-        return next;
-      });
-    },
-    [],
-  );
+  const handleResizeDblClick = useCallback((e: MouseEvent, colName: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Remove stored width to reset to auto-fit (max-content)
+    setColumnWidths((prev) => {
+      const next = { ...prev };
+      delete next[colName];
+      return next;
+    });
+  }, []);
 
   // ---- Sort handler ----
 
@@ -322,9 +330,10 @@ export function ResultsTable({
   const hasTimeCol = !effectiveIsAgg && columns.includes("_time");
 
   // ---- Virtual scroll calculations (with accordion offset) ----
-  const accordionHeight = expandedRowIndex !== null
-    ? getAccordionHeight(getRow(expandedRowIndex))
-    : 0;
+  const accordionHeight =
+    expandedRowIndex !== null
+      ? getAccordionHeight(getRow(expandedRowIndex))
+      : 0;
   const totalHeight = rowCount * ROW_HEIGHT + accordionHeight;
 
   let startIndex: number;
@@ -356,10 +365,7 @@ export function ResultsTable({
       yOffset += accordionHeight;
     }
 
-    const rowClasses = [
-      styles.row,
-      isExpanded ? styles.rowSelected : "",
-    ]
+    const rowClasses = [styles.row, isExpanded ? styles.rowSelected : ""]
       .filter(Boolean)
       .join(" ");
 
@@ -376,7 +382,10 @@ export function ResultsTable({
       >
         <div
           class={`${styles.gutter} ${isExpanded ? styles.gutterExpanded : ""}`}
-          onClick={(e: MouseEvent) => { e.stopPropagation(); handleRowToggle(i); }}
+          onClick={(e: MouseEvent) => {
+            e.stopPropagation();
+            handleRowToggle(i);
+          }}
           title={isExpanded ? "Collapse event" : "Expand event"}
         >
           {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -397,12 +406,7 @@ export function ResultsTable({
             .join(" ");
 
           return (
-            <div
-              key={col}
-              class={cellClasses}
-              title={fullValue}
-              role="cell"
-            >
+            <div key={col} class={cellClasses} title={fullValue} role="cell">
               {display}
             </div>
           );
@@ -417,7 +421,10 @@ export function ResultsTable({
         <div
           key={`accordion-${i}`}
           class={styles.accordionRow}
-          style={{ transform: `translateY(${accordionY}px)`, height: accordionHeight }}
+          style={{
+            transform: `translateY(${accordionY}px)`,
+            height: accordionHeight,
+          }}
         >
           <EventDetailInline event={row} onFilter={onFilter} />
         </div>,
@@ -429,7 +436,11 @@ export function ResultsTable({
 
   return (
     <div class={styles.wrapper} role="table" aria-label="Query results">
-      <div class={styles.scrollContainer} ref={scrollContainerRef} onScroll={handleScroll}>
+      <div
+        class={styles.scrollContainer}
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+      >
         {/* Header row inside scroll container for sticky top:0 */}
         <div class={styles.headerRow} style={gridStyle} role="row">
           <div class={styles.gutterHeader} />
@@ -466,10 +477,7 @@ export function ResultsTable({
         </div>
 
         {/* Scroll content area */}
-        <div
-          class={styles.scrollContent}
-          style={{ height: totalHeight }}
-        >
+        <div class={styles.scrollContent} style={{ height: totalHeight }}>
           {visibleRows}
         </div>
       </div>

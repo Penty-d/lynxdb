@@ -23,7 +23,11 @@ export interface HybridResult {
 
 export interface StreamCallbacks {
   onRow: (row: Record<string, unknown>) => void;
-  onMeta: (meta: { total?: number; scanned?: number; took_ms?: number }) => void;
+  onMeta: (meta: {
+    total?: number;
+    scanned?: number;
+    took_ms?: number;
+  }) => void;
   onError: (message: string) => void;
 }
 
@@ -79,9 +83,7 @@ export async function submitHybridQuery(
     const err = await resp
       .json()
       .catch(() => ({ error: { message: resp.statusText } }));
-    throw new Error(
-      err.error?.message || err.data?.error || resp.statusText,
-    );
+    throw new Error(err.error?.message || err.data?.error || resp.statusText);
   }
 
   const json = await resp.json();
@@ -140,9 +142,7 @@ export async function streamQuery(
     const err = await resp
       .json()
       .catch(() => ({ error: { message: resp.statusText } }));
-    callbacks.onError(
-      err.error?.message || err.data?.error || resp.statusText,
-    );
+    callbacks.onError(err.error?.message || err.data?.error || resp.statusText);
     return;
   }
 
@@ -299,8 +299,6 @@ export async function cancelJob(jobId: string): Promise<void> {
     const err = await resp
       .json()
       .catch(() => ({ error: { message: resp.statusText } }));
-    throw new Error(
-      err.error?.message || err.data?.error || resp.statusText,
-    );
+    throw new Error(err.error?.message || err.data?.error || resp.statusText);
   }
 }

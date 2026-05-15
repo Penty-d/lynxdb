@@ -53,7 +53,9 @@ function mapRulesToStages(
 export function PipelineFlow({ stages, optimizerRules }: PipelineFlowProps) {
   const [expandedStage, setExpandedStage] = useState<number | null>(null);
 
-  const ruleMap = optimizerRules ? mapRulesToStages(optimizerRules, stages) : new Map();
+  const ruleMap = optimizerRules
+    ? mapRulesToStages(optimizerRules, stages)
+    : new Map();
 
   const handleStageClick = (index: number) => {
     setExpandedStage(expandedStage === index ? null : index);
@@ -69,7 +71,9 @@ export function PipelineFlow({ stages, optimizerRules }: PipelineFlowProps) {
           return (
             <>
               {i > 0 && (
-                <span class={styles.arrow} aria-hidden="true">{"\u2192"}</span>
+                <span class={styles.arrow} aria-hidden="true">
+                  {"\u2192"}
+                </span>
               )}
               <div
                 class={`${styles.stageCard}${isSelected ? ` ${styles.stageCardActive}` : ""}`}
@@ -94,7 +98,9 @@ export function PipelineFlow({ stages, optimizerRules }: PipelineFlowProps) {
                 {stageRules && stageRules.length > 0 && (
                   <span
                     class={styles.optimizerBadge}
-                    title={stageRules.map((r: OptimizerRule) => r.name).join(", ")}
+                    title={stageRules
+                      .map((r: OptimizerRule) => r.name)
+                      .join(", ")}
                     aria-label={`Optimizer: ${stageRules.map((r: OptimizerRule) => r.name).join(", ")}`}
                   />
                 )}

@@ -1,8 +1,4 @@
-import {
-  SHORTCUTS,
-  formatShortcut,
-  helpOverlayOpen,
-} from "../utils/keyboard";
+import { SHORTCUTS, formatShortcut, helpOverlayOpen } from "../utils/keyboard";
 import type { ShortcutDef } from "../utils/keyboard";
 import styles from "./HelpOverlay.module.css";
 
@@ -43,9 +39,7 @@ const GROUPS: ShortcutGroup[] = [
   },
   {
     title: "Panels",
-    items: [
-      { def: SHORTCUTS.closePanel, label: "Close topmost panel" },
-    ],
+    items: [{ def: SHORTCUTS.closePanel, label: "Close topmost panel" }],
   },
 ];
 
@@ -58,10 +52,7 @@ export function HelpOverlay() {
 
   return (
     <div class={styles.backdrop} onClick={handleBackdropClick}>
-      <div
-        class={styles.modal}
-        onClick={(e: Event) => e.stopPropagation()}
-      >
+      <div class={styles.modal} onClick={(e: Event) => e.stopPropagation()}>
         <div class={styles.title}>Keyboard Shortcuts</div>
         <div class={styles.grid}>
           {GROUPS.map((group) => (

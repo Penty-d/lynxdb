@@ -65,7 +65,10 @@ export function FieldValuePopover({
   // Click-outside detection
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(e.target as Node)
+      ) {
         onClose();
       }
     }
@@ -105,7 +108,8 @@ export function FieldValuePopover({
   );
 
   const pos = computePosition(anchorRect);
-  const maxCount = values.length > 0 ? Math.max(...values.map((v) => v.count)) : 1;
+  const maxCount =
+    values.length > 0 ? Math.max(...values.map((v) => v.count)) : 1;
 
   return (
     <div
@@ -121,13 +125,9 @@ export function FieldValuePopover({
         <div class={styles.popoverSubtitle}>Top 10 values</div>
       </div>
 
-      {loading && (
-        <div class={styles.loadingState}>Loading...</div>
-      )}
+      {loading && <div class={styles.loadingState}>Loading...</div>}
 
-      {fetchError && (
-        <div class={styles.emptyState}>Failed to load values</div>
-      )}
+      {fetchError && <div class={styles.emptyState}>Failed to load values</div>}
 
       {!loading && !fetchError && values.length === 0 && (
         <div class={styles.emptyState}>No values found</div>
@@ -143,10 +143,7 @@ export function FieldValuePopover({
                   {v.value}
                 </span>
                 <div class={styles.valueBarContainer}>
-                  <div
-                    class={styles.valueBar}
-                    style={{ width: `${pct}%` }}
-                  />
+                  <div class={styles.valueBar} style={{ width: `${pct}%` }} />
                 </div>
                 <span class={styles.valueCount}>{v.count}</span>
                 <div class={styles.filterBtns}>

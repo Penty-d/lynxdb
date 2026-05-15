@@ -42,7 +42,11 @@ const SECTION_LABELS: Record<PaletteItem["section"], string> = {
   recent: "Recent Queries",
 };
 
-const SECTION_ORDER: PaletteItem["section"][] = ["navigation", "commands", "recent"];
+const SECTION_ORDER: PaletteItem["section"][] = [
+  "navigation",
+  "commands",
+  "recent",
+];
 
 function filterItems(items: PaletteItem[], q: string): PaletteItem[] {
   if (!q.trim()) return items;
@@ -142,8 +146,9 @@ export function CommandPalette() {
     },
   ];
 
-  const recentItems: PaletteItem[] = queryHistory.value.slice(0, 10).map(
-    (q, i) => ({
+  const recentItems: PaletteItem[] = queryHistory.value
+    .slice(0, 10)
+    .map((q, i) => ({
       id: `recent-${i}`,
       label: truncate(q, 60),
       section: "recent" as const,
@@ -152,8 +157,7 @@ export function CommandPalette() {
         paletteQuery.value = q;
         route(uiPath("/"));
       },
-    }),
-  );
+    }));
 
   const allItems = [...navigationItems, ...commandItems, ...recentItems];
   const filtered = filterItems(allItems, search);
@@ -231,9 +235,7 @@ export function CommandPalette() {
           }}
         />
         <div class={styles.results}>
-          {filtered.length === 0 && (
-            <div class={styles.empty}>No matches</div>
-          )}
+          {filtered.length === 0 && <div class={styles.empty}>No matches</div>}
           {grouped.map((group) => {
             const groupStartIndex = flatIndex;
             const groupItems = group.items.map((item, i) => {

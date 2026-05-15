@@ -19,9 +19,11 @@ export function LiveTailButton({ active, onToggle }: LiveTailButtonProps) {
       onClick={onToggle}
       aria-pressed={active}
       aria-label={active ? "Stop live tail" : "Start live tail"}
-      title={active
-        ? `Stop live tail (${formatShortcut(SHORTCUTS.toggleTail)})`
-        : `Start live tail (${formatShortcut(SHORTCUTS.toggleTail)})`}
+      title={
+        active
+          ? `Stop live tail (${formatShortcut(SHORTCUTS.toggleTail)})`
+          : `Start live tail (${formatShortcut(SHORTCUTS.toggleTail)})`
+      }
     >
       {active && <span class={styles.dot} aria-hidden="true" />}
       Live Tail

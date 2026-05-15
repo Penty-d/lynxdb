@@ -98,10 +98,7 @@ function JsonNode({ data, depth, keyName }: JsonNodeProps): JSX.Element {
 
     return (
       <div>
-        <div
-          class={styles.jsonNode}
-          style={{ paddingLeft: `${depth * 16}px` }}
-        >
+        <div class={styles.jsonNode} style={{ paddingLeft: `${depth * 16}px` }}>
           <span class={styles.jsonToggle} onClick={toggle}>
             {expanded ? "\u25BC" : "\u25B6"}
           </span>
@@ -157,10 +154,7 @@ function JsonNode({ data, depth, keyName }: JsonNodeProps): JSX.Element {
 
     return (
       <div>
-        <div
-          class={styles.jsonNode}
-          style={{ paddingLeft: `${depth * 16}px` }}
-        >
+        <div class={styles.jsonNode} style={{ paddingLeft: `${depth * 16}px` }}>
           <span class={styles.jsonToggle} onClick={toggle}>
             {expanded ? "\u25BC" : "\u25B6"}
           </span>

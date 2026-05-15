@@ -27,7 +27,10 @@ function safeString(value: unknown, fallback = "--"): string {
   return fallback;
 }
 
-function nested(obj: Record<string, unknown> | null, key: string): Record<string, unknown> {
+function nested(
+  obj: Record<string, unknown> | null,
+  key: string,
+): Record<string, unknown> {
   if (!obj) return {};
   const v = obj[key];
   if (v && typeof v === "object" && !Array.isArray(v)) {
@@ -65,7 +68,8 @@ export function StatusView(_props: Props) {
       error.value = null;
       lastUpdatedAt.value = new Date();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to fetch status";
+      const message =
+        err instanceof Error ? err.message : "Failed to fetch status";
       error.value = message;
     } finally {
       loading.value = false;
@@ -97,11 +101,7 @@ export function StatusView(_props: Props) {
       <div class={styles.errorState} role="alert">
         <div>Unable to connect to server</div>
         <div class={styles.errorMessage}>{error.value}</div>
-        <button
-          type="button"
-          class={styles.retryBtn}
-          onClick={loadStatus}
-        >
+        <button type="button" class={styles.retryBtn} onClick={loadStatus}>
           Retry
         </button>
       </div>
@@ -157,9 +157,7 @@ export function StatusView(_props: Props) {
         <div class={styles.card}>
           <div class={styles.cardTitle}>Events</div>
           <div class={styles.cardValue}>{formatCount(totalEvents)}</div>
-          <div class={styles.cardSubtext}>
-            {formatCount(todayEvents)} today
-          </div>
+          <div class={styles.cardSubtext}>{formatCount(todayEvents)} today</div>
         </div>
 
         {/* Storage card */}
@@ -168,7 +166,8 @@ export function StatusView(_props: Props) {
           <div class={styles.cardValue}>{formatBytes(usedBytes)}</div>
           {segmentCount > 0 && (
             <div class={styles.cardSubtext}>
-              {formatCount(segmentCount)} {segmentCount === 1 ? "segment" : "segments"}
+              {formatCount(segmentCount)}{" "}
+              {segmentCount === 1 ? "segment" : "segments"}
             </div>
           )}
         </div>
@@ -184,9 +183,7 @@ export function StatusView(_props: Props) {
         <div class={styles.card}>
           <div class={styles.cardTitle}>Materialized Views</div>
           <div class={styles.cardValue}>{totalViews}</div>
-          <div class={styles.cardSubtext}>
-            {activeViews} active
-          </div>
+          <div class={styles.cardSubtext}>{activeViews} active</div>
         </div>
 
         {/* Tail card */}

@@ -26,12 +26,16 @@ export function TableToolbar({
   useEffect(() => {
     if (!dropdownOpen) return;
     function onPointerDown(e: PointerEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
         setDropdownOpen(false);
       }
     }
     document.addEventListener("pointerdown", onPointerDown, true);
-    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", onPointerDown, true);
   }, [dropdownOpen]);
 
   const handleExportClick = useCallback(

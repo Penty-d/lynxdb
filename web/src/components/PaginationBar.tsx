@@ -16,7 +16,10 @@ const fmtNum = (n: number) => new Intl.NumberFormat().format(n);
  * Compute which page numbers to display. Always shows first, last,
  * and 2 pages around the current page, with "..." for gaps.
  */
-function computePageNumbers(current: number, total: number): (number | "...")[] {
+function computePageNumbers(
+  current: number,
+  total: number,
+): (number | "...")[] {
   if (total <= 7) {
     return Array.from({ length: total }, (_, i) => i + 1);
   }
@@ -24,7 +27,11 @@ function computePageNumbers(current: number, total: number): (number | "...")[] 
   const pages = new Set<number>();
   pages.add(1);
   pages.add(total);
-  for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) {
+  for (
+    let i = Math.max(2, current - 1);
+    i <= Math.min(total - 1, current + 1);
+    i++
+  ) {
     pages.add(i);
   }
 
@@ -49,7 +56,10 @@ export function PaginationBar({
   onPageSizeChange,
 }: PaginationBarProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const pageNumbers = useMemo(() => computePageNumbers(page, totalPages), [page, totalPages]);
+  const pageNumbers = useMemo(
+    () => computePageNumbers(page, totalPages),
+    [page, totalPages],
+  );
 
   return (
     <div class={styles.bar}>
@@ -102,7 +112,9 @@ export function PaginationBar({
         <select
           class={styles.sizeSelect}
           value={pageSize}
-          onChange={(e) => onPageSizeChange(Number((e.target as HTMLSelectElement).value))}
+          onChange={(e) =>
+            onPageSizeChange(Number((e.target as HTMLSelectElement).value))
+          }
           aria-label="Page size"
         >
           {PAGE_SIZES.map((size) => (

@@ -70,9 +70,7 @@ export function parseRelativeExpression(
  *
  * Returns null if the expression does not match.
  */
-export function parseNowExpression(
-  expr: string,
-): string | undefined | null {
+export function parseNowExpression(expr: string): string | undefined | null {
   const trimmed = expr.trim().toLowerCase();
   if (trimmed === "now") return undefined;
 
@@ -144,7 +142,9 @@ export function getTimeRangeLabel(
   // Relative values (start with "-" or "now")
   const isRelativeFrom = from.startsWith("-");
   const isRelativeTo =
-    to === undefined || to === "now" || (to !== undefined && to.startsWith("-"));
+    to === undefined ||
+    to === "now" ||
+    (to !== undefined && to.startsWith("-"));
 
   if (isRelativeFrom && isRelativeTo) {
     const fromLabel = relativeToLabel(from);

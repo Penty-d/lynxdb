@@ -7,7 +7,10 @@ import { linter } from "@codemirror/lint";
 import { lynxflowLanguage } from "./lynxflow-lang";
 import { lynxTheme, lynxHighlighting } from "./theme";
 import { lynxflowAutocompletion } from "./autocomplete";
-import { navigateHistory, resetHistoryNavigation } from "../stores/queryHistory";
+import {
+  navigateHistory,
+  resetHistoryNavigation,
+} from "../stores/queryHistory";
 import styles from "./QueryEditor.module.css";
 
 interface QueryEditorProps {
@@ -26,7 +29,12 @@ export interface QueryEditorHandle {
 // Compartment for dynamically toggling line numbers based on line count
 const lineNumberCompartment = new Compartment();
 
-export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEditorProps) {
+export function QueryEditor({
+  value,
+  onChange,
+  onExecute,
+  editorRef,
+}: QueryEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -49,13 +57,15 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const runQuery = keymap.of([{
-      key: "Mod-Enter",
-      run: () => {
-        onExecuteRef.current();
-        return true;
+    const runQuery = keymap.of([
+      {
+        key: "Mod-Enter",
+        run: () => {
+          onExecuteRef.current();
+          return true;
+        },
       },
-    }]);
+    ]);
 
     const state = EditorState.create({
       doc: value,
@@ -67,13 +77,15 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
         lynxHighlighting,
         lynxflowAutocompletion(),
         // Shift+Enter for newline: placed AFTER autocomplete to avoid Pitfall 5
-        keymap.of([{
-          key: "Shift-Enter",
-          run: (view) => {
-            view.dispatch(view.state.replaceSelection("\n"));
-            return true;
+        keymap.of([
+          {
+            key: "Shift-Enter",
+            run: (view) => {
+              view.dispatch(view.state.replaceSelection("\n"));
+              return true;
+            },
           },
-        }]),
+        ]),
         // Ctrl+Up/Down for query history navigation
         keymap.of([
           {
@@ -83,7 +95,11 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
               if (result !== null) {
                 isHistoryNavigationRef.current = true;
                 view.dispatch({
-                  changes: { from: 0, to: view.state.doc.length, insert: result },
+                  changes: {
+                    from: 0,
+                    to: view.state.doc.length,
+                    insert: result,
+                  },
                 });
                 isHistoryNavigationRef.current = false;
               }
@@ -97,7 +113,11 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
               if (result !== null) {
                 isHistoryNavigationRef.current = true;
                 view.dispatch({
-                  changes: { from: 0, to: view.state.doc.length, insert: result },
+                  changes: {
+                    from: 0,
+                    to: view.state.doc.length,
+                    insert: result,
+                  },
                 });
                 isHistoryNavigationRef.current = false;
               }
@@ -108,7 +128,9 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
         // No-op linter sets up diagnostic display infrastructure (Pitfall 6).
         // Actual diagnostics are dispatched via setDiagnostics from the parent.
         linter(() => [], { delay: 0 }),
-        placeholder('from main | where level="error" | group by _source compute count()'),
+        placeholder(
+          'from main | where level="error" | group by _source compute count()',
+        ),
         // Dynamic line numbers via Compartment: starts with no line numbers (single line)
         lineNumberCompartment.of([]),
         EditorView.updateListener.of((update) => {
@@ -128,33 +150,37 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
               hasLineNumbersRef.current = shouldHaveNumbers;
               update.view.dispatch({
                 effects: lineNumberCompartment.reconfigure(
-                  shouldHaveNumbers ? lineNumbers() : []
+                  shouldHaveNumbers ? lineNumbers() : [],
                 ),
               });
             }
           }
         }),
         // Enter: accept completion if open, otherwise run query
-        keymap.of([{
-          key: "Enter",
-          run: (view) => {
-            if (completionStatus(view.state) === "active") {
-              return acceptCompletion(view);
-            }
-            onExecuteRef.current();
-            return true;
+        keymap.of([
+          {
+            key: "Enter",
+            run: (view) => {
+              if (completionStatus(view.state) === "active") {
+                return acceptCompletion(view);
+              }
+              onExecuteRef.current();
+              return true;
+            },
           },
-        }]),
+        ]),
         // Tab accepts the current completion when the panel is open
-        keymap.of([{
-          key: "Tab",
-          run: (view) => {
-            if (completionStatus(view.state) === "active") {
-              return acceptCompletion(view);
-            }
-            return false;
+        keymap.of([
+          {
+            key: "Tab",
+            run: (view) => {
+              if (completionStatus(view.state) === "active") {
+                return acceptCompletion(view);
+              }
+              return false;
+            },
           },
-        }]),
+        ]),
         EditorView.contentAttributes.of({ "aria-label": "Query editor" }),
       ],
     });
@@ -200,7 +226,7 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
         hasLineNumbersRef.current = shouldHaveNumbers;
         view.dispatch({
           effects: lineNumberCompartment.reconfigure(
-            shouldHaveNumbers ? lineNumbers() : []
+            shouldHaveNumbers ? lineNumbers() : [],
           ),
         });
       }
@@ -222,7 +248,10 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
     const onMove = (moveEvent: PointerEvent) => {
       const deltaY = moveEvent.clientY - startY;
       const maxHeight = window.innerHeight * 0.5; // 50vh cap
-      const newHeight = Math.max(32, Math.min(dragStartHeightRef.current + deltaY, maxHeight));
+      const newHeight = Math.max(
+        32,
+        Math.min(dragStartHeightRef.current + deltaY, maxHeight),
+      );
       manualHeightRef.current = newHeight;
       if (wrapRef.current) {
         wrapRef.current.style.height = `${newHeight}px`;

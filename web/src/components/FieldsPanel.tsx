@@ -56,7 +56,9 @@ export function FieldsPanel({
   const [search, setSearch] = useState("");
   const [popoverField, setPopoverField] = useState<string | null>(null);
   const [popoverAnchor, setPopoverAnchor] = useState<DOMRect | null>(null);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const handleSearchChange = useCallback((e: Event) => {
@@ -84,8 +86,8 @@ export function FieldsPanel({
   const searchLower = debouncedSearch.toLowerCase();
 
   const filteredSelected = useMemo(() => {
-    const fields = selectedFields.filter((name) =>
-      !searchLower || name.toLowerCase().includes(searchLower)
+    const fields = selectedFields.filter(
+      (name) => !searchLower || name.toLowerCase().includes(searchLower),
     );
     return fields;
   }, [selectedFields, searchLower]);
@@ -93,35 +95,42 @@ export function FieldsPanel({
   // Available = catalog fields NOT in selectedFields, filtered by search, sorted alphabetically
   const filteredAvailable = useMemo(() => {
     return catalogFields
-      .filter((f) =>
-        !selectedSet.has(f.name) &&
-        (!searchLower || f.name.toLowerCase().includes(searchLower))
+      .filter(
+        (f) =>
+          !selectedSet.has(f.name) &&
+          (!searchLower || f.name.toLowerCase().includes(searchLower)),
       )
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [catalogFields, selectedSet, searchLower]);
 
-  const handleFieldClick = useCallback((fieldName: string, e: MouseEvent) => {
-    const target = e.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    if (popoverField === fieldName) {
-      setPopoverField(null);
-      setPopoverAnchor(null);
-    } else {
-      setPopoverField(fieldName);
-      setPopoverAnchor(rect);
-    }
-  }, [popoverField]);
+  const handleFieldClick = useCallback(
+    (fieldName: string, e: MouseEvent) => {
+      const target = e.currentTarget as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      if (popoverField === fieldName) {
+        setPopoverField(null);
+        setPopoverAnchor(null);
+      } else {
+        setPopoverField(fieldName);
+        setPopoverAnchor(rect);
+      }
+    },
+    [popoverField],
+  );
 
   const handlePopoverClose = useCallback(() => {
     setPopoverField(null);
     setPopoverAnchor(null);
   }, []);
 
-  const handlePopoverFilter = useCallback((field: string, value: string, exclude: boolean) => {
-    onFilter?.(field, value, exclude);
-    setPopoverField(null);
-    setPopoverAnchor(null);
-  }, [onFilter]);
+  const handlePopoverFilter = useCallback(
+    (field: string, value: string, exclude: boolean) => {
+      onFilter?.(field, value, exclude);
+      setPopoverField(null);
+      setPopoverAnchor(null);
+    },
+    [onFilter],
+  );
 
   function renderFieldRow(fieldName: string) {
     const catalog = catalogMap.get(fieldName);
@@ -164,9 +173,11 @@ export function FieldsPanel({
         <div class={styles.sectionHeader}>
           Selected Fields ({filteredSelected.length})
         </div>
-        {filteredSelected.length > 0
-          ? filteredSelected.map((name) => renderFieldRow(name))
-          : <div class={styles.emptyFields}>No selected fields</div>}
+        {filteredSelected.length > 0 ? (
+          filteredSelected.map((name) => renderFieldRow(name))
+        ) : (
+          <div class={styles.emptyFields}>No selected fields</div>
+        )}
       </div>
 
       <div class={styles.divider} />
@@ -176,9 +187,11 @@ export function FieldsPanel({
         <div class={styles.sectionHeader}>
           Available Fields ({filteredAvailable.length})
         </div>
-        {filteredAvailable.length > 0
-          ? filteredAvailable.map((f) => renderFieldRow(f.name))
-          : <div class={styles.emptyFields}>No available fields</div>}
+        {filteredAvailable.length > 0 ? (
+          filteredAvailable.map((f) => renderFieldRow(f.name))
+        ) : (
+          <div class={styles.emptyFields}>No available fields</div>
+        )}
       </div>
 
       {/* Field value popover */}

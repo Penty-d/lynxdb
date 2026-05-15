@@ -37,7 +37,11 @@ export function Sidebar() {
     <nav class={styles.sidebar}>
       <div class={styles.top}>
         <a href={uiPath("/")} class={styles.logo}>
-          <img src={uiPath("/lynxdb-icon.png")} alt="LynxDB" class={styles.logoIcon} />
+          <img
+            src={uiPath("/lynxdb-icon.png")}
+            alt="LynxDB"
+            class={styles.logoIcon}
+          />
           <span class={styles.logoText}>LynxDB</span>
         </a>
         {NAV_ITEMS.map(({ path, icon: Icon, label }) => (
@@ -57,7 +61,11 @@ export function Sidebar() {
           type="button"
           class={styles.navItem}
           onClick={toggleTheme}
-          title={theme.value === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          title={
+            theme.value === "dark"
+              ? "Switch to light mode"
+              : "Switch to dark mode"
+          }
         >
           {theme.value === "dark" ? <Sun size={20} /> : <Moon size={20} />}
           <span class={styles.navLabel}>

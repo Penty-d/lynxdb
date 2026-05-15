@@ -1,5 +1,8 @@
 import { useState, useEffect } from "preact/hooks";
-import type { QueryStats as QueryStatsType, DetailedStats } from "../api/client";
+import type {
+  QueryStats as QueryStatsType,
+  DetailedStats,
+} from "../api/client";
 import { formatCount, formatMs, formatBytes } from "../utils/format";
 import { formatElapsed } from "../utils/format";
 import styles from "./QueryStats.module.css";
@@ -19,7 +22,12 @@ interface QueryStatsProps {
   /** Row count ticking up during streaming */
   streamingCount?: number;
   /** Aggregation progress data from SSE */
-  progress?: { percent: number; scanned: number; total: number; elapsedMs: number } | null;
+  progress?: {
+    percent: number;
+    scanned: number;
+    total: number;
+    elapsedMs: number;
+  } | null;
   /** True when query was canceled by user */
   canceled?: boolean;
   /** Elapsed milliseconds since query started (ticking live) */
@@ -47,7 +55,9 @@ function formatCompactStats(
   const ds = stats.stats as DetailedStats | undefined;
 
   const parts: string[] = [];
-  parts.push(`${formatCount(resultCount)} ${resultCount === 1 ? "result" : "results"}`);
+  parts.push(
+    `${formatCount(resultCount)} ${resultCount === 1 ? "result" : "results"}`,
+  );
   parts.push(`in ${formatMs(stats.took_ms)}`);
 
   if (ds?.segments_total != null && ds.segments_scanned != null) {
@@ -86,13 +96,15 @@ function formatCompactStats(
 function getOptimizationBadges(ds: DetailedStats): string[] {
   const badges: string[] = [];
   if (ds.cache_hit) badges.push("cache");
-  if (ds.segments_skipped_bloom && ds.segments_skipped_bloom > 0) badges.push("bloom");
+  if (ds.segments_skipped_bloom && ds.segments_skipped_bloom > 0)
+    badges.push("bloom");
   if (ds.partial_agg_used) badges.push("partial-agg");
   if (ds.topk_used) badges.push("TopK");
   if (ds.vectorized_filter_used) badges.push("vectorized");
   if (ds.dict_filter_used) badges.push("dict-filter");
   if (ds.count_star_optimized) badges.push("count(*)");
-  if (ds.inverted_index_hits && ds.inverted_index_hits > 0) badges.push("inverted-idx");
+  if (ds.inverted_index_hits && ds.inverted_index_hits > 0)
+    badges.push("inverted-idx");
   return badges;
 }
 
@@ -141,8 +153,12 @@ export function QueryStatsBar({
         <div class={styles.bar} role="status" aria-live="polite">
           <span class={styles.reconnectingDot} aria-hidden="true" />
           <span class={styles.reconnectingLabel}>Reconnecting...</span>
-          <span class={styles.tailSep} aria-hidden="true">&mdash;</span>
-          <span>{formatCount(count)} {count === 1 ? "event" : "events"}</span>
+          <span class={styles.tailSep} aria-hidden="true">
+            &mdash;
+          </span>
+          <span>
+            {formatCount(count)} {count === 1 ? "event" : "events"}
+          </span>
         </div>
       );
     }
@@ -155,7 +171,9 @@ export function QueryStatsBar({
       <div class={styles.bar} role="status" aria-live="polite">
         <span class={styles.tailDot} aria-hidden="true" />
         <span class={styles.tailLabel}>Live Tail</span>
-        <span class={styles.tailSep} aria-hidden="true">&mdash;</span>
+        <span class={styles.tailSep} aria-hidden="true">
+          &mdash;
+        </span>
         <span>{statusText}</span>
       </div>
     );
@@ -164,11 +182,14 @@ export function QueryStatsBar({
   /* --- Canceled state --- */
   if (canceled) {
     const elapsed = formatElapsed(elapsedMs ?? 0);
-    const hasPartialResults = streamingCount !== undefined && streamingCount > 0;
+    const hasPartialResults =
+      streamingCount !== undefined && streamingCount > 0;
 
     return (
       <div class={styles.bar} role="status" aria-live="polite">
-        <span class={styles.canceledIcon} aria-hidden="true">&#9888;</span>
+        <span class={styles.canceledIcon} aria-hidden="true">
+          &#9888;
+        </span>
         {hasPartialResults
           ? `Canceled \u2014 ${formatCount(streamingCount!)} partial results in ${elapsed}`
           : `Canceled \u2014 ${elapsed}`}
@@ -191,10 +212,15 @@ export function QueryStatsBar({
     return (
       <div class={styles.bar} role="status" aria-live="polite">
         <div class={styles.progressTrack}>
-          <div class={styles.progressFill} style={{ width: `${progress.percent}%` }} />
+          <div
+            class={styles.progressFill}
+            style={{ width: `${progress.percent}%` }}
+          />
         </div>
         {`${formatCount(progress.scanned)}/${formatCount(progress.total)} segments (${Math.round(progress.percent)}%) \u2014 ${formatElapsed(elapsedMs ?? progress.elapsedMs)}`}
-        {isPreview && <span class={styles.previewHint}>Showing partial results\u2026</span>}
+        {isPreview && (
+          <span class={styles.previewHint}>Showing partial results\u2026</span>
+        )}
       </div>
     );
   }
@@ -212,7 +238,9 @@ export function QueryStatsBar({
   if (error) {
     return (
       <div class={styles.bar} role="alert">
-        <span class={styles.errorIcon} aria-hidden="true">&#9888;</span>
+        <span class={styles.errorIcon} aria-hidden="true">
+          &#9888;
+        </span>
         <span class={styles.errorMsg}>{error}</span>
       </div>
     );
@@ -232,16 +260,29 @@ export function QueryStatsBar({
   const mvSpeedup = ds?.mv_speedup;
 
   // Determine if we have detail data to expand
-  const hasDetail = ds && (ds.scan_ms != null || ds.pipeline_ms != null || badges.length > 0 || ds.processed_bytes != null);
+  const hasDetail =
+    ds &&
+    (ds.scan_ms != null ||
+      ds.pipeline_ms != null ||
+      badges.length > 0 ||
+      ds.processed_bytes != null);
 
   return (
-    <div class={hasDetail ? styles.barColumn : styles.bar} role="status" aria-live="polite">
+    <div
+      class={hasDetail ? styles.barColumn : styles.bar}
+      role="status"
+      aria-live="polite"
+    >
       <div class={styles.compactLine}>
-        <span class={styles.success} aria-hidden="true">&#10003;</span>
+        <span class={styles.success} aria-hidden="true">
+          &#10003;
+        </span>
         <span>{compactText}</span>
         {acceleratedBy && (
           <span class={styles.mvBadge}>
-            <span class={styles.mvIcon} aria-hidden="true">&#9889;</span>
+            <span class={styles.mvIcon} aria-hidden="true">
+              &#9889;
+            </span>
             MV: {acceleratedBy}
             {mvSpeedup && ` (~${mvSpeedup})`}
           </span>
@@ -270,22 +311,34 @@ export function QueryStatsBar({
       {expanded && ds && (
         <div class={styles.expandedRow}>
           {ds.scan_ms != null && (
-            <span class={styles.latencyDetail}>Scan: {formatMs(ds.scan_ms)}</span>
+            <span class={styles.latencyDetail}>
+              Scan: {formatMs(ds.scan_ms)}
+            </span>
           )}
           {ds.pipeline_ms != null && (
-            <span class={styles.latencyDetail}>Pipeline: {formatMs(ds.pipeline_ms)}</span>
+            <span class={styles.latencyDetail}>
+              Pipeline: {formatMs(ds.pipeline_ms)}
+            </span>
           )}
           {ds.parse_ms != null && (
-            <span class={styles.latencyDetail}>Parse: {formatMs(ds.parse_ms)}</span>
+            <span class={styles.latencyDetail}>
+              Parse: {formatMs(ds.parse_ms)}
+            </span>
           )}
           {ds.optimize_ms != null && (
-            <span class={styles.latencyDetail}>Optimize: {formatMs(ds.optimize_ms)}</span>
+            <span class={styles.latencyDetail}>
+              Optimize: {formatMs(ds.optimize_ms)}
+            </span>
           )}
           {badges.map((b) => (
-            <span key={b} class={styles.badge}>{b}</span>
+            <span key={b} class={styles.badge}>
+              {b}
+            </span>
           ))}
           {ds.processed_bytes != null && ds.processed_bytes > 0 && (
-            <span class={styles.latencyDetail}>{formatBytes(ds.processed_bytes)} processed</span>
+            <span class={styles.latencyDetail}>
+              {formatBytes(ds.processed_bytes)} processed
+            </span>
           )}
         </div>
       )}

@@ -16,7 +16,8 @@ interface CommandEntry {
 
 function getCommands(field: string, fieldType?: string): CommandEntry[] {
   const f = field;
-  const isNumeric = fieldType === "int" || fieldType === "float" || fieldType === "flt";
+  const isNumeric =
+    fieldType === "int" || fieldType === "float" || fieldType === "flt";
 
   if (isNumeric) {
     return [

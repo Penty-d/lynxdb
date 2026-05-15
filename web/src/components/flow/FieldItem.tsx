@@ -51,13 +51,10 @@ export function FieldItem({
     }
   }, [onInsertCommand, name]);
 
-  const handleMoreClick = useCallback(
-    (e: MouseEvent) => {
-      e.stopPropagation();
-      setMenuOpen((prev) => !prev);
-    },
-    [],
-  );
+  const handleMoreClick = useCallback((e: MouseEvent) => {
+    e.stopPropagation();
+    setMenuOpen((prev) => !prev);
+  }, []);
 
   const handleCloseMenu = useCallback(() => {
     setMenuOpen(false);

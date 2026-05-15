@@ -14,9 +14,7 @@ type TabId = "pipeline" | "optimizer" | "scan" | "timing";
 
 /** Format a rule name: replace underscores with spaces, title case. */
 function formatRuleName(name: string): string {
-  return name
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function ExplainInspector({ explain, stats }: ExplainInspectorProps) {
@@ -61,13 +59,9 @@ export function ExplainInspector({ explain, stats }: ExplainInspectorProps) {
           <OptimizerRulesTab rules={parsed.optimizer_rules} />
         )}
 
-        {activeTab === "scan" && (
-          <ScanPlanTab parsed={parsed} />
-        )}
+        {activeTab === "scan" && <ScanPlanTab parsed={parsed} />}
 
-        {activeTab === "timing" && (
-          <TimingTab parsed={parsed} ds={ds} />
-        )}
+        {activeTab === "timing" && <TimingTab parsed={parsed} ds={ds} />}
       </div>
     </div>
   );
@@ -75,7 +69,11 @@ export function ExplainInspector({ explain, stats }: ExplainInspectorProps) {
 
 // Optimizer Rules tab
 
-function OptimizerRulesTab({ rules }: { rules?: { name: string; description?: string; count: number }[] }) {
+function OptimizerRulesTab({
+  rules,
+}: {
+  rules?: { name: string; description?: string; count: number }[];
+}) {
   if (!rules || rules.length === 0) {
     return <div class={styles.emptyState}>No optimizer rules applied</div>;
   }
@@ -99,7 +97,11 @@ function OptimizerRulesTab({ rules }: { rules?: { name: string; description?: st
 
 // Scan Plan tab
 
-function ScanPlanTab({ parsed }: { parsed: NonNullable<ExplainResult["parsed"]> }) {
+function ScanPlanTab({
+  parsed,
+}: {
+  parsed: NonNullable<ExplainResult["parsed"]>;
+}) {
   const rows: { label: string; value: string }[] = [];
 
   if (parsed.source_scope) {
@@ -114,7 +116,9 @@ function ScanPlanTab({ parsed }: { parsed: NonNullable<ExplainResult["parsed"]> 
 
   rows.push({
     label: "Search terms",
-    value: parsed.search_terms?.length ? parsed.search_terms.join(", ") : "none",
+    value: parsed.search_terms?.length
+      ? parsed.search_terms.join(", ")
+      : "none",
   });
 
   rows.push({
@@ -167,10 +171,13 @@ function TimingTab({
 }) {
   const entries: { label: string; ms: number }[] = [];
 
-  if (parsed.parse_ms != null) entries.push({ label: "Parse", ms: parsed.parse_ms });
-  if (parsed.optimize_ms != null) entries.push({ label: "Optimize", ms: parsed.optimize_ms });
+  if (parsed.parse_ms != null)
+    entries.push({ label: "Parse", ms: parsed.parse_ms });
+  if (parsed.optimize_ms != null)
+    entries.push({ label: "Optimize", ms: parsed.optimize_ms });
   if (ds?.scan_ms != null) entries.push({ label: "Scan", ms: ds.scan_ms });
-  if (ds?.pipeline_ms != null) entries.push({ label: "Pipeline", ms: ds.pipeline_ms });
+  if (ds?.pipeline_ms != null)
+    entries.push({ label: "Pipeline", ms: ds.pipeline_ms });
 
   if (entries.length === 0) {
     return <div class={styles.emptyState}>Timing data not available</div>;

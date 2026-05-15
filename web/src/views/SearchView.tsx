@@ -22,15 +22,15 @@ import {
   fetchExplain,
   fetchFields,
 } from "../api/client";
-import {
-  submitHybridQuery,
-  subscribeJobProgress,
-} from "../api/streaming";
+import { submitHybridQuery, subscribeJobProgress } from "../api/streaming";
 import { authHeaders } from "../api/auth";
 import { startTail } from "../api/sse";
 import { pushHistory } from "../stores/queryHistory";
 import { writeQueryToHash, readQueryFromHash } from "../stores/queryUrl";
-import { dispatchDiagnostics, clearEditorDiagnostics } from "../editor/diagnostics";
+import {
+  dispatchDiagnostics,
+  clearEditorDiagnostics,
+} from "../editor/diagnostics";
 import {
   generateCSV,
   generateJSON,
@@ -121,7 +121,12 @@ const streaming = signal(false);
 /** Row count during streaming */
 const streamingCount = signal(0);
 /** Aggregation progress data */
-const progressData = signal<{ percent: number; scanned: number; total: number; elapsedMs: number } | null>(null);
+const progressData = signal<{
+  percent: number;
+  scanned: number;
+  total: number;
+  elapsedMs: number;
+} | null>(null);
 /** True when query was canceled */
 const canceled = signal(false);
 /** Live elapsed milliseconds since query started */
@@ -133,13 +138,18 @@ const isPreview = signal(false);
 const page = signal(1);
 const pageSize = signal(100);
 const viewMode = signal<"table" | "list">("table");
-const copyTooltip = signal<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 });
+const copyTooltip = signal<{ visible: boolean; x: number; y: number }>({
+  visible: false,
+  x: 0,
+  y: 0,
+});
 
 /** Maximum events to keep in the live tail buffer */
 const TAIL_BUFFER_CAP = 10_000;
 
 /** Module-level getter for the current EditorView -- set by the component */
-let getEditorView: (() => import("@codemirror/view").EditorView | null) | null = null;
+let getEditorView: (() => import("@codemirror/view").EditorView | null) | null =
+  null;
 
 /** Debounce timer for live explain diagnostics */
 let explainDebounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -177,7 +187,10 @@ function stopElapsedTimer() {
 }
 
 function cleanupActiveQuery() {
-  if (jobProgressCleanup) { jobProgressCleanup(); jobProgressCleanup = null; }
+  if (jobProgressCleanup) {
+    jobProgressCleanup();
+    jobProgressCleanup = null;
+  }
   stopElapsedTimer();
   activeAbortController = null;
 }
@@ -202,7 +215,10 @@ function deriveColumns(r: QueryResult): string[] {
     const priority = ["_time", "_raw", "_source", "source"];
     const ordered: string[] = [];
     for (const p of priority) {
-      if (keySet.has(p)) { ordered.push(p); keySet.delete(p); }
+      if (keySet.has(p)) {
+        ordered.push(p);
+        keySet.delete(p);
+      }
     }
     return ordered.concat(Array.from(keySet).sort());
   }
@@ -265,12 +281,18 @@ function runPostQueryEffects(
           timelineBuckets.value = histResult.buckets;
           groupedBuckets.value = [];
         })
-        .catch(() => { /* non-critical */ });
+        .catch(() => {
+          /* non-critical */
+        });
     });
 
   fetchExplain(q, fromVal, toVal)
-    .then((explain) => { explainResult.value = explain; })
-    .catch(() => { /* non-critical */ });
+    .then((explain) => {
+      explainResult.value = explain;
+    })
+    .catch(() => {
+      /* non-critical */
+    });
 
   fetchFields()
     .then((fields) => {
@@ -279,7 +301,9 @@ function runPostQueryEffects(
       for (const f of fields) m.set(f.name, f.type);
       fieldTypeMap.value = m;
     })
-    .catch(() => { /* non-critical */ });
+    .catch(() => {
+      /* non-critical */
+    });
 }
 
 /**
@@ -346,7 +370,14 @@ function runQueryAndRefresh(
   // Start elapsed timer
   startElapsedTimer();
 
-  submitHybridQuery(q, fromVal, toVal, currentSize, currentOffset, controller.signal)
+  submitHybridQuery(
+    q,
+    fromVal,
+    toVal,
+    currentSize,
+    currentOffset,
+    controller.signal,
+  )
     .then((hybrid) => {
       // Discard stale responses
       if (gen !== queryGeneration) return;
@@ -416,14 +447,23 @@ function runQueryAndRefresh(
         (data: unknown) => {
           // onComplete — SSE complete event is { data: QueryResult, meta: { took_ms, scanned, stats } }
           if (gen !== queryGeneration) return;
-          const payload = data as { data: QueryResult; meta?: Record<string, unknown> } | QueryResult;
-          const queryResult: QueryResult = (payload && typeof payload === "object" && "data" in payload && "meta" in payload)
-            ? (payload as { data: QueryResult }).data
-            : (payload as QueryResult);
-          const metaStats = (payload && typeof payload === "object" && "meta" in payload)
-            ? (payload as { meta: Record<string, unknown> }).meta
-            : undefined;
-          const detailedStats = metaStats?.stats as Record<string, unknown> | undefined;
+          const payload = data as
+            | { data: QueryResult; meta?: Record<string, unknown> }
+            | QueryResult;
+          const queryResult: QueryResult =
+            payload &&
+            typeof payload === "object" &&
+            "data" in payload &&
+            "meta" in payload
+              ? (payload as { data: QueryResult }).data
+              : (payload as QueryResult);
+          const metaStats =
+            payload && typeof payload === "object" && "meta" in payload
+              ? (payload as { meta: Record<string, unknown> }).meta
+              : undefined;
+          const detailedStats = metaStats?.stats as
+            | Record<string, unknown>
+            | undefined;
 
           batch(() => {
             result.value = queryResult ?? null;
@@ -433,11 +473,14 @@ function runQueryAndRefresh(
               query_id: jobId,
               stats: detailedStats
                 ? {
-                    segments_total:      detailedStats.segments_total as number ?? 0,
-                    segments_scanned:    detailedStats.segments_scanned as number ?? 0,
-                    segments_skipped_bf: detailedStats.segments_skipped_bloom as number ?? 0,
-                    rows_scanned:        detailedStats.rows_scanned as number ?? 0,
-                    took_ms:             (metaStats?.took_ms as number) ?? elapsedMs.value,
+                    segments_total:
+                      (detailedStats.segments_total as number) ?? 0,
+                    segments_scanned:
+                      (detailedStats.segments_scanned as number) ?? 0,
+                    segments_skipped_bf:
+                      (detailedStats.segments_skipped_bloom as number) ?? 0,
+                    rows_scanned: (detailedStats.rows_scanned as number) ?? 0,
+                    took_ms: (metaStats?.took_ms as number) ?? elapsedMs.value,
                   }
                 : undefined,
             };
@@ -446,8 +489,14 @@ function runQueryAndRefresh(
             loading.value = false;
             isPreview.value = false;
           });
-           stopElapsedTimer();
-          runPostQueryEffectsDebounced(q, fromVal, toVal, currentPage, currentSize);
+          stopElapsedTimer();
+          runPostQueryEffectsDebounced(
+            q,
+            fromVal,
+            toVal,
+            currentPage,
+            currentSize,
+          );
           cleanupActiveQuery();
         },
         (message: string) => {
@@ -511,7 +560,9 @@ function runQueryAndRefresh(
               dispatchDiagnostics(view, q, explain);
             }
           })
-          .catch(() => { /* non-critical */ });
+          .catch(() => {
+            /* non-critical */
+          });
       }
 
       cleanupActiveQuery();
@@ -584,7 +635,9 @@ export function SearchView(_props: Props) {
               clearEditorDiagnostics(view);
             }
           })
-          .catch(() => { /* non-critical */ });
+          .catch(() => {
+            /* non-critical */
+          });
       }, 500);
     } else {
       // Clear diagnostics when query is empty
@@ -602,7 +655,13 @@ export function SearchView(_props: Props) {
     }
     // Reset to page 1 on new query execution (Pitfall 5)
     page.value = 1;
-    runQueryAndRefresh(query.value.trim(), from.value, to.value, 1, pageSize.value);
+    runQueryAndRefresh(
+      query.value.trim(),
+      from.value,
+      to.value,
+      1,
+      pageSize.value,
+    );
   }, []);
 
   const handleSidebarToggle = useCallback(() => {
@@ -632,7 +691,13 @@ export function SearchView(_props: Props) {
     histogramBrushed.value = true;
 
     page.value = 1;
-    runQueryAndRefresh(query.value.trim(), from.value, to.value, 1, pageSize.value);
+    runQueryAndRefresh(
+      query.value.trim(),
+      from.value,
+      to.value,
+      1,
+      pageSize.value,
+    );
   }, []);
 
   const handleHistogramReset = useCallback(() => {
@@ -640,7 +705,13 @@ export function SearchView(_props: Props) {
     to.value = undefined;
     histogramBrushed.value = false;
     page.value = 1;
-    runQueryAndRefresh(query.value.trim(), from.value, to.value, 1, pageSize.value);
+    runQueryAndRefresh(
+      query.value.trim(),
+      from.value,
+      to.value,
+      1,
+      pageSize.value,
+    );
   }, []);
 
   /* --- Sort handler --- */
@@ -658,26 +729,35 @@ export function SearchView(_props: Props) {
   }, []);
 
   /* --- Filter handler (from EventDetail [+]/[-] buttons) --- */
-  const handleFilter = useCallback((field: string, value: string, exclude: boolean) => {
-    const newQuery = appendFilter(query.value, field, value, exclude);
-    query.value = newQuery;
-    page.value = 1; // Reset to page 1 on filter change (Pitfall 6)
+  const handleFilter = useCallback(
+    (field: string, value: string, exclude: boolean) => {
+      const newQuery = appendFilter(query.value, field, value, exclude);
+      query.value = newQuery;
+      page.value = 1; // Reset to page 1 on filter change (Pitfall 6)
 
-    // Update editor content to show the new query
-    const view = getEditorView?.();
-    if (view) {
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: newQuery },
-      });
-    }
+      // Update editor content to show the new query
+      const view = getEditorView?.();
+      if (view) {
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: newQuery },
+        });
+      }
 
-    runQueryAndRefresh(newQuery, from.value, to.value, 1, pageSize.value);
-  }, []);
+      runQueryAndRefresh(newQuery, from.value, to.value, 1, pageSize.value);
+    },
+    [],
+  );
 
   /* --- Pagination handlers --- */
   const handlePageChange = useCallback((newPage: number) => {
     page.value = newPage;
-    runQueryAndRefresh(query.value.trim(), from.value, to.value, newPage, pageSize.value);
+    runQueryAndRefresh(
+      query.value.trim(),
+      from.value,
+      to.value,
+      newPage,
+      pageSize.value,
+    );
   }, []);
 
   const handlePageSizeChange = useCallback((newSize: number) => {
@@ -703,65 +783,79 @@ export function SearchView(_props: Props) {
   }, []);
 
   /* --- Export handler --- */
-  const handleExport = useCallback(async (format: "csv" | "json", scope: "page" | "all") => {
-    let rows: Record<string, unknown>[];
-    let columns: string[];
+  const handleExport = useCallback(
+    async (format: "csv" | "json", scope: "page" | "all") => {
+      let rows: Record<string, unknown>[];
+      let columns: string[];
 
-    if (scope === "page") {
-      // Use current result data
-      const r = result.value;
-      if (!r) return;
-      columns = deriveColumns(r);
-      rows = getResultRows(r);
-    } else {
-      // Fetch all results via streaming endpoint
-      try {
-        const resp = await fetch("/api/v1/query/stream", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ q: query.value, from: from.value, to: to.value }),
-        });
-        if (!resp.ok) {
-          // Fallback to current page data
-          const r = result.value;
-          if (!r) return;
-          columns = deriveColumns(r);
-          rows = getResultRows(r);
-        } else {
-          const text = await resp.text();
-          rows = text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-          if (rows.length > 0) {
-            const keySet = new Set<string>();
-            for (const row of rows.slice(0, 100)) {
-              for (const key of Object.keys(row)) keySet.add(key);
-            }
-            const priority = ["_time", "_raw", "_source", "source"];
-            const ordered: string[] = [];
-            for (const p of priority) {
-              if (keySet.has(p)) { ordered.push(p); keySet.delete(p); }
-            }
-            columns = ordered.concat(Array.from(keySet).sort());
-          } else {
-            return;
-          }
-        }
-      } catch {
-        // On network error, fallback to current page
+      if (scope === "page") {
+        // Use current result data
         const r = result.value;
         if (!r) return;
         columns = deriveColumns(r);
         rows = getResultRows(r);
+      } else {
+        // Fetch all results via streaming endpoint
+        try {
+          const resp = await fetch("/api/v1/query/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({
+              q: query.value,
+              from: from.value,
+              to: to.value,
+            }),
+          });
+          if (!resp.ok) {
+            // Fallback to current page data
+            const r = result.value;
+            if (!r) return;
+            columns = deriveColumns(r);
+            rows = getResultRows(r);
+          } else {
+            const text = await resp.text();
+            rows = text
+              .trim()
+              .split("\n")
+              .filter(Boolean)
+              .map((line) => JSON.parse(line));
+            if (rows.length > 0) {
+              const keySet = new Set<string>();
+              for (const row of rows.slice(0, 100)) {
+                for (const key of Object.keys(row)) keySet.add(key);
+              }
+              const priority = ["_time", "_raw", "_source", "source"];
+              const ordered: string[] = [];
+              for (const p of priority) {
+                if (keySet.has(p)) {
+                  ordered.push(p);
+                  keySet.delete(p);
+                }
+              }
+              columns = ordered.concat(Array.from(keySet).sort());
+            } else {
+              return;
+            }
+          }
+        } catch {
+          // On network error, fallback to current page
+          const r = result.value;
+          if (!r) return;
+          columns = deriveColumns(r);
+          rows = getResultRows(r);
+        }
       }
-    }
 
-    if (format === "csv") {
-      const csv = generateCSV(columns, rows);
-      downloadFile(csv, generateFilename("csv"), "text/csv");
-    } else {
-      const json = generateJSON(rows);
-      downloadFile(json, generateFilename("json"), "application/json");
-    }
-  }, []);
+      if (format === "csv") {
+        const csv = generateCSV(columns, rows);
+        downloadFile(csv, generateFilename("csv"), "text/csv");
+      } else {
+        const json = generateJSON(rows);
+        downloadFile(json, generateFilename("json"), "application/json");
+      }
+    },
+    [],
+  );
 
   /* --- Live Tail toggle --- */
   const handleTailToggle = useCallback(() => {
@@ -795,9 +889,8 @@ export function SearchView(_props: Props) {
       onEvent(event: TailEvent) {
         const prev = tailEvents.value;
         const next = [event, ...prev];
-        tailEvents.value = next.length > TAIL_BUFFER_CAP
-          ? next.slice(0, TAIL_BUFFER_CAP)
-          : next;
+        tailEvents.value =
+          next.length > TAIL_BUFFER_CAP ? next.slice(0, TAIL_BUFFER_CAP) : next;
 
         if (autoScrollPaused.current) {
           tailNewCount.value = tailNewCount.value + 1;
@@ -834,7 +927,9 @@ export function SearchView(_props: Props) {
   /** Click handler for the "new events" badge -- scroll back to top */
   const handleNewEventsBadgeClick = useCallback(() => {
     if (!resultsAreaRef.current) return;
-    const viewport = resultsAreaRef.current.querySelector("[class*='viewport']");
+    const viewport = resultsAreaRef.current.querySelector(
+      "[class*='viewport']",
+    );
     if (viewport) {
       viewport.scrollTop = 0;
     }
@@ -851,10 +946,15 @@ export function SearchView(_props: Props) {
   useKeyboardShortcuts({
     onFocusEditor: () => editorHandleRef.current?.focus(),
     onToggleTail: handleTailToggle,
-    onToggleSidebar: () => { sidebarVisible.value = !sidebarVisible.value; },
+    onToggleSidebar: () => {
+      sidebarVisible.value = !sidebarVisible.value;
+    },
     onClosePanel: () => {
       // Layered close: explain inspector > blur editor
-      if (explainOpen.value) { explainOpen.value = false; return; }
+      if (explainOpen.value) {
+        explainOpen.value = false;
+        return;
+      }
       editorHandleRef.current?.getView()?.contentDOM.blur();
     },
     onOpenPalette: () => {
@@ -876,7 +976,9 @@ export function SearchView(_props: Props) {
       query.value = q;
       const view = getEditorView?.();
       if (view) {
-        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: q } });
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: q },
+        });
       }
       page.value = 1;
       runQueryAndRefresh(q, from.value, to.value, 1, pageSize.value);
@@ -921,8 +1023,8 @@ export function SearchView(_props: Props) {
 
   // Fetch indexes, views, and field catalog on mount for the flow sidebar
   useEffect(() => {
-    Promise.allSettled([fetchIndexes(), fetchViews(), fetchFields()])
-      .then(([idx, views, fields]) => {
+    Promise.allSettled([fetchIndexes(), fetchViews(), fetchFields()]).then(
+      ([idx, views, fields]) => {
         if (idx.status === "fulfilled") sidebarIndexes.value = idx.value;
         if (views.status === "fulfilled") sidebarViews.value = views.value;
         if (fields.status === "fulfilled") {
@@ -933,7 +1035,8 @@ export function SearchView(_props: Props) {
           }
           fieldTypeMap.value = m;
         }
-      });
+      },
+    );
   }, []);
 
   // Restore query, time range, and pagination from URL hash on mount (Pitfall 4: defer execution)
@@ -947,7 +1050,13 @@ export function SearchView(_props: Props) {
       if (hashData.size) pageSize.value = hashData.size;
       // Defer execution to ensure editor has rendered
       setTimeout(() => {
-        runQueryAndRefresh(hashData.q, from.value, to.value, page.value, pageSize.value);
+        runQueryAndRefresh(
+          hashData.q,
+          from.value,
+          to.value,
+          page.value,
+          pageSize.value,
+        );
       }, 0);
     }
   }, []);
@@ -963,12 +1072,26 @@ export function SearchView(_props: Props) {
     : result.value;
 
   // Determine which content to show in the results area
-  const showInitialEmpty = !tailActive.value && !hasQueried.value && !loading.value && !queryActive.value && !error.value;
-  const showNoResults = !tailActive.value && hasQueried.value && !loading.value && !queryActive.value && !error.value && !canceled.value && resultCount(result.value) === 0;
+  const showInitialEmpty =
+    !tailActive.value &&
+    !hasQueried.value &&
+    !loading.value &&
+    !queryActive.value &&
+    !error.value;
+  const showNoResults =
+    !tailActive.value &&
+    hasQueried.value &&
+    !loading.value &&
+    !queryActive.value &&
+    !error.value &&
+    !canceled.value &&
+    resultCount(result.value) === 0;
 
   // Compute total count for pagination and toolbar
   const totalCount = activeResult
-    ? (activeResult.type === "events" ? activeResult.total : activeResult.rows.length)
+    ? activeResult.type === "events"
+      ? activeResult.total
+      : activeResult.rows.length
     : 0;
   const pageCount = resultCount(activeResult);
   const hasResults = activeResult && pageCount > 0 && !tailActive.value;
@@ -988,23 +1111,32 @@ export function SearchView(_props: Props) {
           onClick={handleExecute}
           disabled={tailActive.value}
           aria-label={queryActive.value ? "Cancel query" : "Run query"}
-          title={queryActive.value
-            ? `Cancel query (${formatShortcut(SHORTCUTS.runQuery)})`
-            : `Run query (${formatShortcut(SHORTCUTS.runQuery)})`}
+          title={
+            queryActive.value
+              ? `Cancel query (${formatShortcut(SHORTCUTS.runQuery)})`
+              : `Run query (${formatShortcut(SHORTCUTS.runQuery)})`
+          }
         >
           {queryActive.value ? "\u25A0" : "\u25B6"}
         </button>
-        <LiveTailButton
-          active={tailActive.value}
-          onToggle={handleTailToggle}
+        <LiveTailButton active={tailActive.value} onToggle={handleTailToggle} />
+        <TimeRangePicker
+          from={from}
+          to={to}
+          onApply={() => {
+            if (!tailActive.value) {
+              histogramBrushed.value = false; // Reset brush state on manual time change
+              page.value = 1; // Reset to page 1 on time range change
+              runQueryAndRefresh(
+                query.value.trim(),
+                from.value,
+                to.value,
+                1,
+                pageSize.value,
+              );
+            }
+          }}
         />
-        <TimeRangePicker from={from} to={to} onApply={() => {
-          if (!tailActive.value) {
-            histogramBrushed.value = false; // Reset brush state on manual time change
-            page.value = 1; // Reset to page 1 on time range change
-            runQueryAndRefresh(query.value.trim(), from.value, to.value, 1, pageSize.value);
-          }
-        }} />
       </div>
 
       <div class={styles.body}>
@@ -1038,7 +1170,11 @@ export function SearchView(_props: Props) {
             stats={stats.value}
             loading={loading.value}
             error={error.value}
-            resultCount={tailActive.value ? tailEvents.value.length : resultCount(result.value)}
+            resultCount={
+              tailActive.value
+                ? tailEvents.value.length
+                : resultCount(result.value)
+            }
             tailActive={tailActive.value}
             tailEventCount={tailEvents.value.length}
             tailCatchupDone={tailCatchupDone.value}
@@ -1049,16 +1185,20 @@ export function SearchView(_props: Props) {
             elapsedMs={elapsedMs.value}
             isPreview={isPreview.value}
             onExplainToggle={handleExplainToggle}
-            explainAvailable={!!(explainResult.value?.is_valid && explainResult.value?.parsed)}
+            explainAvailable={
+              !!(explainResult.value?.is_valid && explainResult.value?.parsed)
+            }
             tailReconnecting={tailReconnecting.value}
           />
 
-          {explainOpen.value && explainResult.value?.is_valid && explainResult.value?.parsed && (
-            <ExplainInspector
-              explain={explainResult.value}
-              stats={stats.value}
-            />
-          )}
+          {explainOpen.value &&
+            explainResult.value?.is_valid &&
+            explainResult.value?.parsed && (
+              <ExplainInspector
+                explain={explainResult.value}
+                stats={stats.value}
+              />
+            )}
 
           {/* Table toolbar -- only show when results exist */}
           {hasResults && (
@@ -1071,10 +1211,7 @@ export function SearchView(_props: Props) {
             />
           )}
 
-          <div
-            class={styles.resultsArea}
-            ref={resultsAreaRef}
-          >
+          <div class={styles.resultsArea} ref={resultsAreaRef}>
             {tailActive.value && tailNewCount.value > 0 && (
               <button
                 type="button"
@@ -1082,13 +1219,15 @@ export function SearchView(_props: Props) {
                 onClick={handleNewEventsBadgeClick}
                 aria-label={`${tailNewCount.value} new events, click to scroll to top`}
               >
-                &#8593; {tailNewCount.value} new {tailNewCount.value === 1 ? "event" : "events"}
+                &#8593; {tailNewCount.value} new{" "}
+                {tailNewCount.value === 1 ? "event" : "events"}
               </button>
             )}
             {showInitialEmpty && <EmptyStateInitial />}
             {showNoResults && <EmptyStateNoResults />}
-            {!showInitialEmpty && !showNoResults && (
-              viewMode.value === "table" ? (
+            {!showInitialEmpty &&
+              !showNoResults &&
+              (viewMode.value === "table" ? (
                 <ResultsTable
                   result={activeResult}
                   onSort={handleSort}
@@ -1101,8 +1240,7 @@ export function SearchView(_props: Props) {
                   onCellCopy={handleCellCopy}
                   onFilter={handleFilter}
                 />
-              )
-            )}
+              ))}
           </div>
 
           {/* Pagination bar -- only show for non-tail, non-empty results */}

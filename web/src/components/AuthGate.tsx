@@ -78,7 +78,11 @@ function LoginForm() {
     <div class={styles.backdrop}>
       <form class={styles.card} onSubmit={handleSubmit}>
         <div class={styles.logo}>
-          <img src={uiPath("/favicon.svg")} alt="LynxDB" class={styles.logoIcon} />
+          <img
+            src={uiPath("/favicon.svg")}
+            alt="LynxDB"
+            class={styles.logoIcon}
+          />
           LynxDB
         </div>
         <div class={styles.subtitle}>Enter your API key to continue</div>

@@ -126,9 +126,5 @@ export function ListView({ result, onCellCopy, onFilter }: ListViewProps) {
     }
   }
 
-  return (
-    <div class={styles.wrapper}>
-      {events}
-    </div>
-  );
+  return <div class={styles.wrapper}>{events}</div>;
 }

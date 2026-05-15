@@ -81,7 +81,9 @@ function toStackedUPlotData(buckets: HistogramBucketGrouped[]): {
 
   // Build cumulative stacked arrays; levels[s] is already lowercase —
   // try lowercase key first, then the original uppercase variant.
-  const rawArrays: number[][] = levels.map(() => new Array(buckets.length).fill(0));
+  const rawArrays: number[][] = levels.map(() =>
+    new Array(buckets.length).fill(0),
+  );
   for (let i = 0; i < buckets.length; i++) {
     for (let s = 0; s < levels.length; s++) {
       const count =
@@ -93,7 +95,9 @@ function toStackedUPlotData(buckets: HistogramBucketGrouped[]): {
   }
 
   // Stack: each level[s][i] = sum of all levels 0..s at position i
-  const stackedArrays: number[][] = levels.map(() => new Array(buckets.length).fill(0));
+  const stackedArrays: number[][] = levels.map(() =>
+    new Array(buckets.length).fill(0),
+  );
   let maxCumulative = 0;
   for (let i = 0; i < buckets.length; i++) {
     let cumulative = 0;
@@ -146,24 +150,21 @@ export function Timeline({
   const hasBuckets = isGrouped || buckets.length > 0;
 
   // Tooltip handler for ungrouped mode
-  const handleCursorMoveUngrouped = useCallback(
-    (u: uPlot) => {
-      const idx = u.cursor.idx;
-      if (idx == null || idx < 0 || !u.data[0] || idx >= u.data[0].length) {
-        setTooltipVisible(false);
-        return;
-      }
-      const ts = u.data[0][idx];
-      const count = u.data[1][idx];
-      setTooltipContent([
-        formatTooltipTime(ts),
-        String(count ?? 0),
-      ]);
-      setTooltipPos({ x: (u.cursor.left ?? 0) + 10, y: (u.cursor.top ?? 0) - 10 });
-      setTooltipVisible(true);
-    },
-    [],
-  );
+  const handleCursorMoveUngrouped = useCallback((u: uPlot) => {
+    const idx = u.cursor.idx;
+    if (idx == null || idx < 0 || !u.data[0] || idx >= u.data[0].length) {
+      setTooltipVisible(false);
+      return;
+    }
+    const ts = u.data[0][idx];
+    const count = u.data[1][idx];
+    setTooltipContent([formatTooltipTime(ts), String(count ?? 0)]);
+    setTooltipPos({
+      x: (u.cursor.left ?? 0) + 10,
+      y: (u.cursor.top ?? 0) - 10,
+    });
+    setTooltipVisible(true);
+  }, []);
 
   // Create / recreate chart when buckets change
   useEffect(() => {
@@ -217,7 +218,10 @@ export function Timeline({
           }
         }
         setTooltipContent(lines);
-        setTooltipPos({ x: (u.cursor.left ?? 0) + 10, y: (u.cursor.top ?? 0) - 10 });
+        setTooltipPos({
+          x: (u.cursor.left ?? 0) + 10,
+          y: (u.cursor.top ?? 0) - 10,
+        });
         setTooltipVisible(true);
       };
 
@@ -336,7 +340,12 @@ export function Timeline({
         ],
         scales: {
           x: { time: true },
-          y: { range: (_u: uPlot, _min: number, max: number) => [0, max * 1.1 || 1] },
+          y: {
+            range: (_u: uPlot, _min: number, max: number) => [
+              0,
+              max * 1.1 || 1,
+            ],
+          },
         },
         series: [
           {},
@@ -405,9 +414,7 @@ export function Timeline({
   return (
     <div class={styles.wrapper}>
       <div class={styles.container} ref={containerRef}>
-        {!hasBuckets && (
-          <div class={styles.empty}>No histogram data</div>
-        )}
+        {!hasBuckets && <div class={styles.empty}>No histogram data</div>}
         <div
           ref={tooltipRef}
           class={`${styles.tooltip} ${tooltipVisible ? styles.tooltipVisible : ""}`}
@@ -417,7 +424,10 @@ export function Timeline({
           }}
         >
           {tooltipContent.map((line, i) => (
-            <div key={i} class={i === 0 ? styles.tooltipTime : styles.tooltipCount}>
+            <div
+              key={i}
+              class={i === 0 ? styles.tooltipTime : styles.tooltipCount}
+            >
               {line}
             </div>
           ))}
@@ -471,7 +481,10 @@ function barsPaths(widthFactor: number): uPlot.Series.PathBuilder {
     const xMax = xScale.max ?? xData[xData.length - 1];
     const plotWidth = u.bbox.width;
     const xRange = xMax - xMin || 1;
-    const barWidthPx = Math.max(1, (dataSpacing / xRange) * plotWidth * widthFactor);
+    const barWidthPx = Math.max(
+      1,
+      (dataSpacing / xRange) * plotWidth * widthFactor,
+    );
 
     const fillPath = new Path2D();
     const strokePath = new Path2D();
@@ -510,7 +523,10 @@ function barsPaths(widthFactor: number): uPlot.Series.PathBuilder {
  * Draws bars from previous series cumulative value to current series cumulative value.
  * seriesLevel is 0-based index into the levels array (not uPlot series index).
  */
-function stackedBarsPaths(widthFactor: number, seriesLevel: number): uPlot.Series.PathBuilder {
+function stackedBarsPaths(
+  widthFactor: number,
+  seriesLevel: number,
+): uPlot.Series.PathBuilder {
   return (u: uPlot, seriesIdx: number, _idx0: number, _idx1: number) => {
     const xData = u.data[0];
     const yData = u.data[seriesIdx];
@@ -529,7 +545,10 @@ function stackedBarsPaths(widthFactor: number, seriesLevel: number): uPlot.Serie
     const xMax = xScale.max ?? xData[xData.length - 1];
     const plotWidth = u.bbox.width;
     const xRange = xMax - xMin || 1;
-    const barWidthPx = Math.max(1, (dataSpacing / xRange) * plotWidth * widthFactor);
+    const barWidthPx = Math.max(
+      1,
+      (dataSpacing / xRange) * plotWidth * widthFactor,
+    );
 
     const fillPath = new Path2D();
 
@@ -547,8 +566,10 @@ function stackedBarsPaths(widthFactor: number, seriesLevel: number): uPlot.Serie
       if (topVal <= bottomVal) continue;
 
       const cx = plotLeft + ((xVal - xMin) / xRange) * plotWidth;
-      const topY = plotTop + plotHeight - ((topVal - yMin) / yRange) * plotHeight;
-      const bottomY = plotTop + plotHeight - ((bottomVal - yMin) / yRange) * plotHeight;
+      const topY =
+        plotTop + plotHeight - ((topVal - yMin) / yRange) * plotHeight;
+      const bottomY =
+        plotTop + plotHeight - ((bottomVal - yMin) / yRange) * plotHeight;
       const x = cx - barWidthPx / 2;
       const barH = bottomY - topY;
 

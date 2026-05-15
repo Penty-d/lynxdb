@@ -51,7 +51,9 @@ export function TimeRangePicker({ from, to, onApply }: TimeRangePickerProps) {
       from.value = d.toISOString();
     } else if (parsedFrom === undefined) {
       // "now" as from doesn't make sense, but allow it
-      setValidationError("From cannot be 'now'. Use a relative offset like now-1h.");
+      setValidationError(
+        "From cannot be 'now'. Use a relative offset like now-1h.",
+      );
       return;
     } else {
       from.value = parsedFrom;
@@ -120,8 +122,8 @@ export function TimeRangePicker({ from, to, onApply }: TimeRangePickerProps) {
 
   // Determine which preset is active
   const activePreset =
-    (to.value === undefined || to.value === "now")
-      ? PRESETS.find((p) => p.value === from.value)?.value ?? null
+    to.value === undefined || to.value === "now"
+      ? (PRESETS.find((p) => p.value === from.value)?.value ?? null)
       : null;
 
   return (
@@ -135,12 +137,27 @@ export function TimeRangePicker({ from, to, onApply }: TimeRangePickerProps) {
         aria-haspopup="dialog"
         aria-expanded={open.value}
       >
-        <svg class={styles.triggerIcon} viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="5.5" /><path d="M7 4.5V7l2 1.5" /></svg>
+        <svg
+          class={styles.triggerIcon}
+          viewBox="0 0 14 14"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="7" cy="7" r="5.5" />
+          <path d="M7 4.5V7l2 1.5" />
+        </svg>
         {getTimeRangeLabel(from.value, to.value)}
       </button>
 
       {open.value && (
-        <div class={styles.dropdown} role="dialog" aria-label="Time range picker">
+        <div
+          class={styles.dropdown}
+          role="dialog"
+          aria-label="Time range picker"
+        >
           {/* Left panel: absolute time range */}
           <div class={styles.leftPanel}>
             <div class={styles.panelTitle}>Absolute time range</div>
@@ -189,11 +206,7 @@ export function TimeRangePicker({ from, to, onApply }: TimeRangePickerProps) {
               <div class={styles.validationError}>{validationError}</div>
             )}
 
-            <button
-              type="button"
-              class={styles.applyBtn}
-              onClick={handleApply}
-            >
+            <button type="button" class={styles.applyBtn} onClick={handleApply}>
               Apply time range
             </button>
           </div>

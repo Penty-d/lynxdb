@@ -47,9 +47,7 @@ export function SourcesPanel({
           &#9656;
         </span>
         <span class={styles.sectionTitle}>Sources</span>
-        <span class={styles.sectionCount}>
-          {indexes.length + views.length}
-        </span>
+        <span class={styles.sectionCount}>{indexes.length + views.length}</span>
       </button>
 
       {expanded && (

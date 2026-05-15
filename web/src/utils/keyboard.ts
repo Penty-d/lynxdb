@@ -19,16 +19,16 @@ export type ShortcutDef = {
 };
 
 export const SHORTCUTS = {
-  runQuery:      { key: "Enter", mod: true, label: "Run query" },
-  focusEditor:   { key: "L", mod: true, label: "Focus editor" },
-  toggleTail:    { key: "T", mod: true, shift: true, label: "Toggle live tail" },
+  runQuery: { key: "Enter", mod: true, label: "Run query" },
+  focusEditor: { key: "L", mod: true, label: "Focus editor" },
+  toggleTail: { key: "T", mod: true, shift: true, label: "Toggle live tail" },
   toggleSidebar: { key: "F", mod: true, shift: true, label: "Toggle sidebar" },
-  openPalette:   { key: "K", mod: true, label: "Command palette" },
-  closePanel:    { key: "Escape", label: "Close panel" },
-  openHelp:      { key: "?", label: "Keyboard shortcuts" },
-  focusSearch:   { key: "/", label: "Focus editor" },
-  historyUp:     { key: "\u2191", mod: true, label: "Previous query" },
-  historyDown:   { key: "\u2193", mod: true, label: "Next query" },
+  openPalette: { key: "K", mod: true, label: "Command palette" },
+  closePanel: { key: "Escape", label: "Close panel" },
+  openHelp: { key: "?", label: "Keyboard shortcuts" },
+  focusSearch: { key: "/", label: "Focus editor" },
+  historyUp: { key: "\u2191", mod: true, label: "Previous query" },
+  historyDown: { key: "\u2193", mod: true, label: "Next query" },
 } as const;
 
 /**
