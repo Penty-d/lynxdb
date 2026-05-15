@@ -6,7 +6,8 @@ import { CopyTooltip } from "../components/CopyTooltip";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useQueryExecution } from "../hooks/useQueryExecution";
 import { useLiveTail } from "../hooks/useLiveTail";
-import { useExport, deriveColumns } from "../hooks/useExport";
+import { useExport } from "../hooks/useExport";
+import { deriveColumns } from "../utils/deriveColumns";
 import {
   fetchIndexes,
   fetchViews,

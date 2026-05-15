@@ -17,6 +17,10 @@ import {
   generateFilename,
 } from "../utils/export";
 import { filterNdjsonDataRows } from "../utils/ndjsonFilter";
+import {
+  deriveColumns,
+  deriveColumnsFromRows,
+} from "../utils/deriveColumns";
 import type {
   QueryResult,
   EventsResult,
@@ -26,30 +30,6 @@ import type {
 /** Shorthand for imperative store access */
 const ss = useSearchStore;
 
-/** Derive columns from a QueryResult (used by export) */
-function deriveColumns(r: QueryResult): string[] {
-  if (r.type === "events") {
-    const evts = (r as EventsResult).events;
-    const keySet = new Set<string>();
-    const limit = Math.min(evts.length, 100);
-    for (let i = 0; i < limit; i++) {
-      for (const key of Object.keys(evts[i])) {
-        keySet.add(key);
-      }
-    }
-    const priority = ["_time", "_raw", "_source", "source"];
-    const ordered: string[] = [];
-    for (const p of priority) {
-      if (keySet.has(p)) {
-        ordered.push(p);
-        keySet.delete(p);
-      }
-    }
-    return ordered.concat(Array.from(keySet).sort());
-  }
-  return (r as AggregateResult).columns;
-}
-
 /** Get rows as Record<string, unknown>[] from a QueryResult */
 function getResultRows(r: QueryResult): Record<string, unknown>[] {
   if (r.type === "events") return (r as EventsResult).events;
@@ -57,27 +37,13 @@ function getResultRows(r: QueryResult): Record<string, unknown>[] {
   return agg.rows.map((data) => {
     const row: Record<string, unknown> = {};
     for (let c = 0; c < agg.columns.length; c++) {
-      row[agg.columns[c]] = data[c];
+      const colName = agg.columns[c];
+      if (colName !== undefined) {
+        row[colName] = data[c];
+      }
     }
     return row;
   });
-}
-
-/** Derive columns from an array of row objects */
-function deriveColumnsFromRows(rows: Record<string, unknown>[]): string[] {
-  const keySet = new Set<string>();
-  for (const row of rows.slice(0, 100)) {
-    for (const key of Object.keys(row)) keySet.add(key);
-  }
-  const priority = ["_time", "_raw", "_source", "source"];
-  const ordered: string[] = [];
-  for (const p of priority) {
-    if (keySet.has(p)) {
-      ordered.push(p);
-      keySet.delete(p);
-    }
-  }
-  return ordered.concat(Array.from(keySet).sort());
 }
 
 export { deriveColumns, getResultRows };
