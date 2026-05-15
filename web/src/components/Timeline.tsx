@@ -3,7 +3,6 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import type { HistogramBucket, HistogramBucketGrouped } from "../api/client";
 import { cssVar, chartAxisFont } from "../utils/chartColors";
-import styles from "./Timeline.module.css";
 
 /** Stacking order from bottom to top */
 const LEVEL_ORDER = ["debug", "info", "warn", "error"];
@@ -188,8 +187,8 @@ export function Timeline({
       return;
     }
 
-    const borderColor = cssVar("--border") || "#e5e7eb";
-    const textMuted = cssVar("--text-muted") || "#9ca3af";
+    const borderColor = cssVar("--chart-grid") || cssVar("--border") || "#2c3235";
+    const textMuted = cssVar("--chart-axis") || cssVar("--text-muted") || "#8e8e8e";
 
     if (isGrouped) {
       // -- Stacked grouped mode --
@@ -302,7 +301,7 @@ export function Timeline({
     } else {
       // -- Ungrouped mode (backward compatible) --
       const data = toUPlotData(buckets);
-      const accentColor = cssVar("--accent") || "#3274d9";
+      const accentColor = cssVar("--accent") || cssVar("--primary") || "#3274d9";
       const barWidthFactor = buckets.length > 1 ? 0.85 : 0.5;
 
       const opts: uPlot.Options = {
@@ -427,12 +426,14 @@ export function Timeline({
     : [];
 
   return (
-    <div className={styles.wrapper}>
-      <div className={styles.container} ref={containerRef}>
-        {!hasBuckets && <div className={styles.empty}>No histogram data</div>}
+    <div className="shrink-0 border-b border-border">
+      <div className="relative w-full h-20 shrink-0 bg-background overflow-hidden [&_.u-wrap]:bg-transparent [&_.u-over]:cursor-crosshair [&_.u-select]:bg-primary [&_.u-select]:opacity-12" ref={containerRef}>
+        {!hasBuckets && (
+          <div className="flex items-center justify-center h-full text-muted-foreground text-xs">No histogram data</div>
+        )}
         <div
           ref={tooltipRef}
-          className={`${styles.tooltip} ${tooltipVisible ? styles.tooltipVisible : ""}`}
+          className={`absolute z-10 pointer-events-none px-2 py-1 rounded-sm bg-card border border-border text-foreground font-mono text-[0.6875rem] whitespace-nowrap leading-snug transition-opacity duration-100 ${tooltipVisible ? "opacity-100" : "opacity-0"}`}
           style={{
             left: `${tooltipPos.x}px`,
             top: `${tooltipPos.y}px`,
@@ -441,7 +442,7 @@ export function Timeline({
           {tooltipContent.map((line, i) => (
             <div
               key={i}
-              className={i === 0 ? styles.tooltipTime : styles.tooltipCount}
+              className={i === 0 ? "text-muted-foreground" : "text-primary font-semibold"}
             >
               {line}
             </div>
@@ -450,7 +451,7 @@ export function Timeline({
         {showReset && (
           <button
             type="button"
-            className={styles.resetBtn}
+            className="absolute top-1 right-2 z-[5] px-2 py-0.5 text-[0.625rem] font-mono bg-secondary text-muted-foreground border border-border rounded-sm cursor-pointer hover:bg-muted hover:text-foreground transition-colors"
             onClick={onReset}
             aria-label="Reset time range"
             title="Reset time range"
@@ -460,11 +461,11 @@ export function Timeline({
         )}
       </div>
       {isGrouped && legendLevels.length > 0 && (
-        <div className={styles.legend}>
+        <div className="flex gap-3 py-0.5 pl-10 text-[0.6875rem] bg-background">
           {legendLevels.map((level) => (
-            <span key={level} className={styles.legendItem}>
+            <span key={level} className="inline-flex items-center gap-1 text-muted-foreground">
               <span
-                className={styles.legendDot}
+                className="inline-block size-2 rounded-full shrink-0"
                 style={{ background: levelColor(level) }}
               />
               {level}
