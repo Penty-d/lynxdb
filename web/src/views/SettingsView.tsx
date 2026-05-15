@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
+import type { ReactNode } from "react";
 import { AlertCircle, Sun, Moon, Monitor } from "lucide-react";
 import { fetchConfig, patchConfig } from "../api/client";
 import type { ServerConfig } from "../api/client";
 import { useThemeStore, toggleTheme } from "../stores/ui";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Label } from "../components/ui/label";
+import { Card, CardContent } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Skeleton } from "../components/ui/skeleton";
@@ -16,6 +16,39 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import { PageContainer } from "../components/PageContainer";
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="mb-6">
+      <h2 className="mb-2 text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+      </h2>
+      <Card className="rounded-md border shadow-none">
+        <CardContent className="flex flex-col gap-3 p-4">
+          {children}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-4">
+      <span className="w-36 shrink-0 text-[0.8125rem] text-muted-foreground">
+        {label}
+      </span>
+      <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
+    </div>
+  );
+}
 
 export default function SettingsView() {
   const theme = useThemeStore((s) => s.theme);
@@ -33,9 +66,6 @@ export default function SettingsView() {
       setConfig(data);
       setLogLevel(data.log_level ?? "info");
       setError(null);
-
-      // Test if PATCH is supported by checking if we can construct a request
-      // We'll try a no-op patch; if it fails with 403/405, read-only
       try {
         await patchConfig({ log_level: data.log_level ?? "info" });
         setPatchable(true);
@@ -82,224 +112,163 @@ export default function SettingsView() {
     [patchable],
   );
 
-  // Loading skeleton
-  if (loading) {
-    return (
-      <div className="mx-auto max-w-[900px] p-6">
-        <h1 className="mb-6 text-lg font-semibold text-foreground">
-          Settings
-        </h1>
+  const readonlyInput = "max-w-[320px] bg-muted text-sm";
+
+  return (
+    <PageContainer title="Settings" width="narrow">
+      {loading ? (
         <div className="flex flex-col gap-4">
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-32 w-full rounded-md" />
           ))}
         </div>
-      </div>
-    );
-  }
+      ) : error && !config ? (
+        <div className="flex flex-col items-center gap-3 py-16">
+          <Alert variant="destructive" className="max-w-md rounded-md">
+            <AlertCircle className="size-4" />
+            <AlertTitle>Failed to load settings</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+          <Button variant="outline" size="sm" onClick={load}>
+            Retry
+          </Button>
+        </div>
+      ) : (
+        <>
+          <Section title="Appearance">
+            <Row label="Theme">
+              <Button
+                variant={theme === "light" ? "default" : "outline"}
+                size="sm"
+                className="px-3"
+                onClick={() => {
+                  if (theme !== "light") toggleTheme();
+                }}
+              >
+                <Sun className="size-3.5" />
+                Light
+              </Button>
+              <Button
+                variant={theme === "dark" ? "default" : "outline"}
+                size="sm"
+                className="px-3"
+                onClick={() => {
+                  if (theme !== "dark") toggleTheme();
+                }}
+              >
+                <Moon className="size-3.5" />
+                Dark
+              </Button>
+            </Row>
+          </Section>
 
-  // Error state
-  if (error && !config) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 p-16">
-        <Alert variant="destructive" className="max-w-md rounded-md">
-          <AlertCircle className="size-4" />
-          <AlertTitle>Failed to load settings</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-        <Button variant="outline" size="sm" onClick={load}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-[900px] p-6">
-      <h1 className="mb-6 text-lg font-semibold text-foreground">Settings</h1>
-
-      <div className="flex flex-col gap-4">
-        {/* Theme card */}
-        <Card className="rounded-md shadow-none">
-          <CardHeader className="pb-0">
-            <CardTitle className="text-sm">Appearance</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-4">
-              <Label className="min-w-[80px] text-[0.8125rem] text-muted-foreground">
-                Theme
-              </Label>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={theme === "light" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => {
-                    if (theme !== "light") toggleTheme();
-                  }}
-                >
-                  <Sun className="size-3.5" />
-                  Light
-                </Button>
-                <Button
-                  variant={theme === "dark" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => {
-                    if (theme !== "dark") toggleTheme();
-                  }}
-                >
-                  <Moon className="size-3.5" />
-                  Dark
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Server config card */}
-        {config && (
-          <Card className="rounded-md shadow-none">
-            <CardHeader className="pb-0">
-              <CardTitle className="text-sm">Server Configuration</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-4">
-                  <Label className="min-w-[140px] text-[0.8125rem] text-muted-foreground">
-                    Listen Address
-                  </Label>
+          {config && (
+            <Section title="Server Configuration">
+              <Row label="Listen Address">
+                <Input
+                  value={config.listen ?? "--"}
+                  readOnly
+                  className={readonlyInput}
+                />
+              </Row>
+              <Row label="Data Directory">
+                <Input
+                  value={config.data_dir ?? "(in-memory)"}
+                  readOnly
+                  className="max-w-[320px] bg-muted font-mono text-xs"
+                />
+              </Row>
+              <Row label="Retention">
+                <Input
+                  value={config.retention ?? "--"}
+                  readOnly
+                  className={readonlyInput}
+                />
+              </Row>
+              <Row label="Log Level">
+                {patchable ? (
+                  <>
+                    <Select
+                      value={logLevel}
+                      onValueChange={(val) => {
+                        setLogLevel(val);
+                        handleSaveLogLevel(val);
+                      }}
+                      disabled={saving}
+                    >
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="debug">debug</SelectItem>
+                        <SelectItem value="info">info</SelectItem>
+                        <SelectItem value="warn">warn</SelectItem>
+                        <SelectItem value="error">error</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {saving && (
+                      <span className="text-xs text-muted-foreground">
+                        Saving...
+                      </span>
+                    )}
+                  </>
+                ) : (
                   <Input
-                    value={config.listen ?? "--"}
+                    value={config.log_level ?? "--"}
                     readOnly
-                    className="max-w-[300px] bg-muted text-sm"
+                    className={readonlyInput}
                   />
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <Label className="min-w-[140px] text-[0.8125rem] text-muted-foreground">
-                    Data Directory
-                  </Label>
-                  <Input
-                    value={config.data_dir ?? "(in-memory)"}
-                    readOnly
-                    className="max-w-[300px] bg-muted font-mono text-xs"
-                  />
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <Label className="min-w-[140px] text-[0.8125rem] text-muted-foreground">
-                    Retention
-                  </Label>
-                  <Input
-                    value={config.retention ?? "--"}
-                    readOnly
-                    className="max-w-[300px] bg-muted text-sm"
-                  />
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <Label className="min-w-[140px] text-[0.8125rem] text-muted-foreground">
-                    Log Level
-                  </Label>
-                  {patchable ? (
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={logLevel}
-                        onValueChange={(val) => {
-                          setLogLevel(val);
-                          handleSaveLogLevel(val);
-                        }}
-                        disabled={saving}
-                      >
-                        <SelectTrigger className="w-[140px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="debug">debug</SelectItem>
-                          <SelectItem value="info">info</SelectItem>
-                          <SelectItem value="warn">warn</SelectItem>
-                          <SelectItem value="error">error</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {saving && (
-                        <span className="text-xs text-muted-foreground">
-                          Saving...
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <Input
-                      value={config.log_level ?? "--"}
-                      readOnly
-                      className="max-w-[300px] bg-muted text-sm"
-                    />
-                  )}
-                </div>
-
-                {saveMsg && (
-                  <p className="text-xs text-muted-foreground">{saveMsg}</p>
                 )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              </Row>
+              {saveMsg && (
+                <p className="text-xs text-muted-foreground">{saveMsg}</p>
+              )}
+            </Section>
+          )}
 
-        {/* Query config card */}
-        {config?.query && (
-          <Card className="rounded-md shadow-none">
-            <CardHeader className="pb-0">
-              <CardTitle className="text-sm">Query Limits</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-4">
-                  <Label className="min-w-[140px] text-[0.8125rem] text-muted-foreground">
-                    Max Concurrent
-                  </Label>
-                  <Input
-                    value={String(config.query.max_concurrent ?? "--")}
-                    readOnly
-                    className="max-w-[120px] bg-muted text-sm"
-                  />
-                </div>
-                <div className="flex items-center gap-4">
-                  <Label className="min-w-[140px] text-[0.8125rem] text-muted-foreground">
-                    Default Limit
-                  </Label>
-                  <Input
-                    value={String(config.query.default_result_limit ?? "--")}
-                    readOnly
-                    className="max-w-[120px] bg-muted text-sm"
-                  />
-                </div>
-                <div className="flex items-center gap-4">
-                  <Label className="min-w-[140px] text-[0.8125rem] text-muted-foreground">
-                    Max Limit
-                  </Label>
-                  <Input
-                    value={String(config.query.max_result_limit ?? "--")}
-                    readOnly
-                    className="max-w-[120px] bg-muted text-sm"
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+          {config?.query && (
+            <Section title="Query Limits">
+              <Row label="Max Concurrent">
+                <Input
+                  value={String(config.query.max_concurrent ?? "--")}
+                  readOnly
+                  className="max-w-[140px] bg-muted text-sm"
+                />
+              </Row>
+              <Row label="Default Limit">
+                <Input
+                  value={String(config.query.default_result_limit ?? "--")}
+                  readOnly
+                  className="max-w-[140px] bg-muted text-sm"
+                />
+              </Row>
+              <Row label="Max Limit">
+                <Input
+                  value={String(config.query.max_result_limit ?? "--")}
+                  readOnly
+                  className="max-w-[140px] bg-muted text-sm"
+                />
+              </Row>
+            </Section>
+          )}
 
-        {!patchable && config && (
-          <p className="text-xs text-muted-foreground">
-            <Monitor className="mb-0.5 inline size-3" /> Server configuration is
-            read-only. Log level and retention can be changed via{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem]">
-              PATCH /api/v1/config
-            </code>{" "}
-            with admin credentials, or via{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem]">
-              lynxdb config reload
-            </code>.
-          </p>
-        )}
-      </div>
-    </div>
+          {!patchable && config && (
+            <p className="text-xs text-muted-foreground">
+              <Monitor className="mb-0.5 mr-1 inline size-3" />
+              Server configuration is read-only. Log level and retention can
+              be changed via{" "}
+              <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem]">
+                PATCH /api/v1/config
+              </code>{" "}
+              with admin credentials, or via{" "}
+              <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem]">
+                lynxdb config reload
+              </code>
+              .
+            </p>
+          )}
+        </>
+      )}
+    </PageContainer>
   );
 }

@@ -28,6 +28,7 @@ import {
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { PageContainer } from "../components/PageContainer";
 
 export default function QueriesView() {
   const navigate = useNavigate();
@@ -103,78 +104,58 @@ export default function QueriesView() {
     [navigate],
   );
 
-  // Loading state
-  if (loading) {
-    return (
-      <div className="mx-auto max-w-[1200px] p-6">
-        <div className="mb-6 flex items-baseline gap-4">
-          <h1 className="text-lg font-semibold text-foreground">
-            Saved Queries
-          </h1>
-        </div>
+  const newQueryButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        setCreateName("");
+        setCreateQuery("");
+        setCreateError(null);
+        setCreateOpen(true);
+      }}
+    >
+      <Plus className="size-4" />
+      New Query
+    </Button>
+  );
+
+  return (
+    <PageContainer title="Saved Queries" actions={newQueryButton}>
+      {loading ? (
         <div className="flex flex-col gap-2">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-12 w-full rounded-md" />
           ))}
         </div>
-      </div>
-    );
-  }
-
-  // Error state with no data
-  if (error && queries.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 p-16">
-        <Alert variant="destructive" className="max-w-md rounded-md">
-          <AlertCircle className="size-4" />
-          <AlertTitle>Failed to load saved queries</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-        <Button variant="outline" size="sm" onClick={load}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-[1200px] p-6">
-      <div className="mb-6 flex items-center gap-4">
-        <h1 className="text-lg font-semibold text-foreground">
-          Saved Queries
-        </h1>
-        <Button
-          variant="outline"
-          size="sm"
-          className="ms-auto"
-          onClick={() => {
-            setCreateName("");
-            setCreateQuery("");
-            setCreateError(null);
-            setCreateOpen(true);
-          }}
-        >
-          <Plus className="size-4" />
-          New Query
-        </Button>
-      </div>
-
-      {error && (
-        <Alert variant="destructive" className="mb-4 rounded-md">
-          <AlertCircle className="size-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {queries.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 py-16 text-center text-sm text-muted-foreground">
-          <p>No saved queries yet.</p>
-          <p>
-            Save a query to quickly access your most-used searches.
-          </p>
+      ) : error && queries.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 py-16">
+          <Alert variant="destructive" className="max-w-md rounded-md">
+            <AlertCircle className="size-4" />
+            <AlertTitle>Failed to load saved queries</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+          <Button variant="outline" size="sm" onClick={load}>
+            Retry
+          </Button>
         </div>
       ) : (
-        <Table>
+        <>
+          {error && (
+            <Alert variant="destructive" className="mb-4 rounded-md">
+              <AlertCircle className="size-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {queries.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-24 text-center text-sm text-muted-foreground">
+              <p className="text-foreground">No saved queries yet.</p>
+              <p>Save a query to quickly access your most-used searches.</p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-md border border-border">
+              <Table>
           <TableHeader>
             <TableRow>
               <TableHead className="w-[200px]">Name</TableHead>
@@ -213,8 +194,11 @@ export default function QueriesView() {
                 </TableCell>
               </TableRow>
             ))}
-          </TableBody>
-        </Table>
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </>
       )}
 
       {/* Delete confirmation dialog */}
@@ -311,6 +295,6 @@ export default function QueriesView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </PageContainer>
   );
 }

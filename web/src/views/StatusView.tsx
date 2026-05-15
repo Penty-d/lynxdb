@@ -7,6 +7,8 @@ import { Badge } from "../components/ui/badge";
 import { Skeleton } from "../components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
+import { PageContainer } from "../components/PageContainer";
+import { cn } from "@/lib/utils";
 
 // Helpers
 
@@ -32,16 +34,14 @@ function nested(
   return {};
 }
 
-function healthVariant(
-  health: string,
-): "default" | "secondary" | "destructive" | "outline" {
+function healthBadgeClass(health: string): string {
   switch (health) {
     case "healthy":
-      return "default";
+      return "border-transparent bg-chart-4/15 text-chart-4";
     case "degraded":
-      return "secondary";
+      return "border-transparent bg-chart-2/15 text-chart-2";
     default:
-      return "destructive";
+      return "border-transparent bg-destructive/15 text-destructive";
   }
 }
 
@@ -108,33 +108,36 @@ export function StatusView() {
     return () => clearInterval(interval);
   }, [loadStatus]);
 
+  const lastUpdated = (
+    <span className="text-xs text-muted-foreground" aria-live="off">
+      {formatLastUpdated(lastUpdatedAt)}
+    </span>
+  );
+
   // Loading state (only on first load)
   if (loading && !status) {
     return (
-      <div className="mx-auto max-w-[1200px] p-6" role="status" aria-live="polite">
-        <div className="mb-6 flex items-baseline gap-4">
-          <h1 className="text-lg font-semibold text-foreground">
-            Server Status
-          </h1>
-        </div>
+      <PageContainer title="Server Status">
         <StatusSkeleton />
-      </div>
+      </PageContainer>
     );
   }
 
   // Error state (only if we never got data)
   if (error && !status) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 p-16">
-        <Alert variant="destructive" className="max-w-md rounded-md">
-          <AlertCircle className="size-4" />
-          <AlertTitle>Unable to connect to server</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-        <Button variant="outline" size="sm" onClick={loadStatus}>
-          Retry
-        </Button>
-      </div>
+      <PageContainer title="Server Status">
+        <div className="flex flex-col items-center gap-3 py-16">
+          <Alert variant="destructive" className="max-w-md rounded-md">
+            <AlertCircle className="size-4" />
+            <AlertTitle>Unable to connect to server</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+          <Button variant="outline" size="sm" onClick={loadStatus}>
+            Retry
+          </Button>
+        </div>
+      </PageContainer>
     );
   }
 
@@ -159,20 +162,8 @@ export function StatusView() {
   const tailDropped = safeNumber(tailData.total_dropped_events);
 
   return (
-    <div className="mx-auto max-w-[1200px] p-6">
-      <div className="mb-6 flex items-baseline gap-4">
-        <h1 className="text-lg font-semibold text-foreground">
-          Server Status
-        </h1>
-        <span
-          className="ms-auto text-xs text-muted-foreground"
-          aria-live="off"
-        >
-          {formatLastUpdated(lastUpdatedAt)}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
+    <PageContainer title="Server Status" actions={lastUpdated}>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
         {/* Server card */}
         <Card className="gap-1 rounded-md p-5 shadow-none">
           <CardContent className="flex flex-col gap-1 px-0">
@@ -180,7 +171,10 @@ export function StatusView() {
               Server
             </div>
             <div className="flex items-center gap-2">
-              <Badge variant={healthVariant(health)} className="capitalize">
+              <Badge
+                variant="outline"
+                className={cn("capitalize", healthBadgeClass(health))}
+              >
                 {health}
               </Badge>
             </div>
@@ -269,7 +263,7 @@ export function StatusView() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </PageContainer>
   );
 }
 
