@@ -1,11 +1,12 @@
 import { useEffect, useCallback, useState, useRef } from "react";
+import { AlertCircle } from "lucide-react";
 import { fetchStatus } from "../api/client";
 import { formatUptime, formatBytes, formatCount } from "../utils/format";
-import styles from "./StatusView.module.css";
-
-interface Props {
-  path?: string;
-}
+import { Card, CardContent } from "../components/ui/card";
+import { Badge } from "../components/ui/badge";
+import { Skeleton } from "../components/ui/skeleton";
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
+import { Button } from "../components/ui/button";
 
 // Helpers
 
@@ -31,14 +32,16 @@ function nested(
   return {};
 }
 
-function healthClass(health: string): string {
+function healthVariant(
+  health: string,
+): "default" | "secondary" | "destructive" | "outline" {
   switch (health) {
     case "healthy":
-      return styles.healthHealthy ?? "";
+      return "default";
     case "degraded":
-      return styles.healthDegraded ?? "";
+      return "secondary";
     default:
-      return styles.healthUnhealthy ?? "";
+      return "destructive";
   }
 }
 
@@ -50,9 +53,26 @@ function formatLastUpdated(date: Date | null): string {
   return `Last updated ${h}:${m}:${s}`;
 }
 
+// Skeleton cards for loading
+function StatusSkeleton() {
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <Card key={i} className="gap-2 rounded-md p-5 shadow-none">
+          <CardContent className="flex flex-col gap-2 px-0">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-3 w-32" />
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 // Component
 
-export function StatusView(_props: Props) {
+export function StatusView() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,8 +111,13 @@ export function StatusView(_props: Props) {
   // Loading state (only on first load)
   if (loading && !status) {
     return (
-      <div className={styles.loadingState} role="status" aria-live="polite">
-        Loading status...
+      <div className="mx-auto max-w-[1200px] p-6" role="status" aria-live="polite">
+        <div className="mb-6 flex items-baseline gap-4">
+          <h1 className="text-lg font-semibold text-foreground">
+            Server Status
+          </h1>
+        </div>
+        <StatusSkeleton />
       </div>
     );
   }
@@ -100,12 +125,15 @@ export function StatusView(_props: Props) {
   // Error state (only if we never got data)
   if (error && !status) {
     return (
-      <div className={styles.errorState} role="alert">
-        <div>Unable to connect to server</div>
-        <div className={styles.errorMessage}>{error}</div>
-        <button type="button" className={styles.retryBtn} onClick={loadStatus}>
+      <div className="flex flex-col items-center justify-center gap-3 p-16">
+        <Alert variant="destructive" className="max-w-md rounded-md">
+          <AlertCircle className="size-4" />
+          <AlertTitle>Unable to connect to server</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+        <Button variant="outline" size="sm" onClick={loadStatus}>
           Retry
-        </button>
+        </Button>
       </div>
     );
   }
@@ -131,73 +159,118 @@ export function StatusView(_props: Props) {
   const tailDropped = safeNumber(tailData.total_dropped_events);
 
   return (
-    <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <h1 className={styles.pageTitle}>Server Status</h1>
-        <span className={styles.lastUpdated} aria-live="off">
+    <div className="mx-auto max-w-[1200px] p-6">
+      <div className="mb-6 flex items-baseline gap-4">
+        <h1 className="text-lg font-semibold text-foreground">
+          Server Status
+        </h1>
+        <span
+          className="ms-auto text-xs text-muted-foreground"
+          aria-live="off"
+        >
           {formatLastUpdated(lastUpdatedAt)}
         </span>
       </div>
 
-      <div className={styles.grid}>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
         {/* Server card */}
-        <div className={styles.card}>
-          <div className={styles.cardTitle}>Server</div>
-          <div className={styles.healthRow}>
-            <span
-              className={`${styles.healthDot} ${healthClass(health)}`}
-              aria-hidden="true"
-            />
-            <span className={styles.healthLabel}>{health}</span>
-          </div>
-          <div className={styles.cardSubtext}>
-            v{version} &middot; up {formatUptime(uptimeSeconds)}
-          </div>
-        </div>
+        <Card className="gap-1 rounded-md p-5 shadow-none">
+          <CardContent className="flex flex-col gap-1 px-0">
+            <div className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
+              Server
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant={healthVariant(health)} className="capitalize">
+                {health}
+              </Badge>
+            </div>
+            <div className="text-[0.8125rem] text-muted-foreground">
+              v{version} &middot; up {formatUptime(uptimeSeconds)}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Events card */}
-        <div className={styles.card}>
-          <div className={styles.cardTitle}>Events</div>
-          <div className={styles.cardValue}>{formatCount(totalEvents)}</div>
-          <div className={styles.cardSubtext}>{formatCount(todayEvents)} today</div>
-        </div>
+        <Card className="gap-1 rounded-md p-5 shadow-none">
+          <CardContent className="flex flex-col gap-1 px-0">
+            <div className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
+              Events
+            </div>
+            <div className="text-[1.75rem] font-semibold leading-tight tabular-nums text-foreground">
+              {formatCount(totalEvents)}
+            </div>
+            <div className="text-[0.8125rem] text-muted-foreground">
+              {formatCount(todayEvents)} today
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Storage card */}
-        <div className={styles.card}>
-          <div className={styles.cardTitle}>Storage</div>
-          <div className={styles.cardValue}>{formatBytes(usedBytes)}</div>
-          {segmentCount > 0 && (
-            <div className={styles.cardSubtext}>
-              {formatCount(segmentCount)}{" "}
-              {segmentCount === 1 ? "segment" : "segments"}
+        <Card className="gap-1 rounded-md p-5 shadow-none">
+          <CardContent className="flex flex-col gap-1 px-0">
+            <div className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
+              Storage
             </div>
-          )}
-        </div>
+            <div className="text-[1.75rem] font-semibold leading-tight tabular-nums text-foreground">
+              {formatBytes(usedBytes)}
+            </div>
+            {segmentCount > 0 && (
+              <div className="text-[0.8125rem] text-muted-foreground">
+                {formatCount(segmentCount)}{" "}
+                {segmentCount === 1 ? "segment" : "segments"}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Queries card */}
-        <div className={styles.card}>
-          <div className={styles.cardTitle}>Queries</div>
-          <div className={styles.cardValue}>{activeQueries}</div>
-          <div className={styles.cardSubtext}>active</div>
-        </div>
+        <Card className="gap-1 rounded-md p-5 shadow-none">
+          <CardContent className="flex flex-col gap-1 px-0">
+            <div className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
+              Queries
+            </div>
+            <div className="text-[1.75rem] font-semibold leading-tight tabular-nums text-foreground">
+              {activeQueries}
+            </div>
+            <div className="text-[0.8125rem] text-muted-foreground">
+              active
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Views card */}
-        <div className={styles.card}>
-          <div className={styles.cardTitle}>Materialized Views</div>
-          <div className={styles.cardValue}>{totalViews}</div>
-          <div className={styles.cardSubtext}>{activeViews} active</div>
-        </div>
+        <Card className="gap-1 rounded-md p-5 shadow-none">
+          <CardContent className="flex flex-col gap-1 px-0">
+            <div className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
+              Materialized Views
+            </div>
+            <div className="text-[1.75rem] font-semibold leading-tight tabular-nums text-foreground">
+              {totalViews}
+            </div>
+            <div className="text-[0.8125rem] text-muted-foreground">
+              {activeViews} active
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Tail card */}
-        <div className={styles.card}>
-          <div className={styles.cardTitle}>Live Tail</div>
-          <div className={styles.cardValue}>{tailSessions}</div>
-          <div className={styles.cardSubtext}>
-            {tailSessions === 1 ? "session" : "sessions"}
-            {tailDropped > 0 && ` · ${formatCount(tailDropped)} dropped`}
-          </div>
-        </div>
+        <Card className="gap-1 rounded-md p-5 shadow-none">
+          <CardContent className="flex flex-col gap-1 px-0">
+            <div className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">
+              Live Tail
+            </div>
+            <div className="text-[1.75rem] font-semibold leading-tight tabular-nums text-foreground">
+              {tailSessions}
+            </div>
+            <div className="text-[0.8125rem] text-muted-foreground">
+              {tailSessions === 1 ? "session" : "sessions"}
+              {tailDropped > 0 && ` · ${formatCount(tailDropped)} dropped`}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
 }
+
+export default StatusView;
