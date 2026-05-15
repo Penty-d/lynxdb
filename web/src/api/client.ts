@@ -1,4 +1,5 @@
 import { authHeaders, handleAuthError } from "./auth";
+import { apiErrorMessage, type APIErrorResponse } from "./types";
 
 const BASE = "";
 
@@ -123,10 +124,8 @@ export async function executeQuery(
   });
 
   if (!resp.ok) {
-    const err = await resp
-      .json()
-      .catch(() => ({ error: { message: resp.statusText } }));
-    throw new Error(err.error?.message || err.data?.error || resp.statusText);
+    const err: APIErrorResponse = await resp.json().catch(() => ({}));
+    throw new Error(apiErrorMessage(err, resp.statusText));
   }
 
   const json = await resp.json();
@@ -310,10 +309,8 @@ export async function fetchExplain(
 
   const resp = await apiFetch(`${BASE}/api/v1/query/explain?${params}`);
   if (!resp.ok) {
-    const err = await resp
-      .json()
-      .catch(() => ({ error: { message: resp.statusText } }));
-    throw new Error(err.error?.message || err.data?.error || resp.statusText);
+    const err: APIErrorResponse = await resp.json().catch(() => ({}));
+    throw new Error(apiErrorMessage(err, resp.statusText));
   }
   const json = await resp.json();
   return json.data as ExplainResult;
