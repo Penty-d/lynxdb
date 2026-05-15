@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from "react";
 import { FieldCommandMenu } from "./FieldCommandMenu";
+import { typeAbbrev } from "../../utils/fieldType";
 import styles from "./flow.module.css";
 
 export interface FieldValue {
@@ -12,28 +13,6 @@ interface FieldItemProps {
   type?: string;
   isAdded?: boolean;
   onInsertCommand?: (template: string) => void;
-}
-
-function typeAbbrev(t?: string): string {
-  if (!t) return "";
-  switch (t.toLowerCase()) {
-    case "string":
-      return "str";
-    case "integer":
-    case "int":
-      return "int";
-    case "float":
-    case "number":
-      return "flt";
-    case "boolean":
-    case "bool":
-      return "bool";
-    case "datetime":
-    case "timestamp":
-      return "ts";
-    default:
-      return t.slice(0, 3);
-  }
 }
 
 export function FieldItem({
