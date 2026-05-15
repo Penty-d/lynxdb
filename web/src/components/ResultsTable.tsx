@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import type { QueryResult, EventsResult, AggregateResult } from "../api/client";
+import { rowKey } from "../utils/rowKey";
 import { updateSortInQuery, parseSortFromQuery } from "../utils/sortQuery";
 import { EventDetailInline } from "./EventDetail";
 import styles from "./ResultsTable.module.css";
@@ -373,7 +374,7 @@ export function ResultsTable({
 
     visibleRows.push(
       <div
-        key={i}
+        key={rowKey(row)}
         className={rowClasses}
         style={rowStyle}
         role="row"
@@ -419,7 +420,7 @@ export function ResultsTable({
       const accordionY = (i + 1) * ROW_HEIGHT;
       visibleRows.push(
         <div
-          key={`accordion-${i}`}
+          key={`acc-${rowKey(row)}`}
           className={styles.accordionRow}
           style={{
             transform: `translateY(${accordionY}px)`,

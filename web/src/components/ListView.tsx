@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import type { QueryResult, EventsResult, AggregateResult } from "../api/client";
 import { EventDetailInline } from "./EventDetail";
+import { rowKey } from "../utils/rowKey";
 import styles from "./ListView.module.css";
 
 interface ListViewProps {
@@ -89,7 +90,7 @@ export function ListView({ result, onCellCopy, onFilter }: ListViewProps) {
 
     events.push(
       <div
-        key={i}
+        key={rowKey(row)}
         className={`${styles.event} ${isExpanded ? styles.eventSelected : ""}`}
         onClick={() => handleToggle(i)}
       >
@@ -119,7 +120,7 @@ export function ListView({ result, onCellCopy, onFilter }: ListViewProps) {
 
     if (isExpanded) {
       events.push(
-        <div key={`accordion-${i}`} className={styles.accordionRow}>
+        <div key={`acc-${rowKey(row)}`} className={styles.accordionRow}>
           <EventDetailInline event={row} onFilter={onFilter} />
         </div>,
       );
