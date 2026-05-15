@@ -5,12 +5,13 @@ import { defaultKeymap } from "@codemirror/commands";
 import { acceptCompletion, completionStatus } from "@codemirror/autocomplete";
 import { linter } from "@codemirror/lint";
 import { lynxflowLanguage } from "./lynxflow-lang";
-import { lynxTheme, lynxHighlighting } from "./theme";
+import { lynxThemeFor, lynxHighlighting } from "./theme";
 import { lynxflowAutocompletion } from "./autocomplete";
 import {
   navigateHistory,
   resetHistoryNavigation,
 } from "../stores/queryHistory";
+import { useThemeStore } from "../stores/ui";
 import styles from "./QueryEditor.module.css";
 
 interface QueryEditorProps {
@@ -28,6 +29,8 @@ export interface QueryEditorHandle {
 
 // Compartment for dynamically toggling line numbers based on line count
 const lineNumberCompartment = new Compartment();
+// Compartment for swapping the light/dark editor theme on theme change
+const themeCompartment = new Compartment();
 
 export function QueryEditor({
   value,
@@ -73,7 +76,9 @@ export function QueryEditor({
         runQuery,
         keymap.of(defaultKeymap),
         lynxflowLanguage,
-        lynxTheme,
+        themeCompartment.of(
+          lynxThemeFor(useThemeStore.getState().theme === "dark"),
+        ),
         lynxHighlighting,
         lynxflowAutocompletion(),
         // Shift+Enter for newline: placed AFTER autocomplete to avoid Pitfall 5
@@ -232,6 +237,19 @@ export function QueryEditor({
       }
     }
   }, [value]);
+
+  // Swap the editor theme when the app theme changes, preserving editor
+  // state (scroll/selection) by reconfiguring the compartment.
+  useEffect(() => {
+    const sync = (dark: boolean) => {
+      viewRef.current?.dispatch({
+        effects: themeCompartment.reconfigure(lynxThemeFor(dark)),
+      });
+    };
+    return useThemeStore.subscribe((state, prev) => {
+      if (state.theme !== prev.theme) sync(state.theme === "dark");
+    });
+  }, []);
 
   // Drag handle pointer event handlers
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
