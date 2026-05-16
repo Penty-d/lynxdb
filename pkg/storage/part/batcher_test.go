@@ -58,13 +58,15 @@ func TestAsyncBatcher_ThresholdFlush_Events(t *testing.T) {
 	})
 	batcher.Start(context.Background())
 
-	// Add exactly MaxEvents — should trigger flush.
+	// Add exactly MaxEvents — should enqueue a threshold flush.
 	events := makeEvents(100, "test-idx")
 	if err := batcher.Add(events); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
+	if err := batcher.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
 
-	// onCommit should have been called synchronously during Add.
 	if committed.Load() != 1 {
 		t.Fatalf("expected 1 commit, got %d", committed.Load())
 	}
@@ -98,6 +100,9 @@ func TestAsyncBatcher_ThresholdFlush_Bytes(t *testing.T) {
 	events := makeEvents(20, "main")
 	if err := batcher.Add(events); err != nil {
 		t.Fatalf("Add: %v", err)
+	}
+	if err := batcher.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
 	}
 
 	if registry.Count() < 1 {
@@ -209,6 +214,9 @@ func TestAsyncBatcher_OnCommitCallback(t *testing.T) {
 	}
 	if err := batcher.Add(makeEvents(50, "idx-b")); err != nil {
 		t.Fatalf("Add idx-b: %v", err)
+	}
+	if err := batcher.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
 	}
 
 	mu.Lock()
@@ -387,6 +395,9 @@ func TestAsyncBatcher_Backpressure_Reject(t *testing.T) {
 
 			t.Fatalf("unexpected error at part count %d: %v", registry.Count(), err)
 		}
+		if err := batcher.Flush(); err != nil {
+			t.Fatalf("Flush[%d]: %v", i, err)
+		}
 	}
 
 	// If we got here, we should have hit the reject threshold.
@@ -420,6 +431,9 @@ func TestAsyncBatcher_Backpressure_Delay(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		if err := batcher.Add(makeEvents(10, "main")); err != nil {
 			t.Fatalf("Add[%d]: %v", i, err)
+		}
+		if err := batcher.Flush(); err != nil {
+			t.Fatalf("Flush[%d]: %v", i, err)
 		}
 	}
 
