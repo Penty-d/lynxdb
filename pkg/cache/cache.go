@@ -584,6 +584,9 @@ func estimateSize(result *CachedResult) int64 {
 	for _, b := range result.Batches {
 		for _, col := range b.Columns {
 			size += int64(len(col) * 48) // rough estimate per value
+			for i := range col {
+				size += int64(len(col[i].Str))
+			}
 		}
 	}
 

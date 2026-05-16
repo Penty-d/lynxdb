@@ -402,6 +402,31 @@ func TestCacheStats(t *testing.T) {
 	}
 }
 
+func TestCacheSizeAccountsStringPayload(t *testing.T) {
+	cs := NewStore("", 2<<20, time.Hour)
+	defer cs.Close()
+
+	payload := make([]byte, 1<<20)
+	for i := range payload {
+		payload[i] = 'x'
+	}
+
+	if err := cs.Put(context.Background(), Key{QueryHash: 1}, &CachedResult{
+		Batches: []CachedBatch{{
+			Len: 1,
+			Columns: map[string][]CachedValue{
+				"_raw": {{Type: 1, Str: string(payload)}},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if got := cs.Stats().SizeBytes; got < int64(len(payload)) {
+		t.Fatalf("SizeBytes = %d, want at least %d", got, len(payload))
+	}
+}
+
 func BenchmarkCacheEviction(b *testing.B) {
 	cs := NewStore("", 1<<30, time.Hour)
 	cs.clock = newClockBuffer(1024)
