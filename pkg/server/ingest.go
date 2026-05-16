@@ -156,25 +156,30 @@ func (e *Engine) ensureIndexes(events []*event.Event) {
 // glob resolution matches against segment directory names (segments/hot/<INDEX>/).
 // Source names (ev.Source) are also registered for backward compatibility with
 // queries that reference _source values.
-//
-// On the fast path (all names already known), Contains uses RLock with no allocation.
 func (e *Engine) ensureSources(events []*event.Event) {
+	names := make(map[string]struct{}, 2)
 	for _, ev := range events {
 		// Register index names for glob/list resolution against segment dirs.
 		idx := ev.Index
 		if idx == "" {
 			idx = DefaultIndexName
 		}
-
-		if !e.sourceRegistry.Contains(idx) {
-			e.sourceRegistry.Register(idx)
-		}
+		names[idx] = struct{}{}
 
 		// Also register source names for backward compatibility with
 		// queries that reference _source values directly.
 		src := ev.Source
-		if src != "" && src != idx && !e.sourceRegistry.Contains(src) {
-			e.sourceRegistry.Register(src)
+		if src != "" && src != idx {
+			names[src] = struct{}{}
 		}
 	}
+
+	if len(names) == 0 {
+		return
+	}
+	batch := make([]string, 0, len(names))
+	for name := range names {
+		batch = append(batch, name)
+	}
+	e.sourceRegistry.RegisterAll(batch)
 }

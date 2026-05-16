@@ -92,6 +92,25 @@ func TestMultiSource_SourceRegistryPopulated(t *testing.T) {
 	}
 }
 
+func TestEnsureSourcesRegistersUniqueBatchNames(t *testing.T) {
+	e := newTestEngine(t)
+
+	events := []*event.Event{
+		{Index: "main", Source: "app.log"},
+		{Index: "main", Source: "app.log"},
+		{Index: "metrics", Source: "app.log"},
+		{Index: "", Source: "main"},
+	}
+
+	e.ensureSources(events)
+
+	got := e.SourceRegistry().List()
+	want := []string{"app.log", "main", "metrics"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sources = %v, want %v", got, want)
+	}
+}
+
 func TestMultiSource_MatchesSourceScope_SingleIndex(t *testing.T) {
 	// Single IndexName: existing behavior, should match only that index.
 	hints := &spl2.QueryHints{IndexName: "nginx"}
