@@ -385,13 +385,7 @@ func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, on
 	trace := len(traceSegments) > 0 && traceSegments[0]
 
 	// Flush buffered events so they are visible to the query scan.
-	// BufferedEvents() is a single lock+counter check — negligible overhead.
-	// Flush() only runs when there are actual buffered events.
-	if e.batcher != nil && e.batcher.BufferedEvents() > 0 {
-		if err := e.batcher.Flush(); err != nil {
-			e.logger.Warn("pre-query batcher flush failed", "error", err)
-		}
-	}
+	e.flushBatcherForQuery()
 
 	// Pin the current epoch to prevent retired segments from being munmap'd
 	// while workers read from them. Unpin after all workers finish.
@@ -1110,11 +1104,7 @@ func (e *Engine) buildPartialAggStore(
 	onProgress func(*SearchProgress),
 ) ([][]*enginepipeline.PartialAggGroup, storeStats) {
 	// Flush buffered events so they are visible to the query scan.
-	if e.batcher != nil && e.batcher.BufferedEvents() > 0 {
-		if err := e.batcher.Flush(); err != nil {
-			e.logger.Warn("pre-query batcher flush failed", "error", err)
-		}
-	}
+	e.flushBatcherForQuery()
 
 	// Pin epoch to prevent retired segments from being munmap'd during scan.
 	ep := e.pinEpoch()
@@ -1285,11 +1275,7 @@ func (e *Engine) buildTransformPartialAggStore(
 	onProgress func(*SearchProgress),
 ) ([][]*enginepipeline.PartialAggGroup, storeStats) {
 	// Flush buffered events so they are visible to the query scan.
-	if e.batcher != nil && e.batcher.BufferedEvents() > 0 {
-		if err := e.batcher.Flush(); err != nil {
-			e.logger.Warn("pre-query batcher flush failed", "error", err)
-		}
-	}
+	e.flushBatcherForQuery()
 
 	// Pin epoch to prevent retired segments from being munmap'd during scan.
 	ep := e.pinEpoch()
@@ -1668,11 +1654,7 @@ func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints,
 	trace := len(traceSegments) > 0 && traceSegments[0]
 
 	// Flush buffered events so they are visible to the query scan.
-	if e.batcher != nil && e.batcher.BufferedEvents() > 0 {
-		if err := e.batcher.Flush(); err != nil {
-			e.logger.Warn("pre-query batcher flush failed", "error", err)
-		}
-	}
+	e.flushBatcherForQuery()
 
 	// Pin epoch to prevent retired segments from being munmap'd during scan.
 	ep := e.pinEpoch()

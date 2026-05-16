@@ -264,6 +264,11 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		}
 	}
 
+	// Make buffered ingest visible before deriving the cache generation. A
+	// flush can bump ingestGen via onCommit, so keying first would store the
+	// first post-ingest query under a generation the next query will not use.
+	e.flushBatcherForQuery()
+
 	// Build cache key from query + time bounds + ingest generation.
 	// Including the generation counter ensures that queries after new ingest
 	// always miss the cache, even if the query and time range are identical (E3).
@@ -596,6 +601,14 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	// Store in cache (non-fatal; log failures for observability).
 	if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(qr.rows)); err != nil {
 		logger.Debug("cache put failed", "error", err)
+	}
+}
+
+func (e *Engine) flushBatcherForQuery() {
+	if e.batcher != nil && e.batcher.BufferedEvents() > 0 {
+		if err := e.batcher.Flush(); err != nil {
+			e.logger.Warn("pre-query batcher flush failed", "error", err)
+		}
 	}
 }
 
@@ -1005,11 +1018,7 @@ func (e *Engine) runStreamingPipeline(
 	qr.warnings = append(qr.warnings, e.checkSourceWarnings(hints)...)
 
 	// Flush buffered events so they are visible to the query scan.
-	if e.batcher != nil && e.batcher.BufferedEvents() > 0 {
-		if err := e.batcher.Flush(); err != nil {
-			e.logger.Warn("pre-query batcher flush failed", "error", err)
-		}
-	}
+	e.flushBatcherForQuery()
 
 	// Pin the current epoch to prevent retired segments from being munmap'd
 	// while the streaming pipeline reads from them. The pipeline reads
@@ -1240,11 +1249,7 @@ func (e *Engine) buildProgramPipeline(
 // avoiding reading any column data. Used when the optimizer detects countStarOnly.
 func (e *Engine) countStarFromMetadata(hints *spl2.QueryHints) int64 {
 	// Flush buffered events so they are visible to the metadata count.
-	if e.batcher != nil && e.batcher.BufferedEvents() > 0 {
-		if err := e.batcher.Flush(); err != nil {
-			e.logger.Warn("pre-query batcher flush failed", "error", err)
-		}
-	}
+	e.flushBatcherForQuery()
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
