@@ -41,12 +41,12 @@ func (h Header) View() string {
 
 	var detail string
 	if h.mode == "server" {
-		detail = fmt.Sprintf("connected to %s", t.Accent.Render(h.server))
+		detail = fmt.Sprintf("server endpoint %s", t.Accent.Render(h.server))
 	} else {
 		detail = fmt.Sprintf("file mode (%s, %s events)", h.file, formatCountShell(int64(h.events)))
 	}
 
-	line := fmt.Sprintf("  %s — %s", version, detail)
+	line := fmt.Sprintf("  %s - %s", version, detail)
 
 	// Pad to full width.
 	style := lipgloss.NewStyle().Width(h.width)

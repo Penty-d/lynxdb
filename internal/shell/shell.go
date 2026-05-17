@@ -26,7 +26,7 @@ func Run(mode string, opts RunOpts) error {
 	m := NewModel(mode, opts)
 
 	// Prepend welcome banner to results viewport.
-	m.results.AppendText(welcomeBanner())
+	m.results.AppendText(welcomeBanner(mode, opts.Server, opts.Since))
 
 	p := tea.NewProgram(m)
 	_, err := p.Run()

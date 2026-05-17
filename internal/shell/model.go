@@ -1170,21 +1170,28 @@ func waitForTailEvent(eventCh <-chan map[string]interface{}, errCh <-chan error)
 }
 
 // welcomeBanner returns the startup message with example queries.
-func welcomeBanner() string {
+func welcomeBanner(mode, server, since string) string {
 	t := ui.Stdout
 
 	var b strings.Builder
 	b.WriteString("\n")
 	b.WriteString(ui.RenderLynxFrame(t, ui.LynxFrame(ui.LynxAlert)))
 	b.WriteString("\n")
-	b.WriteString("  " + t.Bold.Render("Welcome to LynxDB Shell") + "\n")
+	b.WriteString("  " + t.Bold.Render("LynxDB shell") + "\n")
 	b.WriteString("\n")
-	b.WriteString("  " + t.Dim.Render("Try a query:") + "\n")
-	b.WriteString("    " + t.Accent.Render("source=nginx | stats count by status") + "\n")
-	b.WriteString("    " + t.Accent.Render("level=error | timechart count span=5m") + "\n")
-	b.WriteString("    " + t.Accent.Render("| top 10 uri") + "\n")
+	if mode == "server" {
+		b.WriteString("  " + t.Dim.Render("Endpoint: ") + t.Accent.Render(server) + "\n")
+		if since != "" {
+			b.WriteString("  " + t.Dim.Render("Default time range: last "+strings.TrimPrefix(since, "-")) + "\n")
+		}
+	} else {
+		b.WriteString("  " + t.Dim.Render("File mode: queries run against the loaded input.") + "\n")
+	}
 	b.WriteString("\n")
-	b.WriteString("  " + t.Dim.Render("Enter:run • ↑↓:history • Tab:complete • F1:help") + "\n")
+	b.WriteString("  " + t.Dim.Render("Try:") + "\n")
+	b.WriteString("    " + t.Accent.Render("from * | head 10") + "\n")
+	b.WriteString("    " + t.Accent.Render("errors by service") + "\n")
+	b.WriteString("    " + t.Accent.Render("latency duration_ms every 1m by service compute p95") + "\n")
 
 	return b.String()
 }
