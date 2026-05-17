@@ -16,6 +16,7 @@ import (
 	"image/color"
 	"io"
 	"os"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -34,11 +35,36 @@ type Env struct {
 // Term is the package-level Env, initialized by InitEnv.
 var Term Env
 
+// ThemeMode controls human-output color selection.
+type ThemeMode string
+
+const (
+	ThemeAuto  ThemeMode = "auto"
+	ThemeDark  ThemeMode = "dark"
+	ThemeLight ThemeMode = "light"
+	ThemePlain ThemeMode = "plain"
+)
+
 // InitEnv detects the terminal environment and initializes the package-level
 // Env and backward-compatible Theme instances.
 //
 // Pass noColor=true to force Ascii profile (--no-color flag).
 func InitEnv(noColor bool) {
+	InitEnvWithMode(noColor, string(ThemeAuto))
+}
+
+// InitEnvWithMode is InitEnv with an explicit human-output theme override.
+// "plain" is equivalent to --no-color. Unknown values fall back to "auto" so
+// early Cobra initialization cannot leave the UI package unusable.
+func InitEnvWithMode(noColor bool, mode string) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = string(ThemeAuto)
+	}
+	if mode == string(ThemePlain) {
+		noColor = true
+	}
+
 	profile := colorprofile.Detect(os.Stdout, os.Environ())
 
 	// Respect --no-color and NO_COLOR / TERM=dumb.
@@ -53,6 +79,12 @@ func InitEnv(noColor bool) {
 	}
 
 	hasDark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
+	switch mode {
+	case string(ThemeDark):
+		hasDark = true
+	case string(ThemeLight):
+		hasDark = false
+	}
 
 	Term = Env{
 		Profile:   profile,
@@ -165,6 +197,13 @@ type Theme struct {
 	Value lipgloss.Style
 	Rule  lipgloss.Style
 	Muted lipgloss.Style
+	Panel lipgloss.Style
+
+	// Semantic blocks.
+	SectionTitle lipgloss.Style
+	Hint         lipgloss.Style
+	MetricLabel  lipgloss.Style
+	MetricValue  lipgloss.Style
 
 	// JSON syntax highlighting.
 	JSONKey   lipgloss.Style
@@ -230,6 +269,13 @@ func newThemeFromEnv(w io.Writer) *Theme {
 	t.Value = lipgloss.NewStyle().Foreground(ColorWhite()).Bold(true)
 	t.Rule = lipgloss.NewStyle().Foreground(ColorDark())
 	t.Muted = lipgloss.NewStyle().Foreground(ColorDim())
+	t.Panel = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(ColorDark()).Padding(0, 1)
+
+	// Semantic blocks.
+	t.SectionTitle = lipgloss.NewStyle().Foreground(ColorWhite()).Bold(true)
+	t.Hint = lipgloss.NewStyle().Foreground(ColorInfo())
+	t.MetricLabel = lipgloss.NewStyle().Foreground(ColorGray())
+	t.MetricValue = lipgloss.NewStyle().Foreground(ColorWhite()).Bold(true)
 
 	// JSON syntax.
 	t.JSONKey = lipgloss.NewStyle().Foreground(ColorInfo())
@@ -324,6 +370,11 @@ func newNoColorTheme(w io.Writer) *Theme {
 		Value:         s,
 		Rule:          s,
 		Muted:         s,
+		Panel:         s,
+		SectionTitle:  s,
+		Hint:          s,
+		MetricLabel:   s,
+		MetricValue:   s,
 		JSONKey:       s,
 		JSONStr:       s,
 		JSONNum:       s,

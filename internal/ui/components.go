@@ -5,6 +5,117 @@ import (
 	"strings"
 )
 
+// Metric is one value in a compact human-readable summary grid.
+type Metric struct {
+	Label string
+	Value string
+	Hint  string
+	Warn  bool
+}
+
+// Diagnostic describes an actionable error panel.
+type Diagnostic struct {
+	Code       string
+	Message    string
+	Detail     string
+	Suggestion string
+	Commands   []string
+}
+
+// Section returns a titled block suitable for command/status output.
+func (t *Theme) Section(title string, lines ...string) string {
+	var b strings.Builder
+	if title != "" {
+		b.WriteString("  ")
+		b.WriteString(t.SectionTitle.Render(title))
+		b.WriteByte('\n')
+	}
+	for _, line := range lines {
+		if line == "" {
+			b.WriteByte('\n')
+			continue
+		}
+		b.WriteString("  ")
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// MetricGrid renders label/value pairs in a dense, terminal-friendly grid.
+func (t *Theme) MetricGrid(metrics []Metric, compact bool) string {
+	if len(metrics) == 0 {
+		return ""
+	}
+
+	labelWidth := 0
+	for _, m := range metrics {
+		if len(m.Label) > labelWidth {
+			labelWidth = len(m.Label)
+		}
+	}
+	if labelWidth > 18 {
+		labelWidth = 18
+	}
+
+	var b strings.Builder
+	for i, m := range metrics {
+		valueStyle := t.MetricValue
+		if m.Warn {
+			valueStyle = t.Warning
+		}
+		fmt.Fprintf(&b, "  %-*s  %s", labelWidth, t.MetricLabel.Render(m.Label), valueStyle.Render(m.Value))
+		if !compact && m.Hint != "" {
+			fmt.Fprintf(&b, "  %s", t.Muted.Render(m.Hint))
+		}
+		if i < len(metrics)-1 {
+			b.WriteByte('\n')
+		}
+	}
+
+	return b.String()
+}
+
+// EmptyState renders a consistent empty result block with optional next steps.
+func (t *Theme) EmptyState(title string, steps ...string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %s %s\n", t.Info.Render("i"), t.Bold.Render(title))
+	if len(steps) > 0 {
+		fmt.Fprintf(&b, "\n  %s\n", t.Dim.Render("Next steps:"))
+		for _, step := range steps {
+			fmt.Fprintf(&b, "    %s\n", t.Dim.Render(step))
+		}
+	}
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// Diagnostic renders an actionable error block without changing exit behavior.
+func (t *Theme) Diagnostic(d Diagnostic) string {
+	var b strings.Builder
+	code := d.Code
+	if code == "" {
+		code = "ERROR"
+	}
+	fmt.Fprintf(&b, "\n  %s %s: %s\n", t.IconError(), t.Error.Render(code), d.Message)
+	if d.Detail != "" {
+		fmt.Fprintf(&b, "    %s\n", d.Detail)
+	}
+	if d.Suggestion != "" {
+		fmt.Fprintf(&b, "\n    %s %s\n", t.Hint.Render("Hint:"), d.Suggestion)
+	}
+	if len(d.Commands) > 0 {
+		fmt.Fprintf(&b, "\n    %s\n", t.Dim.Render("Try:"))
+		for _, cmd := range d.Commands {
+			fmt.Fprintf(&b, "      %s\n", t.Info.Render(cmd))
+		}
+	}
+	b.WriteByte('\n')
+
+	return b.String()
+}
+
 // PrintSuccess prints a green "check" message to the theme's writer.
 func (t *Theme) PrintSuccess(quiet bool, format string, args ...interface{}) {
 	if quiet {
@@ -80,31 +191,34 @@ func (t *Theme) RenderError(err error) {
 	if err == nil {
 		return
 	}
-	fmt.Fprintf(t.w, "\n  %s %s\n\n", t.IconError(), err.Error())
+	fmt.Fprint(t.w, t.Diagnostic(Diagnostic{
+		Code:    "ERROR",
+		Message: err.Error(),
+	}))
 }
 
 // RenderConnectionError prints a connection error with helpful suggestions.
 func (t *Theme) RenderConnectionError(server string) {
-	fmt.Fprintf(t.w, "\n  %s Cannot connect to %s\n\n", t.IconError(), server)
-	fmt.Fprintln(t.w, `    Is the server running? Try:
-      lynxdb server              Start the server
-      lynxdb doctor              Check environment
-
-    Or query local files without a server:
-      lynxdb query --file app.log 'level=error'
-
-    Using a different server? Set --server:
-      lynxdb query --server http://logs:3100 'level=error'`)
-	fmt.Fprintln(t.w)
+	fmt.Fprint(t.w, t.Diagnostic(Diagnostic{
+		Code:       "CONNECTION",
+		Message:    "Cannot connect to " + server,
+		Suggestion: "Start the server, check the environment, or point --server at the right endpoint.",
+		Commands: []string{
+			"lynxdb server",
+			"lynxdb doctor",
+			"lynxdb query --file app.log 'level=error'",
+			"lynxdb query --server http://logs:3100 'level=error'",
+		},
+	}))
 }
 
 // RenderServerError prints a server error with code, message, and optional suggestion.
 func (t *Theme) RenderServerError(code, message, suggestion string) {
-	fmt.Fprintf(t.w, "\n  %s %s: %s\n", t.IconError(), code, message)
-	if suggestion != "" {
-		fmt.Fprintf(t.w, "    %s\n", t.Info.Render(suggestion))
-	}
-	fmt.Fprintln(t.w)
+	fmt.Fprint(t.w, t.Diagnostic(Diagnostic{
+		Code:       code,
+		Message:    message,
+		Suggestion: suggestion,
+	}))
 }
 
 // RenderRequiredFlagError prints a formatted error for missing required CLI flags,
