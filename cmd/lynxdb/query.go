@@ -665,10 +665,6 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 		defer cancel()
 	}
 
-	if isTTY() {
-		return doQueryTUI(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten)
-	}
-
 	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten)
 }
 
