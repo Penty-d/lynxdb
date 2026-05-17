@@ -136,15 +136,15 @@ func TestTable_CardLayout(t *testing.T) {
 
 	got := tbl.String()
 
-	// Card layout should have "Row 1" header.
-	if !strings.Contains(got, "Row 1") {
-		t.Errorf("card layout should contain 'Row 1' header, got:\n%s", got)
+	// Vertical record layout should have a record header.
+	if !strings.Contains(got, "record 1") {
+		t.Errorf("record layout should contain 'record 1' header, got:\n%s", got)
 	}
 
 	// All values should be preserved.
 	for _, v := range vals {
 		if !strings.Contains(got, v) {
-			t.Errorf("card layout should contain value %q, got:\n%s", v, got)
+			t.Errorf("record layout should contain value %q, got:\n%s", v, got)
 		}
 	}
 }
@@ -161,14 +161,14 @@ func TestTable_NarrowTerminal(t *testing.T) {
 
 	got := tbl.String()
 
-	// Should fall back to card layout.
-	if !strings.Contains(got, "Row 1") {
-		t.Errorf("narrow terminal should trigger card layout, got:\n%s", got)
+	// Should fall back to vertical record layout.
+	if !strings.Contains(got, "record 1") {
+		t.Errorf("narrow terminal should trigger record layout, got:\n%s", got)
 	}
 
 	// All values preserved.
 	if !strings.Contains(got, "web-01") || !strings.Contains(got, "200") || !strings.Contains(got, "OK") {
-		t.Errorf("card layout should preserve all values, got:\n%s", got)
+		t.Errorf("record layout should preserve all values, got:\n%s", got)
 	}
 }
 
@@ -183,9 +183,9 @@ func TestTable_FitsNaturally(t *testing.T) {
 
 	got := tbl.String()
 
-	// Should render as a normal table (no "Row 1" card header).
-	if strings.Contains(got, "Row 1") {
-		t.Errorf("wide terminal should render table, not cards, got:\n%s", got)
+	// Should render as a normal table (no record header).
+	if strings.Contains(got, "record 1") {
+		t.Errorf("wide terminal should render table, not records, got:\n%s", got)
 	}
 
 	if !strings.Contains(got, "short") || !strings.Contains(got, "value") {
@@ -197,7 +197,7 @@ func TestTable_CardLayout_MultipleRows(t *testing.T) {
 	var buf bytes.Buffer
 	theme := NewTheme(&buf, true)
 
-	// Force card layout with many columns on a narrow terminal.
+	// Force record layout with many columns on a narrow terminal.
 	tbl := NewTable(theme).
 		SetTerminalWidth(40).
 		SetColumns("HOST", "STATUS", "METHOD", "PATH", "USER").
@@ -206,18 +206,18 @@ func TestTable_CardLayout_MultipleRows(t *testing.T) {
 
 	got := tbl.String()
 
-	if !strings.Contains(got, "Row 1") {
-		t.Errorf("should contain 'Row 1', got:\n%s", got)
+	if !strings.Contains(got, "record 1") {
+		t.Errorf("should contain 'record 1', got:\n%s", got)
 	}
 
-	if !strings.Contains(got, "Row 2") {
-		t.Errorf("should contain 'Row 2', got:\n%s", got)
+	if !strings.Contains(got, "record 2") {
+		t.Errorf("should contain 'record 2', got:\n%s", got)
 	}
 
 	// All values preserved.
 	for _, v := range []string{"web-01", "web-02", "/api/v1/users", "/api/v1/orders", "alice", "bob"} {
 		if !strings.Contains(got, v) {
-			t.Errorf("card layout should contain %q, got:\n%s", v, got)
+			t.Errorf("record layout should contain %q, got:\n%s", v, got)
 		}
 	}
 }

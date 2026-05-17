@@ -14,7 +14,7 @@ const cellPaddingRight = 2
 // Table is a styled table renderer built on lipgloss/table.
 // It automatically adapts to terminal width: when all columns fit, it renders
 // a normal table with cell wrapping. When columns would be too narrow
-// (< MinColumnWidth each), it falls back to a vertical card layout that
+// (< MinColumnWidth each), it falls back to a vertical record layout that
 // preserves every value without truncation.
 //
 // For interactive scrolling tables, use bubbles/table instead.
@@ -22,8 +22,21 @@ type Table struct {
 	theme     *Theme
 	columns   []string
 	rows      [][]string
+	kinds     []ColumnKind
 	termWidth int
+	compact   bool
 }
+
+// ColumnKind controls per-column styling and alignment.
+type ColumnKind int
+
+const (
+	ColumnAuto ColumnKind = iota
+	ColumnText
+	ColumnNumber
+	ColumnDuration
+	ColumnBytes
+)
 
 // NewTable creates a new table bound to the given theme.
 // The terminal width is auto-detected; use SetTerminalWidth to override.
@@ -37,6 +50,20 @@ func NewTable(theme *Theme) *Table {
 // SetColumns sets the column headers.
 func (t *Table) SetColumns(cols ...string) *Table {
 	t.columns = cols
+
+	return t
+}
+
+// SetColumnKinds sets optional per-column styles. Missing entries default to text.
+func (t *Table) SetColumnKinds(kinds ...ColumnKind) *Table {
+	t.kinds = kinds
+
+	return t
+}
+
+// SetCompact switches to denser padding and lower narrow-layout thresholds.
+func (t *Table) SetCompact(compact bool) *Table {
+	t.compact = compact
 
 	return t
 }
@@ -56,7 +83,7 @@ func (t *Table) AddRow(values ...string) *Table {
 	return t
 }
 
-// String renders the table, choosing between table layout and card layout
+// String renders the table, choosing between table layout and record layout
 // based on the terminal width and number of columns.
 func (t *Table) String() string {
 	if len(t.columns) == 0 {
@@ -66,9 +93,15 @@ func (t *Table) String() string {
 	numCols := len(t.columns)
 	// Each column needs at least MinColumnWidth + cellPaddingRight.
 	availablePerCol := t.termWidth / numCols
+	minColumnWidth := MinColumnWidth
+	padding := cellPaddingRight
+	if t.compact {
+		minColumnWidth = 6
+		padding = 1
+	}
 
-	if availablePerCol < MinColumnWidth+cellPaddingRight {
-		return t.renderCards()
+	if availablePerCol < minColumnWidth+padding {
+		return t.renderRecords()
 	}
 
 	return t.renderTable()
@@ -97,6 +130,10 @@ func (t *Table) renderTable() string {
 
 	headerStyle := t.theme.TableHeader
 	ruleStyle := t.theme.Rule
+	padding := cellPaddingRight
+	if t.compact {
+		padding = 1
+	}
 
 	tbl := table.New().
 		Border(border).
@@ -111,11 +148,25 @@ func (t *Table) renderTable() string {
 		Width(t.termWidth).
 		Wrap(true).
 		StyleFunc(func(row, col int) lipgloss.Style {
+			style := lipgloss.NewStyle().PaddingRight(padding)
 			if row == table.HeaderRow {
-				return headerStyle.PaddingRight(cellPaddingRight)
+				style = headerStyle.PaddingRight(padding)
+			}
+			if t.columnKind(col) == ColumnNumber || t.columnKind(col) == ColumnBytes || t.columnKind(col) == ColumnDuration {
+				style = style.Align(lipgloss.Right)
+			}
+			if row != table.HeaderRow {
+				switch t.columnKind(col) {
+				case ColumnNumber:
+					style = style.Foreground(ColorJSONNum())
+				case ColumnDuration:
+					style = style.Foreground(ColorInfo())
+				case ColumnBytes:
+					style = style.Foreground(ColorAccent())
+				}
 			}
 
-			return lipgloss.NewStyle().PaddingRight(cellPaddingRight)
+			return style
 		}).
 		Headers(t.columns...).
 		Rows(rows...)
@@ -123,16 +174,24 @@ func (t *Table) renderTable() string {
 	return tbl.String()
 }
 
-// renderCards renders rows as vertical key-value cards. This layout is used
+func (t *Table) columnKind(col int) ColumnKind {
+	if col >= 0 && col < len(t.kinds) && t.kinds[col] != ColumnAuto {
+		return t.kinds[col]
+	}
+
+	return ColumnText
+}
+
+// renderRecords renders rows as vertical key-value records. This layout is used
 // when the terminal is too narrow for a readable table. Every value is
 // preserved in full — nothing is ever truncated.
 //
 // Example output:
 //
-//	  host:    web-01.prod.example.com
-//	  status:  200
-//	  message: Connection established
-func (t *Table) renderCards() string {
+//	host:    web-01.prod.example.com
+//	status:  200
+//	message: Connection established
+func (t *Table) renderRecords() string {
 	var b strings.Builder
 
 	labelStyle := t.theme.Label
@@ -147,13 +206,13 @@ func (t *Table) renderCards() string {
 	}
 
 	for i, row := range t.rows {
-		header := fmt.Sprintf(" Row %d ", i+1)
-		remaining := t.termWidth - len(header) - 2 // 2 for leading "──"
+		header := fmt.Sprintf(" record %d ", i+1)
+		remaining := t.termWidth - len(header) - 1
 		if remaining < 0 {
 			remaining = 0
 		}
 
-		line := "\u2500\u2500" + header + strings.Repeat("\u2500", remaining)
+		line := header + strings.Repeat("\u2500", remaining)
 		b.WriteString(ruleStyle.Render(line))
 		b.WriteByte('\n')
 
@@ -171,7 +230,7 @@ func (t *Table) renderCards() string {
 			b.WriteByte('\n')
 		}
 
-		// Blank line between cards (but not after the last one).
+		// Blank line between records (but not after the last one).
 		if i < len(t.rows)-1 {
 			b.WriteByte('\n')
 		}
