@@ -200,8 +200,9 @@ func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm es
 		}
 	}
 
-	// Map _index to source.
-	if indexName != "" {
+	if source, ok := esDocSource(doc); ok {
+		e.Source = source
+	} else if indexName != "" {
 		if fm.StripLogstashDateSuffix {
 			indexName = stripLogstashDateSuffix(indexName)
 		}
@@ -251,8 +252,41 @@ func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm es
 	for k, v := range doc {
 		e.Fields[k] = event.ValueFromInterface(v)
 	}
+	if path, ok := esLogFilePath(doc); ok {
+		e.Fields["log.file.path"] = event.StringValue(path)
+	}
 
 	return e
+}
+
+func esDocSource(doc map[string]interface{}) (string, bool) {
+	if path, ok := esLogFilePath(doc); ok {
+		return path, true
+	}
+	if source, ok := doc["source"].(string); ok && source != "" {
+		delete(doc, "source")
+
+		return source, true
+	}
+
+	return "", false
+}
+
+func esLogFilePath(doc map[string]interface{}) (string, bool) {
+	logValue, ok := doc["log"].(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	fileValue, ok := logValue["file"].(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	path, ok := fileValue["path"].(string)
+	if !ok || path == "" {
+		return "", false
+	}
+
+	return path, true
 }
 
 func stripLogstashDateSuffix(indexName string) string {

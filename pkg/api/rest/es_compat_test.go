@@ -387,6 +387,68 @@ func TestESBulk_IndexMapping(t *testing.T) {
 	}
 }
 
+func TestESBulk_FilebeatPathMapsToSource(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := `{"index":{"_index":"filebeat-2026.05.17"}}
+{"@timestamp":"2026-05-17T10:00:00Z","message":"filebeat path","log":{"file":{"path":"/var/log/app/nginx_access.log"}}}
+`
+	resp := postESBulk(t, srv.Addr(), body)
+	result := decodeESBulkResponse(t, resp)
+	if result.Errors {
+		t.Fatal("expected errors=false")
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	events := queryEvents(t, srv.Addr(), `{"q":"FROM main | table _source | head 1"}`)
+	if len(events) != 1 {
+		t.Fatalf("events: got %d, want 1", len(events))
+	}
+	if got := events[0]["_source"]; got != "/var/log/app/nginx_access.log" {
+		t.Fatalf("_source = %v, want /var/log/app/nginx_access.log", got)
+	}
+}
+
+func TestESBulk_TopLevelSourceMapsToSource(t *testing.T) {
+	ev := esDocToEventWithMapping(
+		map[string]interface{}{"message": "top source", "source": "/var/log/app/app.log"},
+		"filebeat-2026.05.17",
+		esFieldMapping{TimeField: "@timestamp"},
+	)
+	if ev.Source != "/var/log/app/app.log" {
+		t.Fatalf("Source = %q, want /var/log/app/app.log", ev.Source)
+	}
+	if _, ok := ev.Fields["source"]; ok {
+		t.Fatal("source user field should be consumed into Event.Source")
+	}
+}
+
+func TestESBulk_LogFilePathPreservedAsField(t *testing.T) {
+	ev := esDocToEventWithMapping(
+		map[string]interface{}{
+			"message": "filebeat path",
+			"log": map[string]interface{}{
+				"file": map[string]interface{}{
+					"path": "/var/log/app/nginx_access.log",
+				},
+			},
+		},
+		"filebeat-2026.05.17",
+		esFieldMapping{TimeField: "@timestamp"},
+	)
+	if ev.Source != "/var/log/app/nginx_access.log" {
+		t.Fatalf("Source = %q, want /var/log/app/nginx_access.log", ev.Source)
+	}
+	path, ok := ev.Fields["log.file.path"]
+	if !ok {
+		t.Fatal("log.file.path field missing")
+	}
+	if got := path.AsString(); got != "/var/log/app/nginx_access.log" {
+		t.Fatalf("log.file.path = %q, want /var/log/app/nginx_access.log", got)
+	}
+}
+
 func TestESBulk_LogstashFormat_DateStripped(t *testing.T) {
 	ev := esDocToEventWithMapping(
 		map[string]interface{}{"message": "logstash format"},
@@ -1220,6 +1282,35 @@ func postQuery(t *testing.T, addr, body string) *http.Response {
 	}
 
 	return resp
+}
+
+func queryEvents(t *testing.T, addr, body string) []map[string]interface{} {
+	t.Helper()
+	resp := postQuery(t, addr, body)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var qr map[string]interface{}
+	if err := json.Unmarshal(raw, &qr); err != nil {
+		t.Fatalf("decode query response: %v (body: %s)", err, raw)
+	}
+	data, ok := qr["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing data in query response: %s", raw)
+	}
+	rawEvents, ok := data["events"].([]interface{})
+	if !ok {
+		t.Fatalf("missing events in query response: %s", raw)
+	}
+	events := make([]map[string]interface{}, 0, len(rawEvents))
+	for _, rawEvent := range rawEvents {
+		event, ok := rawEvent.(map[string]interface{})
+		if !ok {
+			t.Fatalf("event has type %T, want object", rawEvent)
+		}
+		events = append(events, event)
+	}
+
+	return events
 }
 
 // queryEventCount runs a query and returns the count of events.
