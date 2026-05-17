@@ -23,8 +23,9 @@ func newShellCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "shell",
-		Short: "Start an interactive SPL2 shell (REPL)",
+		Use:     "shell",
+		Aliases: []string{"sh", "repl", "console"},
+		Short:   "Start an interactive SPL2 shell (REPL)",
 		Long: `Starts an interactive shell for running SPL2 queries.
 
 Supports query history (arrow keys), dot commands (.help, .quit),
