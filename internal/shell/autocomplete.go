@@ -346,6 +346,15 @@ func (c *Completer) Suggest(value string) []string {
 	return result
 }
 
+// SuggestExplicit returns popup items for an explicit completion request.
+func (c *Completer) SuggestExplicit(value string) []CompletionItem {
+	if strings.TrimSpace(value) == "" {
+		return withFullLine(value, len(value), filterItems(c.commands, ""), "")
+	}
+
+	return c.SuggestAll(value)
+}
+
 // CompletionKind categorizes a completion item for display.
 type CompletionKind int
 

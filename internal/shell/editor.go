@@ -115,7 +115,7 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 			case key.Matches(msg, e.keys.FocusBack): // Esc
 				e.popup.Hide()
 				return nil, nil, nil
-			case key.Matches(msg, e.keys.Submit): // Enter — accept selection
+			case key.Matches(msg, e.keys.AcceptSugg): // Tab accepts selection
 				if item := e.popup.SelectedItem(); item != nil {
 					e.input.SetValue(item.FullLine)
 					e.input.MoveToEnd()
@@ -124,6 +124,9 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 				e.popup.Hide()
 				e.refreshSuggestions()
 				return nil, nil, nil
+			case key.Matches(msg, e.keys.Submit): // Enter still submits
+				e.popup.Hide()
+				return e.handleSubmit()
 			case key.Matches(msg, e.keys.ScrollDn): // PgDown — move down in popup
 				e.popup.MoveDown()
 				return nil, nil, nil
@@ -169,7 +172,7 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 
 		case key.Matches(msg, e.keys.CompletePopup):
 			// Explicit popup trigger.
-			e.triggerPopup()
+			e.triggerPopup(true)
 			return nil, nil, nil
 
 		case key.Matches(msg, e.keys.AcceptSugg):
@@ -215,12 +218,15 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 }
 
 // triggerPopup shows the autocomplete popup with all available completions.
-func (e *Editor) triggerPopup() {
+func (e *Editor) triggerPopup(explicit bool) {
 	if e.completer == nil {
 		return
 	}
 
 	items := e.completer.SuggestAll(e.input.Value())
+	if explicit {
+		items = e.completer.SuggestExplicit(e.input.Value())
+	}
 	if len(items) < 2 {
 		e.popup.Hide()
 		return
@@ -238,7 +244,7 @@ func (e *Editor) TriggerAutoPopup() {
 		return // already showing
 	}
 
-	e.triggerPopup()
+	e.triggerPopup(false)
 }
 
 // PopupVisible reports whether the autocomplete popup is displayed.
