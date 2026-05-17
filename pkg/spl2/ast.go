@@ -181,6 +181,16 @@ func (c *HeadCommand) String() string {
 	return fmt.Sprintf("head %d", c.Count)
 }
 
+// OffsetCommand represents: offset <n>.
+type OffsetCommand struct {
+	Count int
+}
+
+func (*OffsetCommand) commandNode() {}
+func (c *OffsetCommand) String() string {
+	return fmt.Sprintf("offset %d", c.Count)
+}
+
 // TailCommand represents: tail <n>.
 type TailCommand struct {
 	Count int

@@ -140,6 +140,8 @@ const (
 	TokenBucket
 	TokenOrder
 	TokenTake
+	TokenLimit
+	TokenOffset
 	TokenRank
 	TokenTopby
 	TokenBottomby
@@ -331,6 +333,8 @@ var tokenNames = map[TokenType]string{
 	TokenBucket:            "BUCKET",
 	TokenOrder:             "ORDER",
 	TokenTake:              "TAKE",
+	TokenLimit:             "LIMIT",
+	TokenOffset:            "OFFSET",
 	TokenRank:              "RANK",
 	TokenTopby:             "TOPBY",
 	TokenBottomby:          "BOTTOMBY",
@@ -499,6 +503,8 @@ var keywords = map[string]TokenType{
 	"bucket":              TokenBucket,
 	"order":               TokenOrder,
 	"take":                TokenTake,
+	"limit":               TokenLimit,
+	"offset":              TokenOffset,
 	"rank":                TokenRank,
 	"topby":               TokenTopby,
 	"bottomby":            TokenBottomby,

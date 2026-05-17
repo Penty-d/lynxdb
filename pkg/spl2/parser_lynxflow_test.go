@@ -2290,13 +2290,56 @@ func TestLynxFlow_Pipeline_DomainSugarMultiCmd(t *testing.T) {
 	}
 }
 
+func TestLynxFlow_LimitOffsetSugar(t *testing.T) {
+	q, err := Parse(`search login | limit 10 offset 20`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 3 {
+		t.Fatalf("Commands: got %d, want 3", len(q.Commands))
+	}
+	if _, ok := q.Commands[0].(*SearchCommand); !ok {
+		t.Fatalf("cmd[0]: expected SearchCommand, got %T", q.Commands[0])
+	}
+	offset, ok := q.Commands[1].(*OffsetCommand)
+	if !ok {
+		t.Fatalf("cmd[1]: expected OffsetCommand, got %T", q.Commands[1])
+	}
+	if offset.Count != 20 {
+		t.Fatalf("offset.Count: got %d, want 20", offset.Count)
+	}
+	head, ok := q.Commands[2].(*HeadCommand)
+	if !ok {
+		t.Fatalf("cmd[2]: expected HeadCommand, got %T", q.Commands[2])
+	}
+	if head.Count != 10 {
+		t.Fatalf("head.Count: got %d, want 10", head.Count)
+	}
+}
+
+func TestLynxFlow_OffsetSugar(t *testing.T) {
+	q, err := Parse(`search login | offset 2 | limit 1`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 3 {
+		t.Fatalf("Commands: got %d, want 3", len(q.Commands))
+	}
+	if _, ok := q.Commands[1].(*OffsetCommand); !ok {
+		t.Fatalf("cmd[1]: expected OffsetCommand, got %T", q.Commands[1])
+	}
+	if _, ok := q.Commands[2].(*HeadCommand); !ok {
+		t.Fatalf("cmd[2]: expected HeadCommand, got %T", q.Commands[2])
+	}
+}
+
 // Normalize Tests — Lynx Flow commands recognized by normalizer
 
 func TestLynxFlow_NormalizeKnownCommands(t *testing.T) {
 	// All Lynx Flow commands should be in the knownCommands list.
 	lfCommands := []string{
 		"let", "keep", "omit", "select", "group", "every", "bucket",
-		"order", "take", "rank", "topby", "bottomby", "bottom",
+		"order", "take", "limit", "offset", "rank", "topby", "bottomby", "bottom",
 		"running", "enrich", "parse", "explode", "pack", "lookup",
 		"latency", "errors", "rate", "proportion", "impact", "baseline", "changes", "exemplars", "percentiles", "slowest",
 		"views", "dropview",

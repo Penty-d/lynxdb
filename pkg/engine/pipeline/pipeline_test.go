@@ -105,6 +105,55 @@ func TestLimitEarlyTermination(t *testing.T) {
 	}
 }
 
+func TestOffsetIterator(t *testing.T) {
+	events := makeEvents(5)
+	scan := NewScanIterator(events, 2)
+	offset := NewOffsetIterator(scan, 3)
+
+	ctx := context.Background()
+	if err := offset.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := CollectAll(ctx, offset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if got := rows[0]["x"].AsInt(); got != 3 {
+		t.Fatalf("first row x: got %d, want 3", got)
+	}
+	if got := rows[1]["x"].AsInt(); got != 4 {
+		t.Fatalf("second row x: got %d, want 4", got)
+	}
+}
+
+func TestOffsetThenLimitIterator(t *testing.T) {
+	events := makeEvents(10)
+	scan := NewScanIterator(events, 3)
+	offset := NewOffsetIterator(scan, 4)
+	limit := NewLimitIterator(offset, 2)
+
+	ctx := context.Background()
+	if err := limit.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := CollectAll(ctx, limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if got := rows[0]["x"].AsInt(); got != 4 {
+		t.Fatalf("first row x: got %d, want 4", got)
+	}
+	if got := rows[1]["x"].AsInt(); got != 5 {
+		t.Fatalf("second row x: got %d, want 5", got)
+	}
+}
+
 func TestReverseIterator(t *testing.T) {
 	events := makeEvents(5)
 	scan := NewScanIterator(events, 2)
