@@ -213,6 +213,9 @@ func TestEditorHighlightsQueryWithoutChangingText(t *testing.T) {
 			t.Fatalf("editor view missing %q in %q", want, plain(got))
 		}
 	}
+	if !strings.Contains(got, "\x1b[") {
+		t.Fatalf("editor view should contain syntax styling, got %q", got)
+	}
 }
 
 func TestModelViewPlacesRealEditorCursor(t *testing.T) {

@@ -79,7 +79,7 @@ func NewEditor(prompt, contPrompt string, history *History, completer *Completer
 		contPrompt:  contPrompt,
 		keys:        defaultKeyMap(),
 		promptWidth: promptWidth,
-		theme:       NewShellTheme(),
+		theme:       NewShellEditorTheme(),
 	}
 }
 
