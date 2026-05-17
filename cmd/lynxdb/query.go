@@ -678,12 +678,20 @@ func validateQueryBeforeTUI(query string) error {
 	}
 
 	if _, err := spl2.ParseProgram(query); err != nil {
+		rawErr := err
+		normalized := spl2.NormalizeQuery(query)
+		if normalized != query {
+			if _, normalizedErr := spl2.ParseProgram(normalized); normalizedErr == nil {
+				return nil
+			}
+		}
+
 		return &queryError{
 			inner: &client.APIError{
 				HTTPStatus: 400,
 				Code:       client.ErrCodeInvalidQuery,
-				Message:    "parse error: " + err.Error(),
-				Suggestion: spl2.SuggestFix(err.Error(), nil),
+				Message:    "parse error: " + rawErr.Error(),
+				Suggestion: spl2.SuggestFix(rawErr.Error(), nil),
 			},
 			query: query,
 		}
