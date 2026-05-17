@@ -69,6 +69,8 @@ type Model struct {
 func NewModel(mode string, opts RunOpts) Model {
 	history := NewHistory()
 	completer := NewCompleter()
+	completer.SetClient(opts.Client)
+	completer.SetSince(opts.Since)
 
 	prompt := "lynxdb> "
 	if mode == "file" {
@@ -118,7 +120,7 @@ func (m Model) Init() tea.Cmd {
 	// Fetch fields for autocomplete and sidebar data in server mode.
 	if m.session.Mode == "server" && m.session.Client != nil {
 		cmds = append(cmds,
-			fetchFieldsCmd(m.session.Client),
+			fetchFieldsCmd(m.session.Client, m.session.Since),
 			fetchSidebarDataCmd(m.session.Client),
 			sidebarRefreshTickCmd(),
 		)
@@ -162,6 +164,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sidebarDataMsg:
 		m.sidebar.SetServerInfo(msg.server)
 		m.sidebar.SetIndexes(msg.indexes)
+		m.completer.SetIndexes(indexNames(msg.indexes))
 
 		return m, nil
 
@@ -575,6 +578,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 		if output != "" {
 			m.results.AppendText(output)
+		}
+		if cmdLower == "/since" || cmdLower == "/set" {
+			m.completer.SetSince(m.session.Since)
 		}
 
 		if asyncCmd != nil {
@@ -1099,9 +1105,9 @@ func jobElapsed(job *client.JobResult) time.Duration {
 	return 0
 }
 
-func fetchFieldsCmd(c *client.Client) tea.Cmd {
+func fetchFieldsCmd(c *client.Client, since string) tea.Cmd {
 	return func() tea.Msg {
-		fields, err := c.Fields(context.Background())
+		fields, err := c.FieldsFiltered(context.Background(), client.FieldsOpts{Since: strings.TrimPrefix(since, "-")})
 		if err != nil {
 			return fieldsLoadedMsg{}
 		}
@@ -1128,6 +1134,17 @@ func fetchFieldsCmd(c *client.Client) tea.Cmd {
 
 		return fieldsLoadedMsg{fields: names, fieldInfo: fields, sources: sourceNames}
 	}
+}
+
+func indexNames(indexes []client.IndexInfo) []string {
+	names := make([]string, 0, len(indexes))
+	for _, idx := range indexes {
+		if idx.Name != "" {
+			names = append(names, idx.Name)
+		}
+	}
+
+	return names
 }
 
 func waitForTailEvent(eventCh <-chan map[string]interface{}, errCh <-chan error) tea.Cmd {
