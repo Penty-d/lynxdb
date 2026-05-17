@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
@@ -28,6 +29,7 @@ type Editor struct {
 	multiLine   bool   // tracks multi-line state for prompt switching
 	promptWidth int    // cached display width of the prompt
 	popup       AutocompletePopup
+	theme       *ShellTheme
 }
 
 // NewEditor creates an editor with the given prompt strings.
@@ -38,6 +40,7 @@ func NewEditor(prompt, contPrompt string, history *History, completer *Completer
 	ta.MaxHeight = editorMaxLines
 	ta.SetHeight(1)
 	ta.EndOfBufferCharacter = ' '
+	ta.SetVirtualCursor(false)
 
 	// Override textarea KeyMap so our shell-level bindings don't conflict.
 	// InsertNewline: only shift+enter (we handle plain enter for submit).
@@ -61,6 +64,9 @@ func NewEditor(prompt, contPrompt string, history *History, completer *Completer
 	styles.Focused.Base = lipgloss.NewStyle()
 	styles.Blurred.CursorLine = lipgloss.NewStyle()
 	styles.Blurred.Base = lipgloss.NewStyle()
+	styles.Cursor.Color = ui.ColorAccent()
+	styles.Cursor.Shape = tea.CursorBar
+	styles.Cursor.Blink = true
 	ta.SetStyles(styles)
 
 	ta.Focus()
@@ -73,6 +79,7 @@ func NewEditor(prompt, contPrompt string, history *History, completer *Completer
 		contPrompt:  contPrompt,
 		keys:        defaultKeyMap(),
 		promptWidth: promptWidth,
+		theme:       NewShellTheme(),
 	}
 }
 
@@ -269,6 +276,19 @@ func (e *Editor) PopupAnchorCol() int {
 	return e.popup.anchorCol
 }
 
+func (e *Editor) Cursor(offsetX, offsetY int) *tea.Cursor {
+	c := e.input.Cursor()
+	if c == nil {
+		return nil
+	}
+
+	blockStyle := e.inputBlockStyle()
+	c.Position.X += offsetX + blockStyle.GetBorderLeftSize() + blockStyle.GetPaddingLeft()
+	c.Position.Y += offsetY + blockStyle.GetBorderTopSize() + blockStyle.GetPaddingTop()
+
+	return c
+}
+
 // refreshSuggestions recomputes ghost text when cursor is at the end of input.
 func (e *Editor) refreshSuggestions() {
 	value := e.input.Value()
@@ -433,7 +453,7 @@ func (e *Editor) handleCancel() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
 // SetValue() triggers Reset() internally which destroys cursor position,
 // viewport scroll, and the value slice, corrupting state for the next Update().
 func (e *Editor) View() string {
-	v := e.input.View()
+	v := e.highlightInputView(e.input.View())
 	if e.ghostText == "" {
 		return e.renderInputBlock(v)
 	}
@@ -483,6 +503,35 @@ func (e *Editor) View() string {
 	lines[lastIdx] = trimmed + styledGhost + strings.Repeat(" ", remaining)
 
 	return e.renderInputBlock(strings.Join(lines, "\n"))
+}
+
+func (e *Editor) highlightInputView(s string) string {
+	if strings.TrimSpace(e.input.Value()) == "" || e.theme == nil {
+		return s
+	}
+
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, line := range lines {
+		lineWidth := ansi.StringWidth(line)
+		if lineWidth <= e.promptWidth {
+			continue
+		}
+
+		prefix := ansi.Cut(line, 0, e.promptWidth)
+		rest := ansi.Cut(line, e.promptWidth, lineWidth)
+		text := strings.TrimRight(rest, " ")
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+
+		paddingWidth := ansi.StringWidth(rest) - ansi.StringWidth(text)
+		if paddingWidth < 0 {
+			paddingWidth = 0
+		}
+		lines[i] = prefix + HighlightSPL2(text, e.theme) + strings.Repeat(" ", paddingWidth)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func (e Editor) inputBlockStyle() lipgloss.Style {

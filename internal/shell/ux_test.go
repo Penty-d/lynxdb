@@ -202,6 +202,37 @@ func TestEditorRendersFramedInputBlock(t *testing.T) {
 	}
 }
 
+func TestEditorHighlightsQueryWithoutChangingText(t *testing.T) {
+	editor := NewEditor("lynxdb> ", "   ...> ", NewHistory(), NewCompleter())
+	editor.SetWidth(80)
+	editor.SetValue("from nginx | stats count by status")
+
+	got := editor.View()
+	for _, want := range []string{"from nginx | stats count by status", "lynxdb>"} {
+		if !strings.Contains(plain(got), want) {
+			t.Fatalf("editor view missing %q in %q", want, plain(got))
+		}
+	}
+}
+
+func TestModelViewPlacesRealEditorCursor(t *testing.T) {
+	zone.NewGlobal()
+	defer zone.Close()
+
+	model := NewModel("server", RunOpts{Server: "http://localhost:3100"})
+	model.width = 100
+	model.height = 24
+	model.recalcLayout()
+
+	view := model.View()
+	if view.Cursor == nil {
+		t.Fatal("editor view should expose a real cursor")
+	}
+	if view.Cursor.Position.Y != 1+model.mainHeight()+1 {
+		t.Fatalf("cursor y = %d, want %d", view.Cursor.Position.Y, 1+model.mainHeight()+1)
+	}
+}
+
 func TestRenderResultRowsFitsLogTableWidth(t *testing.T) {
 	rows := []map[string]interface{}{
 		{
