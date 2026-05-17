@@ -29,6 +29,7 @@ type Results struct {
 // NewResults creates a results viewport.
 func NewResults(width, height int) Results {
 	vp := viewport.New(viewport.WithWidth(width), viewport.WithHeight(height))
+	vp.SoftWrap = true
 
 	return Results{
 		viewport: vp,
