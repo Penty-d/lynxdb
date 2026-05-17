@@ -31,6 +31,7 @@ type fieldsLoadedMsg struct {
 	fields    []string
 	fieldInfo []client.FieldInfo
 	sources   []string
+	err       error
 }
 
 // jobCreatedMsg is sent when an async query job is successfully submitted.

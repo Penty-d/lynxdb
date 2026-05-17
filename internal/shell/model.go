@@ -149,6 +149,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case fieldsLoadedMsg:
+		if msg.err != nil {
+			m.results.AppendConnectionDiagnostic(m.session.Server, msg.err)
+
+			return m, nil
+		}
+
 		m.fields = msg.fields
 		m.fieldInfos = msg.fieldInfo
 		m.completer.SetFields(msg.fields)
@@ -1109,7 +1115,7 @@ func fetchFieldsCmd(c *client.Client, since string) tea.Cmd {
 	return func() tea.Msg {
 		fields, err := c.FieldsFiltered(context.Background(), client.FieldsOpts{Since: strings.TrimPrefix(since, "-")})
 		if err != nil {
-			return fieldsLoadedMsg{}
+			return fieldsLoadedMsg{err: err}
 		}
 
 		names := make([]string, 0, len(fields))

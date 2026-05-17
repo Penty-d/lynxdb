@@ -103,6 +103,25 @@ func (r *Results) AppendText(text string) {
 	r.updateContent()
 }
 
+// AppendConnectionDiagnostic renders a compact server connection failure state.
+func (r *Results) AppendConnectionDiagnostic(server string, err error) {
+	t := ui.Stdout
+	if server == "" {
+		server = "configured server"
+	}
+
+	r.entries = append(r.entries,
+		strings.TrimRight(ui.RenderLynxFrame(t, ui.LynxFrame(ui.LynxSad)), "\n"),
+		"  "+t.Error.Render("Cannot connect to LynxDB server"),
+		"  "+t.Dim.Render("Server:")+" "+server,
+		"  "+t.Dim.Render("Cause:")+" "+err.Error(),
+		"  "+t.Info.Render("Hint: start the server, check --server, then retry."),
+		"  "+t.Dim.Render("Next:")+" lynxdb server",
+		"",
+	)
+	r.updateContent()
+}
+
 // Clear removes all entries.
 func (r *Results) Clear() {
 	r.entries = nil
