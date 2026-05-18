@@ -158,17 +158,17 @@ func runSavedList(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(queries) == 0 {
-		fmt.Println("No saved queries.")
-		printNextSteps(
+		fmt.Println(ui.Stdout.EmptyState("No saved queries.",
 			"lynxdb save <name> <query>   Save a query",
-		)
+		))
 
 		return nil
 	}
 
 	t := ui.Stdout
 	tbl := ui.NewTable(t).
-		SetColumns("NAME", "QUERY", "CREATED")
+		SetColumns("NAME", "QUERY", "CREATED").
+		SetCompact(globalCompact)
 
 	for _, q := range queries {
 		created := formatRelativeTime(q.CreatedAt)

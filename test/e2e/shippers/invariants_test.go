@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ func waitForSourceCount(t *testing.T, rig *TestRig, source string, want int, log
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	query := `FROM main | STATS count AS total BY _source`
+	query := `FROM * | STATS count AS total BY index, _source`
 
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -44,16 +45,23 @@ func sourceCountFromResult(result *client.QueryResult, source string) int {
 	if result == nil || result.Aggregate == nil || len(result.Aggregate.Rows) == 0 {
 		return 0
 	}
+	indexIdx := columnIndex(result, "index")
 	sourceIdx := columnIndex(result, "_source")
 	totalIdx := columnIndex(result, "total")
-	if sourceIdx < 0 || totalIdx < 0 {
+	if totalIdx < 0 {
 		return 0
 	}
 	for _, row := range result.Aggregate.Rows {
-		if sourceIdx >= len(row) || totalIdx >= len(row) {
+		if totalIdx >= len(row) {
 			continue
 		}
-		if fmt.Sprint(row[sourceIdx]) == source {
+		if indexIdx >= 0 && indexIdx < len(row) {
+			index := fmt.Sprint(row[indexIdx])
+			if index == source || strings.HasPrefix(index, source+"-") {
+				return intValue(row[totalIdx])
+			}
+		}
+		if sourceIdx >= 0 && sourceIdx < len(row) && fmt.Sprint(row[sourceIdx]) == source {
 			return intValue(row[totalIdx])
 		}
 	}
@@ -97,7 +105,7 @@ func sourceSummary(t *testing.T, rig *TestRig) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	result, err := rig.Client.QuerySync(ctx, `FROM main | STATS count AS total BY _source`, "", "")
+	result, err := rig.Client.QuerySync(ctx, `FROM * | STATS count AS total BY index, _source`, "", "")
 	if err != nil {
 		return err.Error()
 	}

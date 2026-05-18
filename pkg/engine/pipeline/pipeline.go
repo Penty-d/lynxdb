@@ -648,6 +648,8 @@ func commandStageName(cmd spl2.Command) string {
 		return "Eval"
 	case *spl2.HeadCommand:
 		return "Head"
+	case *spl2.OffsetCommand:
+		return "Offset"
 	case *spl2.TailCommand:
 		return "Tail"
 	case *spl2.ReverseCommand:
@@ -960,6 +962,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 
 	case *spl2.HeadCommand:
 		return NewLimitIterator(child, c.Count), nil
+
+	case *spl2.OffsetCommand:
+		return NewOffsetIterator(child, c.Count), nil
 
 	case *spl2.TailCommand:
 		// Tail requires materialization — use sort-like approach

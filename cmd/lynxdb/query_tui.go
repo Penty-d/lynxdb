@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -469,10 +468,7 @@ func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEm
 
 	if !globalNoStats {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, ui.HRuleSep())
-		var statsBuf bytes.Buffer
-		stats.FormatTTY(&statsBuf, st, globalVerbose, globalQuiet)
-		fmt.Fprintln(os.Stderr, ui.Stderr.Dim.Render(strings.TrimRight(statsBuf.String(), "\n")))
+		printQueryInsightFooter(st)
 
 		// Performance hint: suggest MV when query is slow and MV-compatible.
 		if hint := suggestMVHint(query, elapsed, st.ScannedRows); hint != "" {

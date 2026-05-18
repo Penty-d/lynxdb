@@ -97,6 +97,14 @@ func popupDebounceCmd(seq int) tea.Cmd {
 	})
 }
 
+const lynxAnimationInterval = 160 * time.Millisecond
+
+func lynxAnimationTickCmd() tea.Cmd {
+	return tea.Tick(lynxAnimationInterval, func(t time.Time) tea.Msg {
+		return lynxTickMsg{}
+	})
+}
+
 // explainDebounceMsg fires after the debounce interval to trigger an explain call.
 // The seq field lets us ignore stale debounce ticks.
 type explainDebounceMsg struct{ seq int }

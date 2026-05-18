@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -73,6 +74,36 @@ type esBulkActionMeta struct {
 	Index string `json:"_index"`
 	ID    string `json:"_id"`
 	Type  string `json:"_type"` // ignored
+
+	indexSet bool
+}
+
+func (m *esBulkActionMeta) UnmarshalJSON(data []byte) error {
+	type alias esBulkActionMeta
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var a alias
+	if v, ok := raw["_index"]; ok {
+		a.indexSet = true
+		if err := json.Unmarshal(v, &a.Index); err != nil {
+			return fmt.Errorf("_index must be a string")
+		}
+	}
+	if v, ok := raw["_id"]; ok {
+		if err := json.Unmarshal(v, &a.ID); err != nil {
+			return fmt.Errorf("_id must be a string")
+		}
+	}
+	if v, ok := raw["_type"]; ok {
+		if err := json.Unmarshal(v, &a.Type); err != nil {
+			return fmt.Errorf("_type must be a string")
+		}
+	}
+
+	*m = esBulkActionMeta(a)
+	return nil
 }
 
 func (a *esBulkAction) meta() (*esBulkActionMeta, string) {
@@ -157,6 +188,11 @@ var esTimestampFormats = []string{
 	"2006-01-02T15:04:05.000Z",
 }
 
+var (
+	esDollarIndexTemplateRE  = regexp.MustCompile(`\$\{([^}]+)\}`)
+	esBracketIndexTemplateRE = regexp.MustCompile(`%\{\[([^\]]+)\](?::([^}]*))?\}`)
+)
+
 func parseESTimestamp(v interface{}) time.Time {
 	switch ts := v.(type) {
 	case string:
@@ -182,7 +218,7 @@ func esDocToEvent(doc map[string]interface{}, indexName string) *event.Event {
 func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm esFieldMapping) *event.Event {
 	e := event.NewEvent(time.Time{}, "")
 	e.SourceType = "json"
-	e.Index = "main"
+	e.Index = indexName
 
 	// Extract timestamp using configured field.
 	timeField := fm.TimeField
@@ -200,12 +236,8 @@ func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm es
 		}
 	}
 
-	// Map _index to source.
-	if indexName != "" {
-		if fm.StripLogstashDateSuffix {
-			indexName = stripLogstashDateSuffix(indexName)
-		}
-		e.Source = indexName
+	if source, ok := esDocSource(doc); ok {
+		e.Source = source
 	}
 
 	// Extract host.
@@ -251,8 +283,125 @@ func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm es
 	for k, v := range doc {
 		e.Fields[k] = event.ValueFromInterface(v)
 	}
+	if path, ok := esLogFilePath(doc); ok {
+		e.Fields["log.file.path"] = event.StringValue(path)
+	}
+	if targetIndex, ok := esTargetIndex(doc); ok {
+		if _, exists := e.Fields["target_index"]; !exists {
+			e.Fields["target_index"] = event.StringValue(targetIndex)
+		}
+	}
 
 	return e
+}
+
+func esDocSource(doc map[string]interface{}) (string, bool) {
+	if path, ok := esLogFilePath(doc); ok {
+		return path, true
+	}
+	if source, ok := doc["source"].(string); ok && source != "" {
+		delete(doc, "source")
+
+		return source, true
+	}
+
+	return "", false
+}
+
+func esLogFilePath(doc map[string]interface{}) (string, bool) {
+	if path, ok := esStringField(doc,
+		"log.file.path",
+		"attributes.log.file.path",
+		"resource.attributes.log.file.path",
+		"fields.log.file.path",
+	); ok && path != "" {
+		return path, true
+	}
+	logValue, ok := doc["log"].(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	fileValue, ok := logValue["file"].(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	path, ok := fileValue["path"].(string)
+	if !ok || path == "" {
+		return "", false
+	}
+
+	return path, true
+}
+
+func esTargetIndex(doc map[string]interface{}) (string, bool) {
+	return esStringField(doc,
+		"target_index",
+		"attributes.target_index",
+		"resource.attributes.target_index",
+		"fields.target_index",
+	)
+}
+
+func esStringField(doc map[string]interface{}, names ...string) (string, bool) {
+	for _, name := range names {
+		if v, ok := doc[name]; ok {
+			s, ok := v.(string)
+			return s, ok
+		}
+		if v, ok := esNestedStringField(doc, name); ok {
+			return v, true
+		}
+	}
+
+	return "", false
+}
+
+func esNestedStringField(doc map[string]interface{}, path string) (string, bool) {
+	parts := strings.Split(path, ".")
+	if len(parts) < 2 {
+		return "", false
+	}
+	for i := 1; i < len(parts); i++ {
+		container, ok := esNestedObject(doc, parts[:i])
+		if !ok {
+			continue
+		}
+		remainingKey := strings.Join(parts[i:], ".")
+		if v, ok := container[remainingKey].(string); ok {
+			return v, true
+		}
+	}
+	var cur interface{} = doc
+	for _, part := range parts {
+		obj, ok := cur.(map[string]interface{})
+		if !ok {
+			return "", false
+		}
+		cur, ok = obj[part]
+		if !ok {
+			return "", false
+		}
+	}
+	s, ok := cur.(string)
+
+	return s, ok
+}
+
+func esNestedObject(doc map[string]interface{}, parts []string) (map[string]interface{}, bool) {
+	var cur interface{} = doc
+	for _, part := range parts {
+		obj, ok := cur.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		cur, ok = obj[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	obj, ok := cur.(map[string]interface{})
+
+	return obj, ok
 }
 
 func stripLogstashDateSuffix(indexName string) string {
@@ -276,6 +425,116 @@ func stripLogstashDateSuffix(indexName string) string {
 		}
 	}
 	return indexName[:suffixStart]
+}
+
+func resolveESBulkIndexName(dataStreamName, pathIndex string, meta *esBulkActionMeta, doc map[string]interface{}) (string, error) {
+	switch {
+	case dataStreamName != "":
+		return validateESIndexName(dataStreamName)
+	case meta != nil && meta.indexSet:
+		indexName, err := expandESIndexTemplate(meta.Index, doc)
+		if err != nil {
+			return "", err
+		}
+
+		return validateESIndexName(indexName)
+	case pathIndex != "":
+		return validateESIndexName(pathIndex)
+	}
+
+	if target, ok := doc["target_index"]; ok {
+		targetIndex, ok := target.(string)
+		if !ok {
+			return "", fmt.Errorf("target_index must be a string")
+		}
+
+		return validateESIndexName(targetIndex)
+	}
+	if targetIndex, ok := esStringField(doc,
+		"attributes.target_index",
+		"resource.attributes.target_index",
+		"fields.target_index",
+	); ok {
+		return validateESIndexName(targetIndex)
+	}
+
+	return validateESIndexName("default")
+}
+
+func expandESIndexTemplate(indexName string, doc map[string]interface{}) (string, error) {
+	var missing string
+	expanded := esDollarIndexTemplateRE.ReplaceAllStringFunc(indexName, func(match string) string {
+		field := esDollarIndexTemplateRE.FindStringSubmatch(match)[1]
+		if value, ok := esTemplateFieldValue(doc, field); ok {
+			return value
+		}
+		missing = field
+
+		return ""
+	})
+	if missing != "" {
+		return "", fmt.Errorf("index template field %q is missing or not a string", missing)
+	}
+
+	expanded = esBracketIndexTemplateRE.ReplaceAllStringFunc(expanded, func(match string) string {
+		parts := esBracketIndexTemplateRE.FindStringSubmatch(match)
+		field := parts[1]
+		fallback := parts[2]
+		if value, ok := esTemplateFieldValue(doc, field); ok && value != "" {
+			return value
+		}
+		if fallback != "" {
+			return fallback
+		}
+		missing = field
+
+		return ""
+	})
+	if missing != "" {
+		return "", fmt.Errorf("index template field %q is missing or not a string", missing)
+	}
+
+	return expanded, nil
+}
+
+func esTemplateFieldValue(doc map[string]interface{}, field string) (string, bool) {
+	if value, ok := esStringField(doc, field); ok {
+		return value, true
+	}
+	if !strings.Contains(field, ".") {
+		return esStringField(doc, "attributes."+field, "resource.attributes."+field, "fields."+field)
+	}
+
+	return "", false
+}
+
+func validateESIndexName(indexName string) (string, error) {
+	if indexName == "" {
+		return "", fmt.Errorf("index name is empty")
+	}
+	if len(indexName) > 255 {
+		return "", fmt.Errorf("index name %q exceeds 255 bytes", indexName)
+	}
+	if indexName == "." || indexName == ".." || strings.Contains(indexName, "..") {
+		return "", fmt.Errorf("index name %q contains path traversal", indexName)
+	}
+	if strings.ContainsAny(indexName, `/\`) {
+		return "", fmt.Errorf("index name %q must not contain path separators", indexName)
+	}
+	if strings.HasPrefix(indexName, "-") || strings.HasPrefix(indexName, "_") || strings.HasPrefix(indexName, "+") {
+		return "", fmt.Errorf("index name %q starts with an unsupported character", indexName)
+	}
+	for _, ch := range indexName {
+		switch {
+		case ch >= 'a' && ch <= 'z':
+		case ch >= '0' && ch <= '9':
+		case ch == '.' || ch == '_' || ch == '-' || ch == '+':
+		default:
+			return "", fmt.Errorf("index name %q contains unsupported character %q", indexName, ch)
+		}
+	}
+
+	return indexName, nil
 }
 
 // esPendingItem tracks a parsed bulk item awaiting commit confirmation (H4 fix).
@@ -460,15 +719,14 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		indexName := dataStreamName
-		if indexName == "" {
-			indexName = meta.Index
-		}
-		if indexName == "" {
-			indexName = pathIndex
-		}
-		if indexName == "" {
-			indexName = "default"
+		indexName, err := resolveESBulkIndexName(dataStreamName, pathIndex, meta, doc)
+		if err != nil {
+			items = append(items, makeErrorItem(actionName, meta.Index, meta.ID, http.StatusBadRequest,
+				"invalid_index_name_exception", err.Error()))
+			s.recordESBulkItem(actionName, "rejected")
+			hasErrors = true
+
+			continue
 		}
 		ev := esDocToEventWithMapping(doc, indexName, fm)
 		batch = append(batch, ev)
@@ -598,6 +856,18 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 
 	indexName, ok := requirePathValue(r, w, "index")
 	if !ok {
+		return
+	}
+	indexName, err := validateESIndexName(indexName)
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "invalid_index_name_exception",
+				"reason": err.Error(),
+			},
+			"status": http.StatusBadRequest,
+		})
+
 		return
 	}
 

@@ -201,7 +201,6 @@ export default function QueriesView() {
         </>
       )}
 
-      {/* Delete confirmation dialog */}
       <Dialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
@@ -236,7 +235,6 @@ export default function QueriesView() {
         </DialogContent>
       </Dialog>
 
-      {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-md rounded-md" showCloseButton={false}>
           <DialogHeader>

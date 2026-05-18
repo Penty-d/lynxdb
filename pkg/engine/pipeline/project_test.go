@@ -49,6 +49,37 @@ func TestProjectIterator_KeepExact(t *testing.T) {
 	}
 }
 
+func TestProjectIterator_KeepExactMissingField(t *testing.T) {
+	batch := makeBatch(map[string][]event.Value{
+		"host": {event.StringValue("web-01")},
+	})
+	proj := NewProjectIterator(
+		&staticIterator{batches: []*Batch{batch}},
+		[]string{"host", "_sourcetype"},
+		false,
+	)
+	if err := proj.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	out, err := proj.Next(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Columns) != 2 {
+		t.Fatalf("columns: got %d, want 2", len(out.Columns))
+	}
+	col, ok := out.Columns["_sourcetype"]
+	if !ok {
+		t.Fatal("expected explicit missing _sourcetype column")
+	}
+	if len(col) != 1 {
+		t.Fatalf("_sourcetype values: got %d, want 1", len(col))
+	}
+	if !col[0].IsNull() {
+		t.Fatalf("_sourcetype value: got %v, want null", col[0])
+	}
+}
+
 func TestProjectIterator_RemoveExact(t *testing.T) {
 	batch := makeBatch(map[string][]event.Value{
 		"host":   {event.StringValue("web-01")},

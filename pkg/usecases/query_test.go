@@ -247,11 +247,11 @@ func TestExplain_FieldTracking_SourceStage(t *testing.T) {
 	if !source.FieldsUnknown {
 		t.Error("expected source stage to have FieldsUnknown=true")
 	}
-	if !reflect.DeepEqual(source.FieldsAdded, []string{"_time", "_raw", "_source"}) {
-		t.Errorf("expected source FieldsAdded=[_time, _raw, _source], got %v", source.FieldsAdded)
+	if !reflect.DeepEqual(source.FieldsAdded, []string{"_time", "_raw", "_source", "_sourcetype"}) {
+		t.Errorf("expected source FieldsAdded=[_time, _raw, _source, _sourcetype], got %v", source.FieldsAdded)
 	}
-	if !reflect.DeepEqual(source.FieldsOut, []string{"_time", "_raw", "_source"}) {
-		t.Errorf("expected source FieldsOut=[_time, _raw, _source], got %v", source.FieldsOut)
+	if !reflect.DeepEqual(source.FieldsOut, []string{"_time", "_raw", "_source", "_sourcetype"}) {
+		t.Errorf("expected source FieldsOut=[_time, _raw, _source, _sourcetype], got %v", source.FieldsOut)
 	}
 }
 

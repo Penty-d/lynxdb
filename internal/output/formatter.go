@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
@@ -32,6 +35,13 @@ type Formatter interface {
 	Format(w io.Writer, rows []map[string]interface{}) error
 }
 
+// HumanTableOptions controls TTY-only table rendering. Machine formats ignore it.
+type HumanTableOptions struct {
+	Theme   *ui.Theme
+	Compact bool
+	Width   int
+}
+
 // isTTY returns true if f is a terminal.
 func isTTY(f *os.File) bool {
 	fi, err := f.Stat()
@@ -49,6 +59,14 @@ func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.The
 	if len(theme) > 0 {
 		t = theme[0]
 	}
+
+	return DetectFormatWithOptions(format, rows, HumanTableOptions{Theme: t})
+}
+
+// DetectFormatWithOptions chooses the best formatter with optional human-output
+// rendering controls. JSON/CSV/TSV/raw remain byte-compatible.
+func DetectFormatWithOptions(format Format, rows []map[string]interface{}, opts HumanTableOptions) Formatter {
+	t := opts.Theme
 
 	// Detect glimpse output (has __glimpse_result column).
 	if isGlimpseResult(rows) {
@@ -74,7 +92,7 @@ func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.The
 			}
 		}
 
-		return &TableFormatter{Theme: t}
+		return &TableFormatter{Theme: t, Compact: opts.Compact, Width: opts.Width}
 	case FormatJSON, FormatNDJSON:
 		return &JSONFormatter{}
 	case FormatCSV:
@@ -84,7 +102,7 @@ func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.The
 	case FormatRaw:
 		return &RawFormatter{}
 	case FormatVertical:
-		return &VerticalFormatter{}
+		return &VerticalFormatter{Theme: t, Compact: opts.Compact}
 	default: // auto
 		if !isTTY(os.Stdout) {
 			return &JSONFormatter{}
@@ -101,11 +119,11 @@ func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.The
 			}
 			// If estimated table width exceeds typical terminal width, use vertical.
 			if estimatedWidth > 120 && len(rows) <= 10 {
-				return &VerticalFormatter{}
+				return &VerticalFormatter{Theme: t, Compact: opts.Compact}
 			}
 		}
 
-		return &TableFormatter{Theme: t}
+		return &TableFormatter{Theme: t, Compact: opts.Compact, Width: opts.Width}
 	}
 }
 
@@ -122,7 +140,9 @@ func isGlimpseResult(rows []map[string]interface{}) bool {
 // TableFormatter outputs aligned table format using lipgloss/table.
 // When Theme is set, headers are styled bold and separators use "─" characters.
 type TableFormatter struct {
-	Theme *ui.Theme
+	Theme   *ui.Theme
+	Compact bool
+	Width   int
 }
 
 func (f *TableFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
@@ -141,12 +161,19 @@ func (f *TableFormatter) Format(w io.Writer, rows []map[string]interface{}) erro
 		theme = ui.NewTheme(w, true)
 	}
 
-	tbl := ui.NewTable(theme).SetColumns(cols...)
+	kinds := inferColumnKinds(rows, cols)
+	tbl := ui.NewTable(theme).
+		SetColumns(cols...).
+		SetColumnKinds(kinds...).
+		SetCompact(f.Compact)
+	if f.Width > 0 {
+		tbl.SetTerminalWidth(f.Width)
+	}
 
 	for _, row := range rows {
 		vals := make([]string, len(cols))
 		for i, col := range cols {
-			vals[i] = formatValue(row[col])
+			vals[i] = formatHumanValue(row[col], kinds[i], theme)
 		}
 		tbl.AddRow(vals...)
 	}
@@ -279,7 +306,10 @@ func (f *SingleValueFormatter) Format(w io.Writer, rows []map[string]interface{}
 
 // VerticalFormatter outputs results in vertical format (one field per line).
 // Best for wide tables with few rows.
-type VerticalFormatter struct{}
+type VerticalFormatter struct {
+	Theme   *ui.Theme
+	Compact bool
+}
 
 func (f *VerticalFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
@@ -288,22 +318,37 @@ func (f *VerticalFormatter) Format(w io.Writer, rows []map[string]interface{}) e
 		return nil
 	}
 
+	theme := f.Theme
+	if theme == nil {
+		theme = ui.NewTheme(w, true)
+	}
+
 	allKeys := collectColumns(rows)
+	kinds := inferColumnKinds(rows, allKeys)
+	kindByKey := make(map[string]ui.ColumnKind, len(allKeys))
 	maxLen := 0
-	for _, k := range allKeys {
+	for i, k := range allKeys {
+		kindByKey[k] = kinds[i]
 		if len(k) > maxLen {
 			maxLen = len(k)
 		}
 	}
 
 	for i, row := range rows {
-		fmt.Fprintf(w, "  ─── Row %d ───\n", i+1)
+		fmt.Fprintf(w, "  %s\n", theme.Rule.Render(fmt.Sprintf("record %d", i+1)))
 		keys := collectColumns([]map[string]interface{}{row})
 		for _, k := range keys {
-			fmt.Fprintf(w, "  %*s: %s\n", maxLen, k, formatValue(row[k]))
+			label := theme.Label.Render(fmt.Sprintf("%*s", maxLen, k))
+			value := formatHumanValue(row[k], kindByKey[k], theme)
+			fmt.Fprintf(w, "  %s  %s\n", label, value)
 		}
 		if i < len(rows)-1 {
-			fmt.Fprintln(w)
+			if f.Compact {
+				fmt.Fprintln(w)
+			} else {
+				fmt.Fprintln(w)
+				fmt.Fprintln(w)
+			}
 		}
 	}
 
@@ -319,10 +364,10 @@ var builtinFieldOrder = [...]string{
 	"_time",
 	"_raw",
 	"index",
-	"source",
 	"_source",
-	"sourcetype",
 	"_sourcetype",
+	"source",
+	"sourcetype",
 	"host",
 }
 
@@ -385,6 +430,127 @@ func formatValue(v interface{}) string {
 		return fmt.Sprintf("%.4g", val)
 	default:
 		return fmt.Sprint(v)
+	}
+}
+
+func inferColumnKinds(rows []map[string]interface{}, cols []string) []ui.ColumnKind {
+	kinds := make([]ui.ColumnKind, len(cols))
+	for i, col := range cols {
+		name := strings.ToLower(col)
+		switch {
+		case strings.Contains(name, "duration") || strings.HasSuffix(name, "_ms") || name == "took" || name == "elapsed":
+			kinds[i] = ui.ColumnDuration
+		case strings.Contains(name, "bytes") || strings.Contains(name, "size"):
+			kinds[i] = ui.ColumnBytes
+		default:
+			kinds[i] = ui.ColumnAuto
+		}
+		for _, row := range rows {
+			if v, ok := row[col]; ok && v != nil {
+				if kinds[i] == ui.ColumnAuto && isNumericValue(v) {
+					kinds[i] = ui.ColumnNumber
+				}
+				break
+			}
+		}
+		if kinds[i] == ui.ColumnAuto {
+			kinds[i] = ui.ColumnText
+		}
+	}
+
+	return kinds
+}
+
+func isNumericValue(v interface{}) bool {
+	switch v.(type) {
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
+		return true
+	default:
+		return false
+	}
+}
+
+func formatHumanValue(v interface{}, kind ui.ColumnKind, theme *ui.Theme) string {
+	s := formatValue(v)
+	if s == "" || theme == nil {
+		return s
+	}
+
+	switch kind {
+	case ui.ColumnNumber:
+		if n, ok := numericFloat(v); ok {
+			if math.Trunc(n) == n {
+				s = formatCommaInt64(int64(n))
+			}
+		}
+
+		return theme.JSONNum.Render(s)
+	case ui.ColumnDuration:
+		if n, ok := numericFloat(v); ok {
+			s = time.Duration(n * float64(time.Millisecond)).Round(time.Millisecond).String()
+		}
+
+		return theme.Info.Render(s)
+	case ui.ColumnBytes:
+		if n, ok := numericFloat(v); ok {
+			s = formatBytesHuman(int64(n))
+		}
+
+		return theme.Accent.Render(s)
+	default:
+		return s
+	}
+}
+
+func numericFloat(v interface{}) (float64, bool) {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(rv.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return float64(rv.Uint()), true
+	case reflect.Float32, reflect.Float64:
+		return rv.Float(), true
+	default:
+		return 0, false
+	}
+}
+
+func formatCommaInt64(n int64) string {
+	if n < 0 {
+		return "-" + formatCommaInt64(-n)
+	}
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	offset := len(s) % 3
+	if offset > 0 {
+		b.WriteString(s[:offset])
+	}
+	for i := offset; i < len(s); i += 3 {
+		if b.Len() > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(s[i : i+3])
+	}
+
+	return b.String()
+}
+
+func formatBytesHuman(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/float64(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/float64(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(n)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
 	}
 }
 

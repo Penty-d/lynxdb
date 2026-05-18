@@ -31,3 +31,18 @@ func NewShellTheme() *ShellTheme {
 		Field:    lipgloss.NewStyle(),
 	}
 }
+
+// NewShellEditorTheme makes identifiers visible while typing. The scrollback
+// theme keeps fields plain so completed queries stay quieter.
+func NewShellEditorTheme() *ShellTheme {
+	return &ShellTheme{
+		Command:  lipgloss.NewStyle().Foreground(ui.ColorInfo()).Bold(true),
+		Keyword:  lipgloss.NewStyle().Foreground(ui.ColorAccent()).Bold(true),
+		Function: lipgloss.NewStyle().Foreground(ui.ColorWarning()).Bold(true),
+		String:   lipgloss.NewStyle().Foreground(ui.ColorJSONStr()),
+		Number:   lipgloss.NewStyle().Foreground(ui.ColorJSONNum()),
+		Operator: lipgloss.NewStyle().Foreground(ui.ColorAccent()).Bold(true),
+		Pipe:     lipgloss.NewStyle().Foreground(ui.ColorInfo()).Bold(true),
+		Field:    lipgloss.NewStyle().Foreground(ui.ColorWhite()),
+	}
+}

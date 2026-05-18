@@ -657,7 +657,7 @@ func buildAggregateResponse(rt server.ResultType, rows []spl2.ResultRow, limit, 
 // fields. Matches internal/output.builtinFieldOrder for consistency between
 // REST API and CLI output.
 var builtinFieldOrder = [...]string{
-	"_time", "_raw", "index", "source", "_source", "sourcetype", "_sourcetype", "host",
+	"_time", "_raw", "index", "_source", "_sourcetype", "source", "sourcetype", "host",
 }
 
 var builtinFieldRank = func() map[string]int {

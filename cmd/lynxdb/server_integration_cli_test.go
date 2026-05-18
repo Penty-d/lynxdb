@@ -477,7 +477,7 @@ func TestServerQuery_FIELDS_Projection(t *testing.T) {
 		// Should not have non-projected data fields.
 		for k := range row {
 			switch k {
-			case "level", "host", "_time", "_timestamp", "_raw":
+			case "level", "host", "_time", "_timestamp", "_raw", "_source", "_sourcetype":
 				// allowed
 			default:
 				t.Errorf("row %d has unexpected field %q after projection", i, k)

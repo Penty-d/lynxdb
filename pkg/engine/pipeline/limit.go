@@ -52,3 +52,51 @@ func (l *LimitIterator) Close() error {
 func (l *LimitIterator) Schema() []FieldInfo {
 	return l.child.Schema()
 }
+
+// OffsetIterator skips the first N rows from its child.
+type OffsetIterator struct {
+	child   Iterator
+	offset  int
+	skipped int
+}
+
+// NewOffsetIterator creates an operator that drops the first n rows.
+func NewOffsetIterator(child Iterator, n int) *OffsetIterator {
+	return &OffsetIterator{child: child, offset: n}
+}
+
+func (o *OffsetIterator) Init(ctx context.Context) error {
+	return o.child.Init(ctx)
+}
+
+func (o *OffsetIterator) Next(ctx context.Context) (*Batch, error) {
+	for o.skipped < o.offset {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		batch, err := o.child.Next(ctx)
+		if batch == nil || err != nil {
+			return nil, err
+		}
+
+		remaining := o.offset - o.skipped
+		if batch.Len <= remaining {
+			o.skipped += batch.Len
+			continue
+		}
+
+		o.skipped = o.offset
+		return batch.Slice(remaining, batch.Len), nil
+	}
+
+	return o.child.Next(ctx)
+}
+
+func (o *OffsetIterator) Close() error {
+	return o.child.Close()
+}
+
+func (o *OffsetIterator) Schema() []FieldInfo {
+	return o.child.Schema()
+}

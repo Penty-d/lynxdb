@@ -498,6 +498,10 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return singleCmd(p.parseOrderBy())
 	case TokenTake:
 		return singleCmd(p.parseTake())
+	case TokenLimit:
+		return p.parseLimit()
+	case TokenOffset:
+		return singleCmd(p.parseOffset())
 	case TokenRank:
 		return p.parseRank()
 	case TokenTopby:
@@ -3665,7 +3669,7 @@ func isIdentLike(t TokenType) bool {
 	case TokenIdent,
 		// Lynx Flow command keywords that can also be field names.
 		TokenLet, TokenKeep, TokenOmit, TokenSelect, TokenGroup, TokenCompute,
-		TokenEvery, TokenBucket, TokenOrder, TokenTake, TokenRank, TokenTopby,
+		TokenEvery, TokenBucket, TokenOrder, TokenTake, TokenLimit, TokenOffset, TokenRank, TokenTopby,
 		TokenBottomby, TokenBottom, TokenRunning, TokenEnrich, TokenParse,
 		TokenExplode, TokenPack, TokenLookup, TokenIndex,
 		// Lynx Flow clause keywords.
@@ -4005,6 +4009,51 @@ func (p *Parser) parseTake() (*HeadCommand, error) {
 	}
 
 	return &HeadCommand{Count: count}, nil
+}
+
+// parseLimit parses: limit <N> [offset <N>]. Desugars to HeadCommand and,
+// when OFFSET is present, an OffsetCommand before the HeadCommand.
+func (p *Parser) parseLimit() ([]Command, error) {
+	p.advance() // consume "limit"
+
+	if p.peek().Type != TokenNumber {
+		return nil, fmt.Errorf("spl2: limit requires a number")
+	}
+
+	tok := p.advance()
+	count, err := parseNonNegativeInt(tok.Literal, "limit")
+	if err != nil {
+		return nil, err
+	}
+
+	head := &HeadCommand{Count: count}
+	if p.peek().Type != TokenOffset {
+		return []Command{head}, nil
+	}
+
+	offset, err := p.parseOffset()
+	if err != nil {
+		return nil, err
+	}
+
+	return []Command{offset, head}, nil
+}
+
+// parseOffset parses: offset <N>.
+func (p *Parser) parseOffset() (*OffsetCommand, error) {
+	p.advance() // consume "offset"
+
+	if p.peek().Type != TokenNumber {
+		return nil, fmt.Errorf("spl2: offset requires a number")
+	}
+
+	tok := p.advance()
+	count, err := parseNonNegativeInt(tok.Literal, "offset")
+	if err != nil {
+		return nil, err
+	}
+
+	return &OffsetCommand{Count: count}, nil
 }
 
 // parseRank parses: rank top/bottom <N> by <expr>.
@@ -4461,7 +4510,8 @@ func (p *Parser) parseMvexpand() (*UnrollCommand, error) {
 }
 
 func (p *Parser) isLimitOption() bool {
-	return p.peek().Type == TokenIdent && strings.EqualFold(p.peek().Literal, "limit") && p.peekAt(1).Type == TokenEq
+	tok := p.peek()
+	return (tok.Type == TokenLimit || (tok.Type == TokenIdent && strings.EqualFold(tok.Literal, "limit"))) && p.peekAt(1).Type == TokenEq
 }
 
 func (p *Parser) parseLimitOption(command string) (int, error) {

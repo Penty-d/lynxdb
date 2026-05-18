@@ -325,6 +325,8 @@ func iteratorChild(iter Iterator) Iterator {
 	// Ordering / limiting operators.
 	case *LimitIterator:
 		return it.child
+	case *OffsetIterator:
+		return it.child
 	case *TailIterator:
 		return it.child
 	case *SortIterator:

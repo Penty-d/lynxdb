@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -16,15 +17,20 @@ import (
 
 // Session provides the execution context for slash commands.
 type Session struct {
-	Mode      string
-	Server    string
-	Client    *client.Client
-	Engine    *storage.Engine
-	Since     string
-	Format    output.Format            // default: output.FormatTable
-	Timing    bool                     // default: true (show elapsed after results)
-	LastQuery string                   // most recently executed query (for .save without arg)
-	LastRows  []map[string]interface{} // result of most recent query (for _ reference)
+	Mode        string
+	Server      string
+	File        string
+	Events      int
+	Client      *client.Client
+	Engine      *storage.Engine
+	Since       string
+	Format      output.Format            // default: output.FormatTable
+	Timing      bool                     // default: true (show elapsed after results)
+	LastQuery   string                   // most recently executed query (for .save without arg)
+	LastRows    []map[string]interface{} // result of most recent query (for _ reference)
+	QueryCount  int
+	LastElapsed time.Duration
+	LastError   string
 }
 
 // ExecuteSlashCommand dispatches a slash command and returns the output text,

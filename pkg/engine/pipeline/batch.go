@@ -11,7 +11,7 @@ import (
 // builtinFieldOrder defines the canonical display order for LynxDB internal
 // fields. Kept in sync with internal/output and pkg/api/rest.
 var builtinFieldOrder = [...]string{
-	"_time", "_raw", "index", "source", "_source", "sourcetype", "_sourcetype", "host",
+	"_time", "_raw", "index", "_source", "_sourcetype", "source", "sourcetype", "host",
 }
 
 var builtinFieldRank = func() map[string]int {
@@ -246,7 +246,6 @@ func BatchFromEvents(events []*event.Event) *Batch {
 		}
 		b.Columns["_source"] = col
 		b.Columns["source"] = col // alias: SPL2 queries use "source" without underscore
-		b.Columns["index"] = col  // Splunk compat: "index" is a virtual alias for _source
 	}
 	if hasSourceType {
 		col := make([]event.Value, n)
@@ -263,9 +262,13 @@ func BatchFromEvents(events []*event.Event) *Batch {
 		}
 		b.Columns["host"] = col
 	}
-	// Event.Index (logical namespace like "main") is intentionally NOT
-	// exposed as a batch column. The "index" column is a Splunk-compatible
-	// alias for _source. The physical index name is available via query hints.
+	if hasIndex {
+		col := make([]event.Value, n)
+		for i, ev := range events {
+			col[i] = event.StringValue(ev.Index)
+		}
+		b.Columns["index"] = col
+	}
 
 	// User-defined fields: one pre-allocated column per field.
 	for field := range fieldSet {

@@ -105,6 +105,9 @@ func (p *AutocompletePopup) View(maxWidth int) string {
 	if !p.visible || len(p.items) == 0 {
 		return ""
 	}
+	if maxWidth < 24 {
+		maxWidth = 24
+	}
 
 	visible := popupMaxVisible
 	if len(p.items) < visible {
@@ -114,22 +117,37 @@ func (p *AutocompletePopup) View(maxWidth int) string {
 	// Determine column widths.
 	maxTextW := 0
 	maxKindW := 0
+	maxDetailW := 0
 	for _, item := range p.items {
-		if len(item.Text) > maxTextW {
-			maxTextW = len(item.Text)
+		if w := lipgloss.Width(item.Text); w > maxTextW {
+			maxTextW = w
 		}
-		if kl := len(item.Kind.kindLabel()); kl > maxKindW {
+		if kl := lipgloss.Width(item.Kind.kindLabel()); kl > maxKindW {
 			maxKindW = kl
+		}
+		if dw := lipgloss.Width(item.Detail); dw > maxDetailW {
+			maxDetailW = dw
 		}
 	}
 
 	// Constrain to available width.
-	contentW := maxTextW + 2 + maxKindW // text + gap + kind
-	if contentW > maxWidth-4 {          // borders + padding
+	if maxTextW < 14 {
+		maxTextW = 14
+	}
+	if maxDetailW < 8 {
+		maxDetailW = 8
+	}
+
+	contentW := maxTextW + 2 + maxKindW + 2 + maxDetailW // text + gaps + kind + detail
+	if contentW > maxWidth-4 {                           // borders + padding
 		contentW = maxWidth - 4
-		maxTextW = contentW - 2 - maxKindW
-		if maxTextW < 6 {
-			maxTextW = 6
+		maxDetailW = contentW - 2 - maxKindW - 2 - maxTextW
+		if maxDetailW < 8 {
+			maxDetailW = 8
+			maxTextW = contentW - 2 - maxKindW - 2 - maxDetailW
+		}
+		if maxTextW < 10 {
+			maxTextW = 10
 		}
 	}
 
@@ -139,6 +157,7 @@ func (p *AutocompletePopup) View(maxWidth int) string {
 		Bold(true)
 	normalStyle := lipgloss.NewStyle()
 	kindStyle := lipgloss.NewStyle().Foreground(ui.ColorDim())
+	detailStyle := lipgloss.NewStyle().Foreground(ui.ColorDim())
 
 	var lines []string
 
@@ -151,22 +170,27 @@ func (p *AutocompletePopup) View(maxWidth int) string {
 		item := p.items[i]
 		text := truncateStr(item.Text, maxTextW)
 		kind := item.Kind.kindLabel()
+		detail := truncateStr(item.Detail, maxDetailW)
 
-		// Pad text to fixed width.
 		padded := fmt.Sprintf("%-*s", maxTextW, text)
+		paddedKind := fmt.Sprintf("%-*s", maxKindW, kind)
+		paddedDetail := fmt.Sprintf("%-*s", maxDetailW, detail)
 
 		if i == p.selected {
-			entry := fmt.Sprintf(" %s  %s ", padded, kind)
+			entry := fmt.Sprintf(" %s  %s  %s ", padded, paddedKind, paddedDetail)
 			lines = append(lines, selectedStyle.Render(entry))
 		} else {
-			entry := fmt.Sprintf(" %s  %s ", padded, kindStyle.Render(kind))
+			entry := fmt.Sprintf(" %s  %s  %s ",
+				padded,
+				kindStyle.Render(paddedKind),
+				detailStyle.Render(paddedDetail))
 			lines = append(lines, normalStyle.Render(entry))
 		}
 	}
 
 	// Show scroll indicator if items exceed visible.
 	if len(p.items) > visible {
-		indicator := fmt.Sprintf(" %d/%d", p.selected+1, len(p.items))
+		indicator := fmt.Sprintf(" %d/%d shown", p.selected+1, len(p.items))
 		lines = append(lines, kindStyle.Render(indicator))
 	}
 

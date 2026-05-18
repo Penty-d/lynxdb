@@ -21,7 +21,7 @@ var knownCommands = []string{
 	"addinfo", "convert", "fieldsummary", "flatten", "iplocation", "tags", "typer", "thru", "timewrap", "tstats", "mstats",
 	// Lynx Flow commands.
 	"let", "keep", "omit", "select", "group", "every", "bucket",
-	"order", "take", "rank", "topby", "bottomby", "bottom",
+	"order", "take", "limit", "offset", "rank", "topby", "bottomby", "bottom",
 	"running", "enrich", "parse", "explode", "pack", "lookup",
 	"latency", "errors", "rate", "proportion", "percentiles", "slowest",
 	"impact", "baseline", "changes", "exemplars", "views", "dropview", "glimpse", "describe",

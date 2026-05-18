@@ -57,6 +57,8 @@ func (p *ProjectIterator) Next(ctx context.Context) (*Batch, error) {
 			for _, f := range p.fields {
 				if col, ok := batch.Columns[f]; ok {
 					result.Columns[f] = col
+				} else {
+					result.Columns[f] = nullColumn(batch.Len)
 				}
 			}
 		}
@@ -100,6 +102,8 @@ func (p *ProjectIterator) Next(ctx context.Context) (*Batch, error) {
 				} else {
 					if col, ok := batch.Columns[f]; ok {
 						result.Columns[f] = col
+					} else {
+						result.Columns[f] = nullColumn(batch.Len)
 					}
 				}
 			}
@@ -124,4 +128,13 @@ func (p *ProjectIterator) Schema() []FieldInfo {
 	}
 
 	return schema
+}
+
+func nullColumn(n int) []event.Value {
+	col := make([]event.Value, n)
+	for i := range col {
+		col[i] = event.NullValue()
+	}
+
+	return col
 }

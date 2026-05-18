@@ -331,9 +331,10 @@ func TestQueryFile_FieldsProjection_JSON(t *testing.T) {
 			t.Errorf("row %d missing 'level' field", i)
 		}
 
-		// Should not have other data fields (besides _time/_timestamp which are internal).
+		// Should not have other data fields (besides default event metadata).
 		for k := range row {
-			if k != "host" && k != "level" && k != "_time" && k != "_timestamp" && k != "_raw" {
+			if k != "host" && k != "level" && k != "_time" && k != "_timestamp" &&
+				k != "_raw" && k != "_source" && k != "_sourcetype" {
 				t.Errorf("row %d has unexpected field %q", i, k)
 			}
 		}
@@ -506,6 +507,48 @@ func TestQueryFile_TableFormat(t *testing.T) {
 	}
 }
 
+func TestQueryFile_TableFormat_FieldsDoesNotAutoAddEventMetadata(t *testing.T) {
+	stdout, _, err := runCmd(t, "query", "--file", testdataPath("logs/access.log"), "--format", "table",
+		"| fields level | head 3")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+
+	if strings.Contains(stdout, "_source") {
+		t.Error("table output should not auto-add '_source' column header")
+	}
+	if strings.Contains(stdout, "_sourcetype") {
+		t.Error("table output should not auto-add '_sourcetype' column header")
+	}
+	if !strings.Contains(stdout, "level") {
+		t.Error("table output missing 'level' column header")
+	}
+	if strings.Contains(stdout, " sourcetype ") || strings.Contains(stdout, " source ") {
+		t.Error("table output should not include source/sourcetype aliases")
+	}
+}
+
+func TestQueryFile_TableFormat_ExplicitEventMetadata(t *testing.T) {
+	stdout, _, err := runCmd(t, "query", "--file", testdataPath("logs/access.log"), "--format", "table",
+		"| fields level, _source, _sourcetype | head 3")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+
+	if !strings.Contains(stdout, "_source") {
+		t.Error("table output missing explicit '_source' column header")
+	}
+	if !strings.Contains(stdout, "_sourcetype") {
+		t.Error("table output missing explicit '_sourcetype' column header")
+	}
+	if !strings.Contains(stdout, "level") {
+		t.Error("table output missing 'level' column header")
+	}
+	if strings.Contains(stdout, " sourcetype ") || strings.Contains(stdout, " source ") {
+		t.Error("table output should not include source/sourcetype aliases")
+	}
+}
+
 func TestQueryFile_RawFormat(t *testing.T) {
 	stdout, _, err := runCmd(t, "query", "--file", testdataPath("logs/access.log"), "--format", "raw",
 		"| head 3")
@@ -566,6 +609,19 @@ func TestQueryFile_ParseError(t *testing.T) {
 	_, _, err := runCmd(t, "query", "--file", testdataPath("logs/access.log"), "| where")
 	if err == nil {
 		t.Fatal("expected error for incomplete WHERE clause, got nil")
+	}
+}
+
+func TestValidateQueryBeforeTUI_ParseError(t *testing.T) {
+	err := validateQueryBeforeTUI(`search login | not_a_command`)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if _, ok := err.(*queryError); !ok {
+		t.Fatalf("expected queryError, got %T", err)
+	}
+	if !strings.Contains(err.Error(), "INVALID_QUERY") {
+		t.Fatalf("expected INVALID_QUERY error, got %q", err.Error())
 	}
 }
 

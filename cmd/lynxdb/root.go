@@ -37,6 +37,8 @@ var (
 	globalVerbose       bool
 	globalNoStats       bool
 	globalNoColor       bool
+	globalTheme         string
+	globalCompact       bool
 	globalDebug         bool
 	globalTLSSkipVerify bool
 
@@ -47,7 +49,7 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:           "lynxdb",
-	Short:         "LynxDB — log analytics in a single binary",
+	Short:         "LynxDB - log analytics in a single binary",
 	Long:          `LynxDB is a columnar log storage and search engine with SPL2 query language.`,
 	RunE:          runRootCommand,
 	SilenceUsage:  true,
@@ -68,17 +70,19 @@ func init() {
 	pf.StringVar(&globalServer, "server", envOrDefault("LYNXDB_SERVER", "http://localhost:3100"), "LynxDB server address")
 	pf.StringVar(&globalToken, "token", envOrDefault("LYNXDB_TOKEN", ""), "API key for authentication")
 	pf.StringVarP(&globalProfile, "profile", "p", envOrDefault("LYNXDB_PROFILE", ""), "Connection profile name")
-	pf.StringVarP(&globalFormat, "format", "F", "auto", "Output format: auto, json, ndjson, table, csv, tsv, raw")
+	pf.StringVarP(&globalFormat, "format", "F", "auto", "Output format: auto, json, ndjson, table, vertical, csv, tsv, raw")
 	pf.BoolVarP(&globalQuiet, "quiet", "q", false, "Suppress non-data output")
 	pf.BoolVarP(&globalVerbose, "verbose", "v", false, "Show extra detail")
 	pf.BoolVar(&globalNoStats, "no-stats", false, "Suppress query statistics")
 	pf.BoolVar(&globalNoColor, "no-color", false, "Disable colored output")
+	pf.StringVar(&globalTheme, "theme", "auto", "Human output theme: auto, dark, light, plain")
+	pf.BoolVar(&globalCompact, "compact", false, "Use compact human output")
 	pf.BoolVar(&globalDebug, "debug", false, "Enable debug logging to stderr")
 	pf.BoolVar(&globalTLSSkipVerify, "tls-skip-verify", envBool("LYNXDB_TLS_SKIP_VERIFY"), "Skip TLS certificate verification")
 }
 
 func initTheme() {
-	ui.Init(globalNoColor)
+	ui.InitEnvWithMode(globalNoColor, globalTheme)
 	applyProjectRC()
 }
 
@@ -136,7 +140,8 @@ func applyProfile() {
 }
 
 func runWelcome(_ *cobra.Command, _ []string) error {
-	fmt.Fprintf(os.Stdout, "\n  \U0001F43E %s — log analytics in a single binary\n\n",
+	renderWelcomeLogo()
+	fmt.Fprintf(os.Stdout, "\n  %s - log analytics in a single binary\n\n",
 		ui.Stdout.Bold.Render(fmt.Sprintf("LynxDB %s", buildinfo.Version)))
 	fmt.Fprint(os.Stdout, `  Quick start:
     lynxdb demo                                  Run demo with sample data
@@ -149,6 +154,18 @@ func runWelcome(_ *cobra.Command, _ []string) error {
 `)
 
 	return nil
+}
+
+func renderWelcomeLogo() {
+	ui.WriteLynxMark(os.Stdout, ui.Stdout, ui.LynxAlert, shouldAnimateLynx())
+}
+
+func shouldAnimateLynx() bool {
+	return isTTY() &&
+		!globalNoColor &&
+		globalTheme != string(ui.ThemePlain) &&
+		os.Getenv("NO_COLOR") == "" &&
+		os.Getenv("TERM") != "dumb"
 }
 
 // runRootCommand handles bare `lynxdb` invocation. When stdin is piped, it

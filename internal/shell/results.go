@@ -24,11 +24,19 @@ type Results struct {
 	viewport viewport.Model
 	entries  []string
 	theme    *ShellTheme
+	frame    int
 }
+
+const (
+	lynxAlertToken = "{{lynxdb:lynx:alert}}"
+	lynxSadToken   = "{{lynxdb:lynx:sad}}"
+)
 
 // NewResults creates a results viewport.
 func NewResults(width, height int) Results {
 	vp := viewport.New(viewport.WithWidth(width), viewport.WithHeight(height))
+	vp.SoftWrap = true
+	vp.FillHeight = true
 
 	return Results{
 		viewport: vp,
@@ -102,10 +110,35 @@ func (r *Results) AppendText(text string) {
 	r.updateContent()
 }
 
+// AppendConnectionDiagnostic renders a compact server connection failure state.
+func (r *Results) AppendConnectionDiagnostic(server string, err error) {
+	t := ui.Stdout
+	if server == "" {
+		server = "configured server"
+	}
+
+	r.entries = append(r.entries,
+		lynxSadToken,
+		"  "+t.Error.Render("Cannot connect to LynxDB server"),
+		"  "+t.Dim.Render("Server:")+" "+server,
+		"  "+t.Dim.Render("Cause:")+" "+err.Error(),
+		"  "+t.Info.Render("Hint: start the server, check --server, then retry."),
+		"  "+t.Dim.Render("Next:")+" lynxdb server",
+		"",
+	)
+	r.updateContent()
+}
+
 // Clear removes all entries.
 func (r *Results) Clear() {
 	r.entries = nil
 	r.updateContent()
+}
+
+// AdvanceLynxFrame advances animated lynx marks without changing scroll position.
+func (r *Results) AdvanceLynxFrame() {
+	r.frame++
+	r.setContent(false)
 }
 
 // View renders the viewport.
@@ -114,9 +147,36 @@ func (r *Results) View() string {
 }
 
 func (r *Results) updateContent() {
+	r.setContent(true)
+}
+
+func (r *Results) setContent(gotoBottom bool) {
 	content := strings.Join(r.entries, "\n")
+	content = r.renderAnimatedLynx(content)
 	r.viewport.SetContent(content)
-	r.viewport.GotoBottom()
+	if gotoBottom {
+		r.viewport.GotoBottom()
+	}
+}
+
+func (r Results) renderAnimatedLynx(content string) string {
+	if strings.Contains(content, lynxAlertToken) {
+		content = strings.ReplaceAll(content, lynxAlertToken, r.renderLynxFrame(ui.LynxAlert))
+	}
+	if strings.Contains(content, lynxSadToken) {
+		content = strings.ReplaceAll(content, lynxSadToken, r.renderLynxFrame(ui.LynxSad))
+	}
+
+	return content
+}
+
+func (r Results) renderLynxFrame(mood ui.LynxMood) string {
+	frames := ui.LynxFrames(mood)
+	if len(frames) == 0 {
+		return ""
+	}
+
+	return strings.TrimRight(ui.RenderLynxFrame(ui.Stdout, frames[r.frame%len(frames)]), "\n")
 }
 
 // renderResultRows renders rows using the given format.
@@ -125,7 +185,10 @@ func renderResultRows(rows []map[string]interface{}, width int, format output.Fo
 		return ""
 	}
 
-	f := output.DetectFormat(format, rows, ui.Stdout)
+	f := output.DetectFormatWithOptions(format, rows, output.HumanTableOptions{
+		Theme: ui.Stdout,
+		Width: width,
+	})
 
 	var b strings.Builder
 	_ = f.Format(&b, rows)
@@ -211,6 +274,8 @@ func topValueStrings(tvs []client.TopValue, limit int) []string {
 func (r *Results) appendStyledError(errText string) {
 	t := ui.Stdout
 	lines := strings.Split(errText, "\n")
+
+	r.entries = append(r.entries, lynxSadToken)
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)

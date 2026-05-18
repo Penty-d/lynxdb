@@ -23,8 +23,9 @@ func newShellCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "shell",
-		Short: "Start an interactive SPL2 shell (REPL)",
+		Use:     "shell",
+		Aliases: []string{"sh", "repl", "console"},
+		Short:   "Start an interactive SPL2 shell (REPL)",
 		Long: `Starts an interactive shell for running SPL2 queries.
 
 Supports query history (arrow keys), dot commands (.help, .quit),
@@ -61,7 +62,7 @@ func runShellFile(file, since string) error {
 		return fmt.Errorf("invalid file pattern: %w", err)
 	}
 	if len(matches) == 0 {
-		return fmt.Errorf("no files matching: %s", file)
+		return noFilesMatchingError{pattern: file}
 	}
 
 	eng := storage.NewEphemeralEngine()

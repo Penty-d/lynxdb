@@ -3,11 +3,31 @@ package main
 import (
 	"fmt"
 	"net"
+	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/client"
 )
+
+func TestRenderError_NoFilesMatching(t *testing.T) {
+	_, stderr, err := captureOutput(t, func() error {
+		renderError(noFilesMatchingError{pattern: "app.log"})
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("capture output: %v", err)
+	}
+	for _, want := range []string{"No files matched", "Pattern: app.log", "lynxdb query --file './*.log'", "cat app.log"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "ERROR:") {
+		t.Fatalf("file miss should not render as hard error:\n%s", stderr)
+	}
+}
 
 func TestIsConnectionError_NetOpError(t *testing.T) {
 	err := &net.OpError{

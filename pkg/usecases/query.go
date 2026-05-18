@@ -352,7 +352,7 @@ func annotatePipelineFields(query *spl2.Query, catalogFields []string) []Pipelin
 	} else {
 		sourceDesc = "from (default)"
 	}
-	baseFields := []string{"_time", "_raw", "_source"}
+	baseFields := []string{"_time", "_raw", "_source", "_sourcetype"}
 	setAdd(fields, baseFields...)
 	for _, f := range catalogFields {
 		setAdd(fields, f)

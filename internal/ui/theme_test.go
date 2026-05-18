@@ -69,3 +69,20 @@ func TestInit_SetsGlobals(t *testing.T) {
 		t.Fatal("Stderr should not be nil after Init")
 	}
 }
+
+func TestInferDarkBackgroundFromEnv(t *testing.T) {
+	t.Setenv("COLORFGBG", "15;0")
+	if !inferDarkBackgroundFromEnv() {
+		t.Fatal("black background should be dark")
+	}
+
+	t.Setenv("COLORFGBG", "0;15")
+	if inferDarkBackgroundFromEnv() {
+		t.Fatal("bright white background should be light")
+	}
+
+	t.Setenv("COLORFGBG", "")
+	if !inferDarkBackgroundFromEnv() {
+		t.Fatal("missing COLORFGBG should default to dark")
+	}
+}

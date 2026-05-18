@@ -360,7 +360,7 @@ func (g *GlimpseIterator) formatFieldDisplay(f *GlimpseFieldInfo, maxWidth int) 
 }
 
 func (g *GlimpseIterator) sortedFieldNames() []string {
-	builtinOrder := []string{"_time", "_raw", "index", "source", "_source", "_sourcetype", "host"}
+	builtinOrder := []string{"_time", "_raw", "index", "_source", "_sourcetype", "source", "sourcetype", "host"}
 	builtinRank := make(map[string]int, len(builtinOrder))
 	for i, n := range builtinOrder {
 		builtinRank[n] = i

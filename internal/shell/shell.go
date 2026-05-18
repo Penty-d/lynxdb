@@ -3,6 +3,9 @@
 package shell
 
 import (
+	"errors"
+	"os"
+
 	tea "charm.land/bubbletea/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 
@@ -21,17 +24,33 @@ type RunOpts struct {
 }
 
 func Run(mode string, opts RunOpts) error {
+	if mode == "server" && opts.Client != nil {
+		if err := runServerPreflight(opts.Client, opts.Server); err != nil {
+			if errors.Is(err, errPreflightQuit) {
+				return nil
+			}
+
+			return err
+		}
+	}
+
 	zone.NewGlobal()
 
 	m := NewModel(mode, opts)
 
 	// Prepend welcome banner to results viewport.
-	m.results.AppendText(welcomeBanner())
+	m.results.AppendText(welcomeBanner(mode, opts.Server, opts.Since))
 
-	p := tea.NewProgram(m)
-	_, err := p.Run()
+	p := tea.NewProgram(m, tea.WithEnvironment(bubbleTeaEnv()))
+	final, err := p.Run()
 
 	zone.Close()
+	if err != nil {
+		return err
+	}
+	if finalModel, ok := final.(Model); ok {
+		renderShellExit(os.Stdout, finalModel)
+	}
 
-	return err
+	return nil
 }

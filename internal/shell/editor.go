@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
@@ -22,11 +23,13 @@ type Editor struct {
 	completer   *Completer
 	prompt      string
 	contPrompt  string
+	width       int
 	keys        keyMap
 	ghostText   string // autocomplete ghost suffix
 	multiLine   bool   // tracks multi-line state for prompt switching
 	promptWidth int    // cached display width of the prompt
 	popup       AutocompletePopup
+	theme       *ShellTheme
 }
 
 // NewEditor creates an editor with the given prompt strings.
@@ -37,6 +40,7 @@ func NewEditor(prompt, contPrompt string, history *History, completer *Completer
 	ta.MaxHeight = editorMaxLines
 	ta.SetHeight(1)
 	ta.EndOfBufferCharacter = ' '
+	ta.SetVirtualCursor(false)
 
 	// Override textarea KeyMap so our shell-level bindings don't conflict.
 	// InsertNewline: only shift+enter (we handle plain enter for submit).
@@ -60,6 +64,9 @@ func NewEditor(prompt, contPrompt string, history *History, completer *Completer
 	styles.Focused.Base = lipgloss.NewStyle()
 	styles.Blurred.CursorLine = lipgloss.NewStyle()
 	styles.Blurred.Base = lipgloss.NewStyle()
+	styles.Cursor.Color = ui.ColorAccent()
+	styles.Cursor.Shape = tea.CursorBar
+	styles.Cursor.Blink = true
 	ta.SetStyles(styles)
 
 	ta.Focus()
@@ -72,6 +79,7 @@ func NewEditor(prompt, contPrompt string, history *History, completer *Completer
 		contPrompt:  contPrompt,
 		keys:        defaultKeyMap(),
 		promptWidth: promptWidth,
+		theme:       NewShellEditorTheme(),
 	}
 }
 
@@ -82,12 +90,17 @@ func (e *Editor) Value() string {
 
 // SetWidth updates the input width.
 func (e *Editor) SetWidth(w int) {
-	e.input.SetWidth(w)
+	e.width = w
+	innerW := w - e.inputBlockStyle().GetHorizontalFrameSize()
+	if innerW < 1 {
+		innerW = 1
+	}
+	e.input.SetWidth(innerW)
 }
 
 // EditorHeight returns the current height of the textarea.
 func (e *Editor) EditorHeight() int {
-	return e.input.Height()
+	return e.input.Height() + e.inputBlockStyle().GetVerticalFrameSize()
 }
 
 // InMultiLine reports whether the editor content spans multiple lines.
@@ -115,7 +128,7 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 			case key.Matches(msg, e.keys.FocusBack): // Esc
 				e.popup.Hide()
 				return nil, nil, nil
-			case key.Matches(msg, e.keys.Submit): // Enter — accept selection
+			case key.Matches(msg, e.keys.AcceptSugg): // Tab accepts selection
 				if item := e.popup.SelectedItem(); item != nil {
 					e.input.SetValue(item.FullLine)
 					e.input.MoveToEnd()
@@ -124,6 +137,9 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 				e.popup.Hide()
 				e.refreshSuggestions()
 				return nil, nil, nil
+			case key.Matches(msg, e.keys.Submit): // Enter still submits
+				e.popup.Hide()
+				return e.handleSubmit()
 			case key.Matches(msg, e.keys.ScrollDn): // PgDown — move down in popup
 				e.popup.MoveDown()
 				return nil, nil, nil
@@ -167,9 +183,9 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 			}
 			// Non-empty: fall through to textarea (ctrl+d = delete forward).
 
-		case msg.String() == "ctrl+space", msg.String() == "ctrl+ ":
+		case key.Matches(msg, e.keys.CompletePopup):
 			// Explicit popup trigger.
-			e.triggerPopup()
+			e.triggerPopup(true)
 			return nil, nil, nil
 
 		case key.Matches(msg, e.keys.AcceptSugg):
@@ -215,19 +231,23 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 }
 
 // triggerPopup shows the autocomplete popup with all available completions.
-func (e *Editor) triggerPopup() {
+func (e *Editor) triggerPopup(explicit bool) {
 	if e.completer == nil {
 		return
 	}
 
 	items := e.completer.SuggestAll(e.input.Value())
+	if explicit {
+		items = e.completer.SuggestExplicit(e.input.Value())
+	}
 	if len(items) < 2 {
 		e.popup.Hide()
 		return
 	}
 
 	// Anchor column = prompt width + cursor column position.
-	anchorCol := e.promptWidth + e.input.Column()
+	blockStyle := e.inputBlockStyle()
+	anchorCol := blockStyle.GetBorderLeftSize() + blockStyle.GetPaddingLeft() + e.promptWidth + e.input.Column()
 	e.popup.Show(items, anchorCol)
 }
 
@@ -238,7 +258,7 @@ func (e *Editor) TriggerAutoPopup() {
 		return // already showing
 	}
 
-	e.triggerPopup()
+	e.triggerPopup(false)
 }
 
 // PopupVisible reports whether the autocomplete popup is displayed.
@@ -254,6 +274,19 @@ func (e *Editor) PopupView(maxWidth int) string {
 // PopupAnchorCol returns the column where the popup should be anchored.
 func (e *Editor) PopupAnchorCol() int {
 	return e.popup.anchorCol
+}
+
+func (e *Editor) Cursor(offsetX, offsetY int) *tea.Cursor {
+	c := e.input.Cursor()
+	if c == nil {
+		return nil
+	}
+
+	blockStyle := e.inputBlockStyle()
+	c.Position.X += offsetX + blockStyle.GetBorderLeftSize() + blockStyle.GetPaddingLeft()
+	c.Position.Y += offsetY + blockStyle.GetBorderTopSize() + blockStyle.GetPaddingTop()
+
+	return c
 }
 
 // refreshSuggestions recomputes ghost text when cursor is at the end of input.
@@ -420,9 +453,9 @@ func (e *Editor) handleCancel() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
 // SetValue() triggers Reset() internally which destroys cursor position,
 // viewport scroll, and the value slice, corrupting state for the next Update().
 func (e *Editor) View() string {
-	v := e.input.View()
+	v := e.highlightInputView(e.input.View())
 	if e.ghostText == "" {
-		return v
+		return e.renderInputBlock(v)
 	}
 
 	// Append dimmed ghost text to the last content line of the rendered output.
@@ -469,7 +502,54 @@ func (e *Editor) View() string {
 
 	lines[lastIdx] = trimmed + styledGhost + strings.Repeat(" ", remaining)
 
+	return e.renderInputBlock(strings.Join(lines, "\n"))
+}
+
+func (e *Editor) highlightInputView(s string) string {
+	if strings.TrimSpace(e.input.Value()) == "" || e.theme == nil {
+		return s
+	}
+
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, line := range lines {
+		lineWidth := ansi.StringWidth(line)
+		if lineWidth <= e.promptWidth {
+			continue
+		}
+
+		prefix := ansi.Cut(line, 0, e.promptWidth)
+		rest := ansi.Cut(line, e.promptWidth, lineWidth)
+		text := strings.TrimRight(rest, " ")
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+
+		paddingWidth := ansi.StringWidth(rest) - ansi.StringWidth(text)
+		if paddingWidth < 0 {
+			paddingWidth = 0
+		}
+		lines[i] = prefix + HighlightSPL2(text, e.theme) + strings.Repeat(" ", paddingWidth)
+	}
+
 	return strings.Join(lines, "\n")
+}
+
+func (e Editor) inputBlockStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Width(e.width).
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(ui.ColorDark()).
+		Background(ui.ColorInputBackground()).
+		Padding(0, 1)
+}
+
+func (e Editor) renderInputBlock(s string) string {
+	if e.width <= 0 {
+		return s
+	}
+
+	body := fixedHeight(s, e.input.Height())
+	return e.inputBlockStyle().Render(body)
 }
 
 // truncateToWidth returns a prefix of s whose display width does not exceed maxWidth.

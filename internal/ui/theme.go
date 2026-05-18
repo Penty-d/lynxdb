@@ -16,6 +16,8 @@ import (
 	"image/color"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -34,11 +36,36 @@ type Env struct {
 // Term is the package-level Env, initialized by InitEnv.
 var Term Env
 
+// ThemeMode controls human-output color selection.
+type ThemeMode string
+
+const (
+	ThemeAuto  ThemeMode = "auto"
+	ThemeDark  ThemeMode = "dark"
+	ThemeLight ThemeMode = "light"
+	ThemePlain ThemeMode = "plain"
+)
+
 // InitEnv detects the terminal environment and initializes the package-level
 // Env and backward-compatible Theme instances.
 //
 // Pass noColor=true to force Ascii profile (--no-color flag).
 func InitEnv(noColor bool) {
+	InitEnvWithMode(noColor, string(ThemeAuto))
+}
+
+// InitEnvWithMode is InitEnv with an explicit human-output theme override.
+// "plain" is equivalent to --no-color. Unknown values fall back to "auto" so
+// early Cobra initialization cannot leave the UI package unusable.
+func InitEnvWithMode(noColor bool, mode string) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = string(ThemeAuto)
+	}
+	if mode == string(ThemePlain) {
+		noColor = true
+	}
+
 	profile := colorprofile.Detect(os.Stdout, os.Environ())
 
 	// Respect --no-color and NO_COLOR / TERM=dumb.
@@ -52,7 +79,13 @@ func InitEnv(noColor bool) {
 		profile = colorprofile.ANSI
 	}
 
-	hasDark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
+	hasDark := inferDarkBackgroundFromEnv()
+	switch mode {
+	case string(ThemeDark):
+		hasDark = true
+	case string(ThemeLight):
+		hasDark = false
+	}
 
 	Term = Env{
 		Profile:   profile,
@@ -73,6 +106,21 @@ func InitEnv(noColor bool) {
 
 // Init is the legacy entry point. It delegates to InitEnv.
 func Init(noColor bool) { InitEnv(noColor) }
+
+func inferDarkBackgroundFromEnv() bool {
+	colorFGBG := strings.TrimSpace(os.Getenv("COLORFGBG"))
+	if colorFGBG == "" {
+		return true
+	}
+
+	parts := strings.Split(colorFGBG, ";")
+	bg, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return true
+	}
+
+	return bg < 7 || bg == 8
+}
 
 // ColorSuccess returns the semantic "success / ok" green.
 func ColorSuccess() color.Color {
@@ -117,6 +165,11 @@ func ColorDim() color.Color {
 // ColorDark returns a dark foreground for rules/separators.
 func ColorDark() color.Color {
 	return Term.lightDark(lipgloss.Color("#d1d5db"), lipgloss.Color("#4b5563"))
+}
+
+// ColorInputBackground returns the shell editor panel background.
+func ColorInputBackground() color.Color {
+	return Term.lightDark(lipgloss.Color("#f3f4f6"), lipgloss.Color("#262626"))
 }
 
 // ColorJSONStr returns green for JSON string values.
@@ -165,6 +218,13 @@ type Theme struct {
 	Value lipgloss.Style
 	Rule  lipgloss.Style
 	Muted lipgloss.Style
+	Panel lipgloss.Style
+
+	// Semantic blocks.
+	SectionTitle lipgloss.Style
+	Hint         lipgloss.Style
+	MetricLabel  lipgloss.Style
+	MetricValue  lipgloss.Style
 
 	// JSON syntax highlighting.
 	JSONKey   lipgloss.Style
@@ -230,6 +290,13 @@ func newThemeFromEnv(w io.Writer) *Theme {
 	t.Value = lipgloss.NewStyle().Foreground(ColorWhite()).Bold(true)
 	t.Rule = lipgloss.NewStyle().Foreground(ColorDark())
 	t.Muted = lipgloss.NewStyle().Foreground(ColorDim())
+	t.Panel = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(ColorDark()).Padding(0, 1)
+
+	// Semantic blocks.
+	t.SectionTitle = lipgloss.NewStyle().Foreground(ColorWhite()).Bold(true)
+	t.Hint = lipgloss.NewStyle().Foreground(ColorInfo())
+	t.MetricLabel = lipgloss.NewStyle().Foreground(ColorGray())
+	t.MetricValue = lipgloss.NewStyle().Foreground(ColorWhite()).Bold(true)
 
 	// JSON syntax.
 	t.JSONKey = lipgloss.NewStyle().Foreground(ColorInfo())
@@ -324,6 +391,11 @@ func newNoColorTheme(w io.Writer) *Theme {
 		Value:         s,
 		Rule:          s,
 		Muted:         s,
+		Panel:         s,
+		SectionTitle:  s,
+		Hint:          s,
+		MetricLabel:   s,
+		MetricValue:   s,
 		JSONKey:       s,
 		JSONStr:       s,
 		JSONNum:       s,

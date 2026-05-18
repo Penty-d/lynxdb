@@ -271,7 +271,7 @@ func queryRowsFromFile(query, file, source, sourcetype, maxMemory string, rawMod
 		return nil, fmt.Errorf("invalid file pattern: %w", err)
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("no files matching: %s", file)
+		return nil, noFilesMatchingError{pattern: file}
 	}
 
 	if !rawMode {
@@ -428,7 +428,7 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		return fmt.Errorf("invalid file pattern: %w", err)
 	}
 	if len(matches) == 0 {
-		return fmt.Errorf("no files matching: %s", file)
+		return noFilesMatchingError{pattern: file}
 	}
 
 	var memLimit int64
@@ -588,7 +588,14 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 		w = f
 	}
 
-	f := output.DetectFormat(output.Format(globalFormat), rows)
+	tableTheme := ui.Stdout
+	if outputFile != "" {
+		tableTheme = nil
+	}
+	f := output.DetectFormatWithOptions(output.Format(globalFormat), rows, output.HumanTableOptions{
+		Theme:   tableTheme,
+		Compact: globalCompact,
+	})
 
 	serStart := time.Now()
 	if err := f.Format(w, rows); err != nil {
@@ -614,10 +621,7 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 		fmt.Fprintln(os.Stderr)
 
 		if isTTY() {
-			fmt.Fprintln(os.Stderr, ui.HRuleSep())
-			var statsBuf bytes.Buffer
-			stats.FormatTTY(&statsBuf, st, globalVerbose, globalQuiet)
-			fmt.Fprintln(os.Stderr, ui.Stderr.Dim.Render(strings.TrimRight(statsBuf.String(), "\n")))
+			printQueryInsightFooter(st)
 		} else if !globalQuiet {
 			_ = stats.FormatJSON(os.Stderr, st)
 		}
@@ -646,6 +650,10 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 		return fmt.Errorf("--from and --to must both be specified")
 	}
 
+	if err := validateQueryBeforeTUI(query); err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 	if timeout != "" {
 		dur, err := time.ParseDuration(timeout)
@@ -657,11 +665,35 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 		defer cancel()
 	}
 
-	if isTTY() {
-		return doQueryTUI(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten)
+	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten)
+}
+
+func validateQueryBeforeTUI(query string) error {
+	if err := spl2.CheckUnsupportedCommands(query); err != nil {
+		return err
 	}
 
-	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten)
+	if _, err := spl2.ParseProgram(query); err != nil {
+		rawErr := err
+		normalized := spl2.NormalizeQuery(query)
+		if normalized != query {
+			if _, normalizedErr := spl2.ParseProgram(normalized); normalizedErr == nil {
+				return nil
+			}
+		}
+
+		return &queryError{
+			inner: &client.APIError{
+				HTTPStatus: 400,
+				Code:       client.ErrCodeInvalidQuery,
+				Message:    "parse error: " + rawErr.Error(),
+				Suggestion: spl2.SuggestFix(rawErr.Error(), nil),
+			},
+			query: query,
+		}
+	}
+
+	return nil
 }
 
 func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint, noSuggestions, showRewritten bool) error {
@@ -722,10 +754,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 		fmt.Fprintln(os.Stderr)
 
 		if isTTY() {
-			fmt.Fprintln(os.Stderr, ui.HRuleSep())
-			var statsBuf bytes.Buffer
-			stats.FormatTTY(&statsBuf, st, globalVerbose, globalQuiet)
-			fmt.Fprintln(os.Stderr, ui.Stderr.Dim.Render(strings.TrimRight(statsBuf.String(), "\n")))
+			printQueryInsightFooter(st)
 		} else if !globalQuiet {
 			_ = stats.FormatJSON(os.Stderr, st)
 		}
@@ -737,9 +766,105 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 // printFormattedRows formats rows using the global --format flag and writes to stdout.
 // Single point of output formatting for all commands that produce row data.
 func printFormattedRows(rows []map[string]interface{}) error {
-	f := output.DetectFormat(output.Format(globalFormat), rows)
+	f := output.DetectFormatWithOptions(output.Format(globalFormat), rows, output.HumanTableOptions{
+		Theme:   ui.Stdout,
+		Compact: globalCompact,
+	})
 
 	return f.Format(os.Stdout, rows)
+}
+
+func printQueryInsightFooter(st *stats.QueryStats) {
+	if globalQuiet || st == nil {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr, ui.HRuleSep())
+
+	metrics := []ui.Metric{
+		{Label: "Rows", Value: formatCount(st.ResultRows)},
+		{Label: "Took", Value: formatElapsed(st.TotalDuration)},
+	}
+	if st.ScannedRows > 0 {
+		metrics = append(metrics, ui.Metric{Label: "Scanned", Value: formatCount(st.ScannedRows)})
+	}
+	if skipped := st.SkippedSegments(); skipped > 0 {
+		metrics = append(metrics, ui.Metric{
+			Label: "Skipped",
+			Value: formatCount(int64(skipped)) + " segments",
+			Hint:  skipBreakdownHint(st),
+		})
+	}
+	if st.ProcessedBytes > 0 {
+		metrics = append(metrics, ui.Metric{Label: "Read", Value: formatBytes(st.ProcessedBytes)})
+	}
+
+	fmt.Fprintln(os.Stderr, ui.Stderr.MetricGrid(metrics, globalCompact))
+
+	if hints := queryInsightHints(st); len(hints) > 0 {
+		fmt.Fprintln(os.Stderr)
+		for _, hint := range hints {
+			fmt.Fprintf(os.Stderr, "  %s %s\n", ui.Stderr.Info.Render("•"), ui.Stderr.Dim.Render(hint))
+		}
+	}
+
+	if globalVerbose {
+		var statsBuf bytes.Buffer
+		stats.FormatTTY(&statsBuf, st, true, false)
+		detail := strings.TrimRight(statsBuf.String(), "\n")
+		if detail != "" {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, ui.Stderr.Dim.Render(detail))
+		}
+	}
+}
+
+func skipBreakdownHint(st *stats.QueryStats) string {
+	var parts []string
+	if st.BloomSkippedSegments > 0 {
+		parts = append(parts, fmt.Sprintf("bloom %s", formatCount(int64(st.BloomSkippedSegments))))
+	}
+	if st.TimeSkippedSegments > 0 {
+		parts = append(parts, fmt.Sprintf("time %s", formatCount(int64(st.TimeSkippedSegments))))
+	}
+	if st.IndexSkippedSegments > 0 {
+		parts = append(parts, fmt.Sprintf("index %s", formatCount(int64(st.IndexSkippedSegments))))
+	}
+	if st.StatSkippedSegments > 0 {
+		parts = append(parts, fmt.Sprintf("stats %s", formatCount(int64(st.StatSkippedSegments))))
+	}
+	if st.RangeSkippedSegments > 0 {
+		parts = append(parts, fmt.Sprintf("range %s", formatCount(int64(st.RangeSkippedSegments))))
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func queryInsightHints(st *stats.QueryStats) []string {
+	var hints []string
+	if st.CacheHit {
+		hints = append(hints, "served from query cache")
+	}
+	if st.AcceleratedBy != "" {
+		msg := "accelerated by MV " + st.AcceleratedBy
+		if st.MVSpeedup != "" {
+			msg += " (" + st.MVSpeedup + ")"
+		}
+		hints = append(hints, msg)
+	} else if st.MVStatus != "" {
+		hints = append(hints, "materialized view status: "+st.MVStatus)
+	}
+	if st.VectorizedFilterUsed {
+		hints = append(hints, "vectorized filters used")
+	}
+	if st.InvertedIndexHits > 0 {
+		hints = append(hints, fmt.Sprintf("inverted index hits: %s", formatCount(int64(st.InvertedIndexHits))))
+	}
+	if len(st.IndexesUsed) > 0 {
+		hints = append(hints, "indexes: "+strings.Join(st.IndexesUsed, ", "))
+	}
+
+	return hints
 }
 
 // queryResultToRows converts a typed *client.QueryResult to []map[string]interface{}.

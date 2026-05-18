@@ -83,9 +83,7 @@ export function deriveColumnsMemo(result: QueryResult): string[] {
   return cols;
 }
 
-// ---------------------------------------------------------------------------
 // Internal
-// ---------------------------------------------------------------------------
 
 function applyPriority(keySet: Set<string>): string[] {
   const ordered: string[] = [];

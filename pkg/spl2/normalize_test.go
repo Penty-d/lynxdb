@@ -172,8 +172,8 @@ func TestIsKnownCommand(t *testing.T) {
 	if isKnownCommand("level") {
 		t.Error("'level' should not be a known command")
 	}
-	if isKnownCommand("limit") {
-		t.Error("'limit' is an option keyword, not a standalone command")
+	if !isKnownCommand("limit") {
+		t.Error("expected 'limit' to be a known command")
 	}
 	if isKnownCommand("") {
 		t.Error("empty string should not be a known command")

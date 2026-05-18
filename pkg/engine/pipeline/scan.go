@@ -144,10 +144,8 @@ func batchFromEventsFiltered(events []*event.Event, columns []string) *Batch {
 		if colSet["host"] && ev.Host != "" {
 			fields["host"] = event.StringValue(ev.Host)
 		}
-		// "index" is a Splunk-compatible alias for _source, not Event.Index.
-		if colSet["index"] && ev.Source != "" {
-			sv := event.StringValue(ev.Source)
-			fields["index"] = sv
+		if colSet["index"] && ev.Index != "" {
+			fields["index"] = event.StringValue(ev.Index)
 		}
 		for k, v := range ev.Fields {
 			if colSet[k] {

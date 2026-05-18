@@ -35,7 +35,34 @@ func TestEngine_EphemeralIngestAndQuery(t *testing.T) {
 
 	ctx := context.Background()
 
-	res, _, err := eng.Query(ctx, `FROM main | stats count`, QueryOpts{})
+	res, _, err := eng.Query(ctx, `FROM main | head 1`, QueryOpts{})
+	if err != nil {
+		t.Fatalf("Query event row: %v", err)
+	}
+	if len(res.Rows) != 1 {
+		t.Fatalf("expected 1 event row, got %d", len(res.Rows))
+	}
+	if got, ok := res.Rows[0]["_source"]; !ok {
+		t.Fatal("event row missing _source")
+	} else if got != "test" {
+		t.Errorf("_source: got %v, want test", got)
+	}
+	if got, ok := res.Rows[0]["index"]; !ok {
+		t.Fatal("event row missing index")
+	} else if got != "main" {
+		t.Errorf("index: got %v, want main", got)
+	}
+	if _, ok := res.Rows[0]["_sourcetype"]; !ok {
+		t.Fatal("event row missing _sourcetype")
+	}
+	if _, ok := res.Rows[0]["source"]; ok {
+		t.Fatal("event row should not include source alias when _source exists")
+	}
+	if _, ok := res.Rows[0]["sourcetype"]; ok {
+		t.Fatal("event row should not include sourcetype alias when _sourcetype exists")
+	}
+
+	res, _, err = eng.Query(ctx, `FROM main | stats count`, QueryOpts{})
 	if err != nil {
 		t.Fatalf("Query stats count: %v", err)
 	}
@@ -82,6 +109,72 @@ func TestEngine_EphemeralIngestAndQuery(t *testing.T) {
 	}
 	if levelCounts["warn"] != 1 {
 		t.Errorf("level=warn count: got %d, want 1", levelCounts["warn"])
+	}
+}
+
+func TestEngine_WhereSourcePathBeforeParseCombined(t *testing.T) {
+	eng := NewEphemeralEngine()
+	defer eng.Close()
+
+	const sourcePath = "/var/log/app/nginx_access.log"
+	lines := []string{
+		`{"message":"192.168.1.203 - - [17/May/2026:21:45:56 +0000] \"OPTIONS /static/style.css HTTP/1.1\" 404 109 \"https://google.com/search?q=test\" \"kube-probe/1.30\" 0.752 0.747"}`,
+		`{"message":"192.168.1.204 - - [17/May/2026:21:45:57 +0000] \"GET /health HTTP/1.1\" 200 2 \"-\" \"curl/8.0\" 0.001 0.001"}`,
+	}
+	if _, err := eng.IngestLines(context.Background(), lines, IngestOpts{
+		Index:      "nginx-access",
+		Source:     sourcePath,
+		SourceType: "json",
+	}); err != nil {
+		t.Fatalf("IngestLines: %v", err)
+	}
+
+	res, _, err := eng.Query(context.Background(), `FROM nginx-access | where _source="/var/log/app/nginx_access.log" | parse combined(message) | limit 1`, QueryOpts{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(res.Rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(res.Rows))
+	}
+	if got := res.Rows[0]["index"]; got != "nginx-access" {
+		t.Fatalf("index: got %v, want nginx-access", got)
+	}
+	if got := res.Rows[0]["_source"]; got != sourcePath {
+		t.Fatalf("_source: got %v, want %s", got, sourcePath)
+	}
+	if _, ok := res.Rows[0]["source"]; ok {
+		t.Fatal("event row should not include source alias")
+	}
+
+	res, _, err = eng.Query(context.Background(), `FROM nginx-access | where _source="/var/log/app/nginx_access.log" | parse combined(message) | limit 1 | table referer, user_agent`, QueryOpts{})
+	if err != nil {
+		t.Fatalf("Query table without source metadata: %v", err)
+	}
+	if len(res.Rows) != 1 {
+		t.Fatalf("table rows: got %d, want 1", len(res.Rows))
+	}
+	if _, ok := res.Rows[0]["_source"]; ok {
+		t.Fatal("table result should not auto-add _source when it is not requested")
+	}
+	if _, ok := res.Rows[0]["_sourcetype"]; ok {
+		t.Fatal("table result should not auto-add _sourcetype when it is not requested")
+	}
+	if got := res.Rows[0]["referer"]; got != "https://google.com/search?q=test" {
+		t.Fatalf("referer: got %v, want https://google.com/search?q=test", got)
+	}
+	if got := res.Rows[0]["user_agent"]; got != "kube-probe/1.30" {
+		t.Fatalf("user_agent: got %v, want kube-probe/1.30", got)
+	}
+
+	res, _, err = eng.Query(context.Background(), `FROM nginx-access | where _source="/var/log/app/nginx_access.log" | parse combined(message) | limit 1 | table referer, user_agent, _source, _sourcetype`, QueryOpts{})
+	if err != nil {
+		t.Fatalf("Query table with source metadata: %v", err)
+	}
+	if got := res.Rows[0]["_source"]; got != sourcePath {
+		t.Fatalf("explicit _source: got %v, want %s", got, sourcePath)
+	}
+	if got := res.Rows[0]["_sourcetype"]; got != "json" {
+		t.Fatalf("explicit _sourcetype: got %v, want json", got)
 	}
 }
 

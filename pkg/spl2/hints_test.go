@@ -167,8 +167,8 @@ func TestExtractQueryHints_RequiredCols(t *testing.T) {
 	for _, c := range hints.RequiredCols {
 		colSet[c] = true
 	}
-	// Should contain at least _time, _raw (from search), status, host
-	for _, expected := range []string{"_time", "_raw", "status", "host"} {
+	// Should contain at least default event metadata, _raw (from search), status, host.
+	for _, expected := range []string{"_time", "_raw", "_source", "_sourcetype", "index", "status", "host"} {
 		if !colSet[expected] {
 			t.Errorf("missing required column %q", expected)
 		}

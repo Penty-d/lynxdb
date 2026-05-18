@@ -39,8 +39,10 @@ const (
 
 // Field name constants for virtual-to-physical column aliasing.
 const (
-	fieldSource         = "source"  // virtual alias used in SPL2
-	fieldSourcePhysical = "_source" // physical column name in segments
+	fieldSource             = "source"      // virtual alias used in SPL2
+	fieldSourcePhysical     = "_source"     // physical column name in segments
+	fieldSourceType         = "sourcetype"  // virtual alias used in SPL2
+	fieldSourceTypePhysical = "_sourcetype" // physical column name in segments
 )
 
 // QueryHints holds optimization hints extracted from a parsed query AST.
@@ -704,6 +706,9 @@ func GetRequiredColumns(q *Query) []string {
 	cols := make(map[string]bool)
 	cols["_time"] = true
 	cols["_raw"] = true // always include _raw — it's the core log line field
+	cols["_source"] = true
+	cols["_sourcetype"] = true
+	cols["index"] = true
 	for _, cmd := range q.Commands {
 		switch c := cmd.(type) {
 		case *SearchCommand:
@@ -827,8 +832,11 @@ func GetRequiredColumns(q *Query) []string {
 // normalizeFieldName maps virtual field aliases to their physical column names.
 // "source" → "_source" (physical column). "index" is a real column, no aliasing.
 func normalizeFieldName(name string) string {
-	if name == fieldSource {
+	switch name {
+	case fieldSource:
 		return fieldSourcePhysical
+	case fieldSourceType:
+		return fieldSourceTypePhysical
 	}
 
 	return name

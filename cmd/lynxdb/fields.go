@@ -111,18 +111,19 @@ func runFieldsList(since, from, to, source, prefix string) error {
 	}
 
 	if len(fields) == 0 {
-		fmt.Println("No fields found. Ingest some data first.")
-		printNextSteps(
+		fmt.Println(ui.Stdout.EmptyState("No fields found.",
 			"lynxdb ingest <file>           Ingest a log file",
 			"lynxdb demo                    Run demo with sample data",
-		)
+		))
 
 		return nil
 	}
 
 	t := ui.Stdout
 	tbl := ui.NewTable(t).
-		SetColumns("FIELD", "TYPE", "COVERAGE", "TOP VALUES")
+		SetColumns("FIELD", "TYPE", "COVERAGE", "TOP VALUES").
+		SetColumnKinds(ui.ColumnText, ui.ColumnText, ui.ColumnNumber, ui.ColumnText).
+		SetCompact(globalCompact)
 
 	for _, f := range fields {
 		topStr := formatTopValues(f.TopValues, f.TotalCount)
@@ -200,7 +201,9 @@ func runFieldDetail(name, since, from, to, source string) error {
 		fmt.Printf("\n  %s\n", t.Bold.Render("Top Values:"))
 
 		tbl := ui.NewTable(t).
-			SetColumns("VALUE", "COUNT", "%%")
+			SetColumns("VALUE", "COUNT", "%%").
+			SetColumnKinds(ui.ColumnText, ui.ColumnNumber, ui.ColumnNumber).
+			SetCompact(globalCompact)
 
 		for _, v := range topValues {
 			tbl.AddRow(v.Value, formatCount(int64(v.Count)), fmt.Sprintf("%.1f%%", v.Percent))
@@ -211,7 +214,9 @@ func runFieldDetail(name, since, from, to, source string) error {
 		fmt.Printf("\n  %s\n", t.Bold.Render("Top Values:"))
 
 		tbl := ui.NewTable(t).
-			SetColumns("VALUE", "COUNT", "%%")
+			SetColumns("VALUE", "COUNT", "%%").
+			SetColumnKinds(ui.ColumnText, ui.ColumnNumber, ui.ColumnNumber).
+			SetCompact(globalCompact)
 
 		for _, v := range field.TopValues {
 			pct := float64(0)
@@ -296,7 +301,9 @@ func runFieldValues(name, since, from, to string) error {
 	fmt.Printf("  %s — top values\n\n", t.Bold.Render(name))
 
 	tbl := ui.NewTable(t).
-		SetColumns("VALUE", "COUNT", "%%")
+		SetColumns("VALUE", "COUNT", "%%").
+		SetColumnKinds(ui.ColumnText, ui.ColumnNumber, ui.ColumnNumber).
+		SetCompact(globalCompact)
 
 	for _, v := range result.Values {
 		tbl.AddRow(fmt.Sprint(v.Value), formatCount(v.Count), fmt.Sprintf("%.1f%%", v.Percent))

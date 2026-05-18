@@ -211,7 +211,6 @@ export function ResultsTable({
     return rows;
   }, [rowCount, getRow]);
 
-  // Create the table instance
   const table = useReactTable({
     data,
     columns: columnDefs,

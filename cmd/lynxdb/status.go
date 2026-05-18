@@ -124,17 +124,21 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		uptimeStr,
 		colorizeHealthStatus(t, healthStatus))
 
-	fmt.Println(t.KeyValue("Storage", formatBytes(stats.StorageBytes)))
-
-	fmt.Println(t.KeyValue("Events",
-		fmt.Sprintf("%s total    %s today",
-			formatCountHuman(stats.TotalEvents),
-			formatCountHuman(stats.EventsToday))))
-
-	fmt.Println(t.KeyValue("Segments",
-		fmt.Sprintf("%s    Buffer: %s events",
-			formatCount(int64(stats.SegmentCount)),
-			formatCount(int64(stats.BufferedEvents)))))
+	metrics := []ui.Metric{
+		{Label: "Storage", Value: formatBytes(stats.StorageBytes)},
+		{
+			Label: "Events",
+			Value: formatCountHuman(stats.TotalEvents) + " total",
+			Hint:  formatCountHuman(stats.EventsToday) + " today",
+		},
+		{
+			Label: "Segments",
+			Value: formatCount(int64(stats.SegmentCount)),
+			Hint:  "buffer: " + formatCount(int64(stats.BufferedEvents)) + " events",
+		},
+		{Label: "Indexes", Value: formatCount(int64(stats.IndexCount))},
+	}
+	fmt.Println(t.MetricGrid(metrics, globalCompact))
 
 	if len(stats.Sources) > 0 {
 		parts := make([]string, 0, len(stats.Sources))
@@ -154,17 +158,18 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		fmt.Println(t.KeyValue("Oldest", t.Dim.Render(stats.OldestEvent)))
 	}
 
-	fmt.Println(t.KeyValue("Indexes", formatCount(int64(stats.IndexCount))))
-
 	statusData, statusErr := c.Status(ctx)
 	if statusErr == nil && statusData.MemoryPool != nil {
 		mp := statusData.MemoryPool
 		fmt.Println()
-		fmt.Printf("  %s\n", t.Bold.Render("Memory Pool"))
-		fmt.Println(t.KeyValue("  Total", formatBytes(mp.TotalBytes)))
-		fmt.Println(t.KeyValue("  Queries", formatBytes(mp.QueryAllocated)))
-		fmt.Println(t.KeyValue("  Cache", formatBytes(mp.CacheAllocated)))
-		fmt.Println(t.KeyValue("  Free", formatBytes(mp.FreeBytes)))
+		fmt.Println(t.Section("Memory Pool"))
+		memMetrics := []ui.Metric{
+			{Label: "Total", Value: formatBytes(mp.TotalBytes)},
+			{Label: "Queries", Value: formatBytes(mp.QueryAllocated)},
+			{Label: "Cache", Value: formatBytes(mp.CacheAllocated)},
+			{Label: "Free", Value: formatBytes(mp.FreeBytes)},
+		}
+		fmt.Println(t.MetricGrid(memMetrics, globalCompact))
 
 		if mp.CacheEvictions > 0 {
 			fmt.Println(t.KeyValue("  Evictions",

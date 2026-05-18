@@ -31,6 +31,7 @@ type fieldsLoadedMsg struct {
 	fields    []string
 	fieldInfo []client.FieldInfo
 	sources   []string
+	err       error
 }
 
 // jobCreatedMsg is sent when an async query job is successfully submitted.
@@ -47,6 +48,9 @@ type progressMsg struct {
 
 // pollTickMsg triggers the next poll iteration for an async job.
 type pollTickMsg struct{}
+
+// lynxTickMsg advances the small animated lynx marks in shell views.
+type lynxTickMsg struct{}
 
 // savedQueryRunMsg carries a saved query to be executed.
 type savedQueryRunMsg struct {
