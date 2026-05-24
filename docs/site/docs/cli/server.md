@@ -82,7 +82,7 @@ lynxdb server --tls-cert /etc/ssl/lynxdb.crt --tls-key /etc/ssl/lynxdb.key
   Data:    /var/lib/lynxdb
   Listen:  0.0.0.0:8080
 
-time=2026-01-15T10:00:00.000Z level=INFO msg="starting LynxDB" version=0.1.0 addr=0.0.0.0:8080
+time=2026-01-15T10:00:00.000Z level=INFO msg="starting LynxDB" version=X.Y.Z addr=0.0.0.0:8080
 ```
 
 ## Authentication
