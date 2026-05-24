@@ -270,6 +270,16 @@ func (e *Engine) CompactionHistory(since time.Time) ([]*compaction.Manifest, err
 	return e.manifestStore.LoadHistory(since)
 }
 
+// CompactionDebt returns queued and active compaction scheduler debt.
+func (e *Engine) CompactionDebt() *compaction.DebtSnapshot {
+	if e.compactionSched == nil {
+		return nil
+	}
+	snap := e.compactionSched.DebtSnapshot()
+
+	return &snap
+}
+
 // Metrics returns the storage metrics, populating dynamic values first.
 func (e *Engine) Metrics() *storage.Metrics {
 	// Populate dynamic metrics before returning.

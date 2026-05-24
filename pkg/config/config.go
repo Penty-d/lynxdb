@@ -422,7 +422,7 @@ func DefaultConfig() *Config {
 			Compression:       "lz4",
 			RowGroupSize:      65536,
 			FlushThreshold:    512 * MB,
-			FlushIdleTimeout:  30 * time.Second,
+			FlushIdleTimeout:  200 * time.Millisecond,
 			MaxColumnsPerPart: 256,
 			PartitionBy:       "daily",
 

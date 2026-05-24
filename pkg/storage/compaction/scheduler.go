@@ -3,6 +3,7 @@ package compaction
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime"
 	"sync"
@@ -34,6 +35,8 @@ type Scheduler struct {
 	queue      jobQueue
 	jobReady   *sync.Cond
 	activeKeys map[compactionKey]bool // tracks which (index, partition) pairs have in-flight jobs
+	queuedJobs map[string]*Job        // dedupe key -> queued job
+	activeJobs map[string]*Job        // dedupe key -> active job
 
 	compactor    *Compactor
 	executor     ExecutorFn // optional: custom execution logic (replaces compactor.Execute)
@@ -44,9 +47,28 @@ type Scheduler struct {
 	logger       *slog.Logger
 	onComplete   func(*Job, *SegmentInfo, error) // callback after each job
 	onError      func(*Job, error)               // callback for metrics on failure
+	lastError    string
 
 	running atomic.Bool
 	wg      sync.WaitGroup
+}
+
+// DebtJobSnapshot describes queued or active compaction debt.
+type DebtJobSnapshot struct {
+	Index       string      `json:"index"`
+	Partition   string      `json:"partition"`
+	Priority    JobPriority `json:"priority"`
+	Score       float64     `json:"score"`
+	InputIDs    []string    `json:"input_ids"`
+	InputBytes  int64       `json:"input_bytes"`
+	OutputLevel int         `json:"output_level"`
+}
+
+// DebtSnapshot describes current scheduler compaction debt.
+type DebtSnapshot struct {
+	Queued    []DebtJobSnapshot `json:"queued"`
+	Active    []DebtJobSnapshot `json:"active"`
+	LastError string            `json:"last_error,omitempty"`
 }
 
 // SchedulerConfig configures the compaction scheduler.
@@ -80,6 +102,8 @@ func NewScheduler(c *Compactor, cfg SchedulerConfig, logger *slog.Logger) *Sched
 		workers:    workers,
 		logger:     logger,
 		activeKeys: make(map[compactionKey]bool),
+		queuedJobs: make(map[string]*Job),
+		activeJobs: make(map[string]*Job),
 	}
 	s.jobReady = sync.NewCond(&s.mu)
 	heap.Init(&s.queue)
@@ -123,6 +147,11 @@ func (s *Scheduler) SetOnError(fn func(*Job, error)) {
 // Submit adds a compaction job to the priority queue.
 func (s *Scheduler) Submit(job *Job) {
 	s.mu.Lock()
+	if !s.admitLocked(job) {
+		s.mu.Unlock()
+
+		return
+	}
 	heap.Push(&s.queue, job)
 	queueLen := s.queue.Len()
 	s.jobReady.Signal()
@@ -139,17 +168,43 @@ func (s *Scheduler) Submit(job *Job) {
 // SubmitAll adds multiple jobs to the queue.
 func (s *Scheduler) SubmitAll(jobs []*Job) {
 	s.mu.Lock()
+	submitted := 0
 	for _, j := range jobs {
+		if !s.admitLocked(j) {
+			continue
+		}
 		heap.Push(&s.queue, j)
+		submitted++
 	}
-	if len(jobs) > 0 {
+	if submitted > 0 {
 		s.jobReady.Broadcast()
 		s.logger.Debug("compaction jobs batch submitted",
-			"count", len(jobs),
+			"count", submitted,
+			"deduped", len(jobs)-submitted,
 			"queue_depth", s.queue.Len(),
 		)
 	}
 	s.mu.Unlock()
+}
+
+func (s *Scheduler) admitLocked(job *Job) bool {
+	key := job.DedupeKey()
+	if key == "" {
+		return true
+	}
+	if s.queuedJobs[key] != nil || s.activeJobs[key] != nil {
+		s.logger.Debug("compaction job deduped",
+			"index", job.Index,
+			"partition", job.Partition,
+			"priority", job.Priority,
+			"input_ids", job.InputIDs,
+		)
+
+		return false
+	}
+	s.queuedJobs[key] = job
+
+	return true
 }
 
 // Limiter returns the rate limiter so the adaptive controller can update the rate.
@@ -163,6 +218,60 @@ func (s *Scheduler) QueueLen() int {
 	defer s.mu.Unlock()
 
 	return s.queue.Len()
+}
+
+// PendingInputIDs returns input IDs from queued and active jobs so planning can
+// avoid proposing duplicate work.
+func (s *Scheduler) PendingInputIDs() map[string]struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ids := make(map[string]struct{})
+	for _, job := range s.queuedJobs {
+		for _, id := range job.InputIDs {
+			ids[id] = struct{}{}
+		}
+	}
+	for _, job := range s.activeJobs {
+		for _, id := range job.InputIDs {
+			ids[id] = struct{}{}
+		}
+	}
+
+	return ids
+}
+
+// DebtSnapshot returns queued and active compaction debt details.
+func (s *Scheduler) DebtSnapshot() DebtSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snap := DebtSnapshot{LastError: s.lastError}
+	for _, job := range s.queuedJobs {
+		snap.Queued = append(snap.Queued, debtJobSnapshot(job))
+	}
+	for _, job := range s.activeJobs {
+		snap.Active = append(snap.Active, debtJobSnapshot(job))
+	}
+
+	return snap
+}
+
+func debtJobSnapshot(job *Job) DebtJobSnapshot {
+	outputLevel := 0
+	if job.Plan != nil {
+		outputLevel = job.Plan.OutputLevel
+	}
+
+	return DebtJobSnapshot{
+		Index:       job.Index,
+		Partition:   job.Partition,
+		Priority:    job.Priority,
+		Score:       job.Score,
+		InputIDs:    append([]string(nil), job.InputIDs...),
+		InputBytes:  job.InputBytes,
+		OutputLevel: outputLevel,
+	}
 }
 
 // Start launches worker goroutines. Call Stop to shut down.
@@ -229,7 +338,12 @@ func (s *Scheduler) worker(ctx context.Context, id int) {
 		}
 
 		key := compactionKey{Index: job.Index, Partition: job.Partition}
+		jobKey := job.DedupeKey()
 		s.activeKeys[key] = true
+		if jobKey != "" {
+			delete(s.queuedJobs, jobKey)
+			s.activeJobs[jobKey] = job
+		}
 		executor := s.executor
 		adaptiveCtrl := s.adaptiveCtrl
 		onComplete := s.onComplete
@@ -248,6 +362,10 @@ func (s *Scheduler) worker(ctx context.Context, id int) {
 		if adaptiveCtrl != nil && adaptiveCtrl.Paused() {
 			s.mu.Lock()
 			heap.Push(&s.queue, job)
+			if jobKey != "" {
+				delete(s.activeJobs, jobKey)
+				s.queuedJobs[jobKey] = job
+			}
 			delete(s.activeKeys, key)
 			s.jobReady.Signal()
 			s.logger.Debug("compaction paused, requeueing",
@@ -278,6 +396,10 @@ func (s *Scheduler) worker(ctx context.Context, id int) {
 			s.mu.Lock()
 			delete(s.activeKeys, key)
 			heap.Push(&s.queue, job)
+			if jobKey != "" {
+				delete(s.activeJobs, jobKey)
+				s.queuedJobs[jobKey] = job
+			}
 			s.jobReady.Signal()
 			s.mu.Unlock()
 
@@ -310,6 +432,7 @@ func (s *Scheduler) worker(ctx context.Context, id int) {
 		)
 
 		if err != nil {
+			errText := fmt.Sprintf("%s/%s: %v", job.Index, job.Partition, err)
 			s.logger.Error("compaction job failed",
 				"worker", id,
 				"priority", job.Priority,
@@ -320,12 +443,18 @@ func (s *Scheduler) worker(ctx context.Context, id int) {
 			if onError != nil {
 				onError(job, err)
 			}
+			s.mu.Lock()
+			s.lastError = errText
+			s.mu.Unlock()
 		}
 
 		// Release the (index, partition) lock and wake other workers that may
 		// be waiting for this key to become available.
 		s.mu.Lock()
 		delete(s.activeKeys, key)
+		if jobKey != "" {
+			delete(s.activeJobs, jobKey)
+		}
 		s.jobReady.Broadcast()
 		s.mu.Unlock()
 
@@ -380,7 +509,13 @@ type jobQueue []*Job
 
 func (q jobQueue) Len() int { return len(q) }
 func (q jobQueue) Less(i, j int) bool {
-	return q[i].Priority < q[j].Priority // lower = higher priority
+	if q[i].Priority != q[j].Priority {
+		return q[i].Priority < q[j].Priority // lower = higher priority
+	}
+	if q[i].Score != q[j].Score {
+		return q[i].Score > q[j].Score // higher score = higher debt
+	}
+	return q[i].InputBytes > q[j].InputBytes
 }
 func (q jobQueue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
 

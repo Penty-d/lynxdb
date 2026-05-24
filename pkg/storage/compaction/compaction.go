@@ -90,6 +90,7 @@ type Compactor struct {
 	mu         sync.Mutex
 	segments   map[string]*SegmentInfo // id -> info
 	logger     *slog.Logger
+	cfg        Config
 	l0Strategy Strategy
 	l1Strategy Strategy
 	l2Strategy Strategy
@@ -99,15 +100,31 @@ type Compactor struct {
 
 // NewCompactor creates a new compactor with default strategies.
 func NewCompactor(logger *slog.Logger) *Compactor {
+	return NewCompactorWithConfig(DefaultConfig(), logger)
+}
+
+// NewCompactorWithConfig creates a compactor from normalized compaction config.
+func NewCompactorWithConfig(cfg Config, logger *slog.Logger) *Compactor {
+	cfg = cfg.withDefaults()
+
 	return &Compactor{
 		segments:   make(map[string]*SegmentInfo),
 		logger:     logger,
-		l0Strategy: &SizeTiered{Threshold: L0CompactionThreshold, Logger: logger},
-		l1Strategy: &LevelBased{Threshold: L1CompactionThreshold, TargetSize: L2TargetSize, Logger: logger},
+		cfg:        cfg,
+		l0Strategy: &SizeTiered{Threshold: cfg.L0Threshold, Logger: logger},
+		l1Strategy: &LevelBased{Threshold: cfg.L1Threshold, TargetSize: cfg.L2TargetSize, Logger: logger},
 		l2Strategy: &TimeWindow{ColdThreshold: 48 * time.Hour, Logger: logger},
-		intraL0:    &IntraL0{Threshold: 2 * L0CompactionThreshold},
-		intraL2:    &IntraL2{Threshold: L1CompactionThreshold, TargetSize: L2TargetSize, Logger: logger},
+		intraL0:    &IntraL0{Threshold: 2 * cfg.L0Threshold, BatchSize: cfg.L0Threshold},
+		intraL2:    &IntraL2{Threshold: cfg.L1Threshold, TargetSize: cfg.L2TargetSize, Logger: logger},
 	}
+}
+
+// Config returns the normalized compaction configuration used by the compactor.
+func (c *Compactor) Config() Config {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.cfg
 }
 
 // AddSegment registers a segment for compaction tracking.
@@ -242,18 +259,33 @@ func (c *Compactor) PlanCompaction(index string) *Plan {
 // Segment format is intentionally not part of scheduling priority; mixed V1/V2
 // migration remains size-tiered and level-based rather than format-biased.
 func (c *Compactor) PlanAllCompactions(index string) []*Job {
+	return c.PlanAllCompactionsFiltered(index, PlanFilter{})
+}
+
+// PlanAllCompactionsFiltered returns compaction jobs excluding inputs that are
+// already queued or active elsewhere.
+func (c *Compactor) PlanAllCompactionsFiltered(index string, filter PlanFilter) []*Job {
 	var jobs []*Job
 
 	for _, partition := range c.partitionsForIndex(index) {
 		segs := c.segmentsForIndexPartition(index, partition)
+		l0Score := LevelScore(c.cfg, L0, segs, filter.ExcludedInputIDs)
+		l1Score := LevelScore(c.cfg, L1, segs, filter.ExcludedInputIDs)
+		l2Score := LevelScore(c.cfg, L2, segs, filter.ExcludedInputIDs)
 
 		// L0→L1 plans (highest priority).
 		for _, plan := range c.l0Strategy.Plan(segs) {
+			if !filter.includes(plan) {
+				continue
+			}
 			jobs = append(jobs, &Job{
-				Plan:      plan,
-				Priority:  PriorityL0ToL1,
-				Index:     index,
-				Partition: partition,
+				Plan:       plan,
+				Priority:   PriorityL0ToL1,
+				Index:      index,
+				Partition:  partition,
+				Score:      l0Score.Value,
+				InputIDs:   planInputIDs(plan),
+				InputBytes: planInputBytes(plan),
 			})
 		}
 
@@ -269,42 +301,66 @@ func (c *Compactor) PlanAllCompactions(index string) []*Job {
 		}
 		if !hasL0Merge {
 			for _, plan := range c.intraL0.Plan(segs) {
+				if !filter.includes(plan) {
+					continue
+				}
 				jobs = append(jobs, &Job{
-					Plan:      plan,
-					Priority:  PriorityL0ToL1,
-					Index:     index,
-					Partition: partition,
+					Plan:       plan,
+					Priority:   PriorityL0ToL1,
+					Index:      index,
+					Partition:  partition,
+					Score:      l0Score.Value,
+					InputIDs:   planInputIDs(plan),
+					InputBytes: planInputBytes(plan),
 				})
 			}
 		}
 
 		// L1→L2 plans.
 		for _, plan := range c.l1Strategy.Plan(segs) {
+			if !filter.includes(plan) {
+				continue
+			}
 			jobs = append(jobs, &Job{
-				Plan:      plan,
-				Priority:  PriorityL1ToL2,
-				Index:     index,
-				Partition: partition,
+				Plan:       plan,
+				Priority:   PriorityL1ToL2,
+				Index:      index,
+				Partition:  partition,
+				Score:      l1Score.Value,
+				InputIDs:   planInputIDs(plan),
+				InputBytes: planInputBytes(plan),
 			})
 		}
 
 		// Intra-L2 plans: consolidate small L2 parts up to TargetSize.
 		for _, plan := range c.intraL2.Plan(segs) {
+			if !filter.includes(plan) {
+				continue
+			}
 			jobs = append(jobs, &Job{
-				Plan:      plan,
-				Priority:  PriorityIntraL2,
-				Index:     index,
-				Partition: partition,
+				Plan:       plan,
+				Priority:   PriorityIntraL2,
+				Index:      index,
+				Partition:  partition,
+				Score:      l2Score.Value,
+				InputIDs:   planInputIDs(plan),
+				InputBytes: planInputBytes(plan),
 			})
 		}
 
 		// L2→L3 plans (cold partition archive).
 		for _, plan := range c.l2Strategy.Plan(segs) {
+			if !filter.includes(plan) {
+				continue
+			}
 			jobs = append(jobs, &Job{
-				Plan:      plan,
-				Priority:  PriorityL2ToL3,
-				Index:     index,
-				Partition: partition,
+				Plan:       plan,
+				Priority:   PriorityL2ToL3,
+				Index:      index,
+				Partition:  partition,
+				Score:      LevelScore(c.cfg, planBaseLevel(plan), segs, filter.ExcludedInputIDs).Value,
+				InputIDs:   planInputIDs(plan),
+				InputBytes: planInputBytes(plan),
 			})
 		}
 	}

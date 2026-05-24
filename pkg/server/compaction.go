@@ -86,8 +86,7 @@ func (e *Engine) startCompaction(ctx context.Context) {
 	e.compactionSched.SetAdaptiveController(e.adaptiveCtrl)
 
 	e.compactionSched.SetExecutor(func(ctx context.Context, job *compaction.Job) error {
-		e.executeCompactionPlan(ctx, job.Index, job.Partition, job.Plan)
-		return nil
+		return e.executeCompactionPlan(ctx, job.Index, job.Partition, job.Plan)
 	})
 
 	e.compactionSched.Start(ctx)
@@ -132,7 +131,11 @@ func (e *Engine) submitCompactionJobs() {
 	e.mu.RUnlock()
 
 	for _, idx := range indexNames {
-		jobs := e.compactor.PlanAllCompactions(idx)
+		filter := compaction.PlanFilter{}
+		if e.compactionSched != nil {
+			filter.ExcludedInputIDs = e.compactionSched.PendingInputIDs()
+		}
+		jobs := e.compactor.PlanAllCompactionsFiltered(idx, filter)
 		if len(jobs) > 0 {
 			e.compactionSched.SubmitAll(jobs)
 		}
@@ -154,7 +157,7 @@ func (e *Engine) submitCompactionJobs() {
 // instead of O(all events). Each batch is written as a row group via
 // segment.StreamWriter, then the file is finalized with inverted index +
 // footer, fsynced, and atomically renamed.
-func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition string, plan *compaction.Plan) {
+func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition string, plan *compaction.Plan) error {
 	planStart := time.Now()
 	e.logger.Debug("compaction plan execution started",
 		"index", idx,
@@ -196,8 +199,7 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 
 	// Handle trivial moves: promote the segment's level without merge.
 	if plan.TrivialMove && len(plan.InputSegments) == 1 {
-		e.executeTrivialMove(ctx, idx, partition, plan)
-		return
+		return e.executeTrivialMove(ctx, idx, partition, plan)
 	}
 
 	// Stream merged events directly to disk via PartStreamWriter, bounding
@@ -223,7 +225,7 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 		e.compactionFailures.record(idx, partition)
 		e.metrics.CompactionErrors.Add(1)
 		e.logger.Error("compaction stream writer init failed", "index", idx, "partition", partition, "error", err)
-		return
+		return err
 	}
 
 	result, err := e.compactor.StreamingMerge(ctx, plan, compaction.MergeWriterFunc(func(batch []*event.Event) error {
@@ -240,7 +242,7 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 			e.logger.Error("compaction merge failed", "index", idx, "partition", partition, "error", err)
 		}
 
-		return
+		return err
 	}
 
 	e.metrics.CompactionRuns.Add(1)
@@ -267,7 +269,7 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 			e.logger.Error("compaction write failed", "index", idx, "partition", partition, "error", err)
 		}
 
-		return
+		return err
 	}
 
 	// Compaction succeeded — reset failure counter.
@@ -283,7 +285,7 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 			}
 		}
 
-		return
+		return err
 	}
 
 	// Register the new part only after it is query-visible. If mmap/open fails,
@@ -442,6 +444,8 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 		"bsi_section_bytes", outputMeta.BSISectionBytes,
 		"output_size", outputMeta.SizeBytes,
 	)
+
+	return nil
 }
 
 // executeTrivialMove promotes a single segment to a higher compaction level
@@ -449,7 +453,7 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 // metadata level changes. This avoids the entire merge + write + re-index
 // path for segments that are already non-overlapping and can be promoted
 // directly (e.g., a single L0 segment that doesn't overlap with any L1).
-func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, plan *compaction.Plan) {
+func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, plan *compaction.Plan) error {
 	seg := plan.InputSegments[0]
 
 	e.logger.Info("trivial move: promoting segment",
@@ -503,7 +507,7 @@ func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, pl
 			"error", err,
 		)
 
-		return
+		return err
 	}
 
 	newHandle, err := e.openPartSegmentHandle(&renamedMeta)
@@ -523,7 +527,7 @@ func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, pl
 			)
 		}
 
-		return
+		return err
 	}
 
 	var oldHandle *segmentHandle
@@ -552,7 +556,7 @@ func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, pl
 			)
 		}
 
-		return
+		return fmt.Errorf("trivial move: segment %s not found in current epoch", seg.Meta.ID)
 	}
 	e.advanceEpoch(newSegments, []*segmentHandle{oldHandle})
 	e.mu.Unlock()
@@ -605,6 +609,8 @@ func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, pl
 		"segment", renamedMeta.ID,
 		"new_level", plan.OutputLevel,
 	)
+
+	return nil
 }
 
 // maybeCompactAfterFlush checks if the L0 part count for the given (index, partition)
@@ -618,19 +624,24 @@ func (e *Engine) maybeCompactAfterFlush(_ context.Context, index, partition stri
 	}
 
 	l0Count := len(e.compactor.SegmentsByLevelPartition(index, partition, 0))
+	compactionCfg := e.compactor.Config()
 
 	e.logger.Debug("reactive compaction check",
 		"index", index,
 		"partition", partition,
 		"l0_count", l0Count,
-		"threshold", compaction.L0CompactionThreshold,
+		"threshold", compactionCfg.L0Threshold,
 	)
 
-	if l0Count < compaction.L0CompactionThreshold {
+	if l0Count < compactionCfg.L0Threshold {
 		return
 	}
 
-	jobs := e.compactor.PlanAllCompactions(index)
+	filter := compaction.PlanFilter{}
+	if e.compactionSched != nil {
+		filter.ExcludedInputIDs = e.compactionSched.PendingInputIDs()
+	}
+	jobs := e.compactor.PlanAllCompactionsFiltered(index, filter)
 	if len(jobs) == 0 {
 		return
 	}
@@ -647,7 +658,7 @@ func (e *Engine) maybeCompactAfterFlush(_ context.Context, index, partition stri
 	} else {
 		// Fallback for tests or in-memory mode without scheduler.
 		for _, job := range jobs {
-			e.executeCompactionPlan(context.Background(), job.Index, job.Partition, job.Plan)
+			_ = e.executeCompactionPlan(context.Background(), job.Index, job.Partition, job.Plan)
 		}
 	}
 }

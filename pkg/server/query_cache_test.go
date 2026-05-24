@@ -66,6 +66,60 @@ func TestQueryCacheUsesGenerationAfterPreQueryFlush(t *testing.T) {
 	}
 }
 
+func TestQueryReadsBufferedEventsWithoutCreatingParts(t *testing.T) {
+	queryCfg := config.DefaultConfig().Query
+	queryCfg.SpillDir = t.TempDir()
+	fsync := false
+	storageCfg := config.DefaultConfig().Storage
+	storageCfg.FlushThreshold = 1 * config.GB
+	storageCfg.FlushIdleTimeout = time.Hour
+
+	e := NewEngine(Config{
+		DataDir: t.TempDir(),
+		Storage: storageCfg,
+		Logger:  discardLogger(),
+		Query:   queryCfg,
+		Ingest:  config.IngestConfig{FSync: &fsync},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := e.Start(ctx); err != nil {
+		cancel()
+		t.Fatalf("engine start: %v", err)
+	}
+	defer cancel()
+	defer func() {
+		if err := e.Shutdown(5 * time.Second); err != nil {
+			t.Fatalf("shutdown: %v", err)
+		}
+	}()
+
+	base := time.Now().UTC()
+	events := make([]*event.Event, 3)
+	for i := range events {
+		ev := event.NewEvent(base.Add(time.Duration(i)*time.Millisecond), fmt.Sprintf("buffered-%d", i))
+		ev.Index = "main"
+		events[i] = ev
+	}
+	if err := e.Ingest(events); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	if got := e.partRegistry.Count(); got != 0 {
+		t.Fatalf("parts before query: got %d, want 0", got)
+	}
+
+	for i := 0; i < 3; i++ {
+		result := submitAndWait(t, e, "from main | stats count")
+		if result.Status != JobStatusDone {
+			t.Fatalf("query[%d] status = %s, error=%s", i, result.Status, result.Error)
+		}
+		if got := e.partRegistry.Count(); got != 0 {
+			t.Fatalf("parts after query[%d]: got %d, want 0", i, got)
+		}
+	}
+}
+
 func submitAndWait(t *testing.T, e *Engine, query string) JobSnapshot {
 	t.Helper()
 

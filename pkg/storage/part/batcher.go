@@ -52,6 +52,15 @@ type BatcherConfig struct {
 	FlushQueueSize int
 }
 
+// PressureEvent reports ingest backpressure decisions.
+type PressureEvent struct {
+	Index       string
+	Partition   string
+	L0PartCount int
+	Delay       time.Duration
+	Rejected    bool
+}
+
 // DefaultBatcherConfig returns a BatcherConfig with production-ready defaults.
 func DefaultBatcherConfig() BatcherConfig {
 	return BatcherConfig{
@@ -111,7 +120,7 @@ func (c BatcherConfig) withDefaults() BatcherConfig {
 type AsyncBatcher struct {
 	mu       sync.Mutex
 	flushMu  sync.Mutex
-	shards   map[string]*batchShard // index -> shard
+	shards   map[batchKey]*batchShard // (index, partition) -> shard
 	writer   *Writer
 	registry *Registry
 	cfg      BatcherConfig
@@ -125,13 +134,15 @@ type AsyncBatcher struct {
 	pendingMu      sync.Mutex
 	pendingCond    *sync.Cond
 	pendingFlushes int
+	pendingByKey   map[batchKey]int
 	asyncFlushErr  error
 
 	// onCommit is called after each part is committed to disk and registered
 	// for admission/backpressure accounting.
 	// Engine uses this to open the mmap'd reader and register for queries.
-	onCommit func(meta *Meta) error
-	runCtx   context.Context
+	onCommit   func(meta *Meta) error
+	onPressure func(PressureEvent)
+	runCtx     context.Context
 }
 
 // batchShard holds buffered events for a single index.
@@ -141,8 +152,13 @@ type batchShard struct {
 	lastAdd   time.Time
 }
 
+type batchKey struct {
+	index     string
+	partition string
+}
+
 type flushTarget struct {
-	index  string
+	key    batchKey
 	events []*event.Event
 }
 
@@ -152,11 +168,12 @@ func NewAsyncBatcher(writer *Writer, registry *Registry, cfg BatcherConfig, logg
 	cfg = cfg.withDefaults()
 
 	b := &AsyncBatcher{
-		shards:   make(map[string]*batchShard),
-		writer:   writer,
-		registry: registry,
-		cfg:      cfg,
-		logger:   logger,
+		shards:       make(map[batchKey]*batchShard),
+		writer:       writer,
+		registry:     registry,
+		cfg:          cfg,
+		logger:       logger,
+		pendingByKey: make(map[batchKey]int),
 	}
 	b.pendingCond = sync.NewCond(&b.pendingMu)
 
@@ -167,6 +184,11 @@ func NewAsyncBatcher(writer *Writer, registry *Registry, cfg BatcherConfig, logg
 // Must be called before Start.
 func (b *AsyncBatcher) SetOnCommit(fn func(meta *Meta) error) {
 	b.onCommit = fn
+}
+
+// SetOnPressure sets the callback invoked when ingest is delayed or rejected.
+func (b *AsyncBatcher) SetOnPressure(fn func(PressureEvent)) {
+	b.onPressure = fn
 }
 
 // Start starts the background goroutine that flushes idle shards.
@@ -203,7 +225,7 @@ func (b *AsyncBatcher) AddContext(ctx context.Context, events []*event.Event) er
 
 	// Check backpressure BEFORE buffering to avoid accepting data we can't
 	// compact fast enough.
-	if err := b.checkBackpressure(ctx); err != nil {
+	if err := b.checkBackpressure(ctx, events); err != nil {
 		return err
 	}
 
@@ -217,11 +239,15 @@ func (b *AsyncBatcher) AddContext(ctx context.Context, events []*event.Event) er
 		if idx == "" {
 			idx = "main"
 		}
+		key := batchKey{
+			index:     idx,
+			partition: b.partitionKey(ev),
+		}
 
-		shard, ok := b.shards[idx]
+		shard, ok := b.shards[key]
 		if !ok {
 			shard = &batchShard{}
-			b.shards[idx] = shard
+			b.shards[key] = shard
 		}
 
 		shard.events = append(shard.events, ev)
@@ -235,16 +261,17 @@ func (b *AsyncBatcher) AddContext(ctx context.Context, events []*event.Event) er
 			}
 			b.logger.Debug("batcher threshold crossed",
 				"index", idx,
+				"partition", key.partition,
 				"trigger", trigger,
 				"events", len(shard.events),
 				"size_bytes", shard.sizeBytes,
 			)
 			// Snapshot and clear shard under lock; flush happens below without lock.
 			toFlush = append(toFlush, flushTarget{
-				index:  idx,
+				key:    key,
 				events: shard.events,
 			})
-			b.shards[idx] = &batchShard{lastAdd: time.Now()}
+			b.shards[key] = &batchShard{lastAdd: time.Now()}
 		}
 	}
 	b.mu.Unlock()
@@ -252,7 +279,7 @@ func (b *AsyncBatcher) AddContext(ctx context.Context, events []*event.Event) er
 	// Admit threshold-crossing shards outside the lock.
 	for _, ft := range toFlush {
 		if err := b.enqueueThresholdFlush(ctx, ft); err != nil {
-			return fmt.Errorf("part.AsyncBatcher.Add: enqueue flush %s: %w", ft.index, err)
+			return fmt.Errorf("part.AsyncBatcher.Add: enqueue flush %s/%s: %w", ft.key.index, ft.key.partition, err)
 		}
 	}
 
@@ -264,18 +291,19 @@ func (b *AsyncBatcher) enqueueThresholdFlush(ctx context.Context, ft flushTarget
 		return nil
 	}
 	if b.flushCh == nil {
-		return b.flushEvents(b.writeContext(), ft.index, ft.events)
+		return b.flushEvents(b.writeContext(), ft.key, ft.events)
 	}
 
 	b.pendingMu.Lock()
 	b.pendingFlushes++
+	b.pendingByKey[ft.key]++
 	b.pendingMu.Unlock()
 
 	select {
 	case b.flushCh <- ft:
 		return nil
 	case <-ctx.Done():
-		b.finishThresholdFlush(ctx.Err())
+		b.finishThresholdFlush(ft.key, ctx.Err())
 
 		return ctx.Err()
 	}
@@ -284,16 +312,17 @@ func (b *AsyncBatcher) enqueueThresholdFlush(ctx context.Context, ft flushTarget
 func (b *AsyncBatcher) thresholdFlushLoop() {
 	defer b.flushWG.Done()
 	for ft := range b.flushCh {
-		err := b.flushEvents(context.Background(), ft.index, ft.events)
+		err := b.flushEvents(context.Background(), ft.key, ft.events)
 		if err != nil {
-			b.logger.Error("threshold flush failed", "index", ft.index,
+			b.logger.Error("threshold flush failed", "index", ft.key.index,
+				"partition", ft.key.partition,
 				"events", len(ft.events), "error", err)
 		}
-		b.finishThresholdFlush(err)
+		b.finishThresholdFlush(ft.key, err)
 	}
 }
 
-func (b *AsyncBatcher) finishThresholdFlush(err error) {
+func (b *AsyncBatcher) finishThresholdFlush(key batchKey, err error) {
 	b.pendingMu.Lock()
 	defer b.pendingMu.Unlock()
 
@@ -301,6 +330,11 @@ func (b *AsyncBatcher) finishThresholdFlush(err error) {
 		b.asyncFlushErr = err
 	}
 	b.pendingFlushes--
+	if n := b.pendingByKey[key]; n <= 1 {
+		delete(b.pendingByKey, key)
+	} else {
+		b.pendingByKey[key] = n - 1
+	}
 	b.pendingCond.Broadcast()
 }
 
@@ -311,13 +345,32 @@ func (b *AsyncBatcher) finishThresholdFlush(err error) {
 //     interpolation from 0ms to MaxDelayMs). This gives compaction time to
 //     catch up while still accepting data.
 //   - At or above RejectThreshold: return ErrTooManyParts immediately.
-func (b *AsyncBatcher) checkBackpressure(ctx context.Context) error {
+func (b *AsyncBatcher) checkBackpressure(ctx context.Context, events []*event.Event) error {
+	keys := b.pressureKeys(events)
+	if len(keys) == 0 {
+		return nil
+	}
+
 	b.pendingMu.Lock()
-	pendingFlushes := b.pendingFlushes
+	pendingByKey := make(map[batchKey]int, len(keys))
+	for key := range keys {
+		pendingByKey[key] = b.pendingByKey[key]
+	}
 	b.pendingMu.Unlock()
-	partCount := b.registry.CountByLevel(0) + pendingFlushes
+
+	var hottestKey batchKey
+	var partCount int
+	for key := range keys {
+		count := b.registry.CountByLevelPartition(key.index, key.partition, 0) + pendingByKey[key]
+		if count > partCount {
+			partCount = count
+			hottestKey = key
+		}
+	}
 
 	b.logger.Debug("backpressure check",
+		"index", hottestKey.index,
+		"partition", hottestKey.partition,
 		"l0_part_count", partCount,
 		"delay_threshold", b.cfg.DelayThreshold,
 		"reject_threshold", b.cfg.RejectThreshold,
@@ -325,9 +378,17 @@ func (b *AsyncBatcher) checkBackpressure(ctx context.Context) error {
 
 	if partCount >= b.cfg.RejectThreshold {
 		b.logger.Warn("backpressure: rejecting ingest",
+			"index", hottestKey.index,
+			"partition", hottestKey.partition,
 			"l0_part_count", partCount,
 			"reject_threshold", b.cfg.RejectThreshold,
 		)
+		b.reportPressure(PressureEvent{
+			Index:       hottestKey.index,
+			Partition:   hottestKey.partition,
+			L0PartCount: partCount,
+			Rejected:    true,
+		})
 
 		return ErrTooManyParts
 	}
@@ -340,11 +401,20 @@ func (b *AsyncBatcher) checkBackpressure(ctx context.Context) error {
 
 		if delayMs > 0 {
 			b.logger.Debug("backpressure: delaying ingest",
+				"index", hottestKey.index,
+				"partition", hottestKey.partition,
 				"l0_part_count", partCount,
 				"delay_ms", delayMs,
 			)
 			timer := time.NewTimer(time.Duration(delayMs) * time.Millisecond)
 			defer timer.Stop()
+			delay := time.Duration(delayMs) * time.Millisecond
+			b.reportPressure(PressureEvent{
+				Index:       hottestKey.index,
+				Partition:   hottestKey.partition,
+				L0PartCount: partCount,
+				Delay:       delay,
+			})
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -354,6 +424,33 @@ func (b *AsyncBatcher) checkBackpressure(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (b *AsyncBatcher) reportPressure(ev PressureEvent) {
+	if b.onPressure != nil {
+		b.onPressure(ev)
+	}
+}
+
+func (b *AsyncBatcher) pressureKeys(events []*event.Event) map[batchKey]struct{} {
+	keys := make(map[batchKey]struct{})
+	for _, ev := range events {
+		idx := ev.Index
+		if idx == "" {
+			idx = "main"
+		}
+		keys[batchKey{index: idx, partition: b.partitionKey(ev)}] = struct{}{}
+	}
+
+	return keys
+}
+
+func (b *AsyncBatcher) partitionKey(ev *event.Event) string {
+	if b.writer == nil || b.writer.layout == nil {
+		return ""
+	}
+
+	return b.writer.layout.PartitionKey(ev.Time)
 }
 
 // Flush flushes all buffered shards to disk. Called on shutdown.
@@ -368,24 +465,27 @@ func (b *AsyncBatcher) FlushContext(ctx context.Context) error {
 
 	b.mu.Lock()
 	var toFlush []flushTarget
-	for idx, shard := range b.shards {
+	for key, shard := range b.shards {
 		if len(shard.events) > 0 {
 			toFlush = append(toFlush, flushTarget{
-				index:  idx,
+				key:    key,
 				events: shard.events,
 			})
 		}
 	}
 	// Clear all shards.
-	b.shards = make(map[string]*batchShard)
+	b.shards = make(map[batchKey]*batchShard)
 	b.mu.Unlock()
 
 	var firstErr error
 	for _, ft := range toFlush {
-		if err := b.flushEvents(ctx, ft.index, ft.events); err != nil {
-			b.logger.Error("batcher flush failed", "index", ft.index, "error", err)
+		if err := b.flushEvents(ctx, ft.key, ft.events); err != nil {
+			b.logger.Error("batcher flush failed",
+				"index", ft.key.index,
+				"partition", ft.key.partition,
+				"error", err)
 			if firstErr == nil {
-				firstErr = fmt.Errorf("part.AsyncBatcher.Flush: %s: %w", ft.index, err)
+				firstErr = fmt.Errorf("part.AsyncBatcher.Flush: %s/%s: %w", ft.key.index, ft.key.partition, err)
 			}
 		}
 	}
@@ -462,6 +562,25 @@ func (b *AsyncBatcher) BufferedBytes() int64 {
 	return total
 }
 
+// SnapshotEvents returns a point-in-time copy of buffered events without
+// forcing them into durable parts.
+func (b *AsyncBatcher) SnapshotEvents() []*event.Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	var total int
+	for _, shard := range b.shards {
+		total += len(shard.events)
+	}
+
+	events := make([]*event.Event, 0, total)
+	for _, shard := range b.shards {
+		events = append(events, shard.events...)
+	}
+
+	return events
+}
+
 // idleFlushLoop runs in a background goroutine and flushes any shard that
 // has been idle for longer than MaxWait.
 func (b *AsyncBatcher) idleFlushLoop(ctx context.Context) {
@@ -498,13 +617,13 @@ func (b *AsyncBatcher) flushIdleShardsWithContext(ctx context.Context) {
 
 	b.mu.Lock()
 	var toFlush []flushTarget
-	for idx, shard := range b.shards {
+	for key, shard := range b.shards {
 		if len(shard.events) > 0 && now.Sub(shard.lastAdd) >= b.cfg.MaxWait {
 			toFlush = append(toFlush, flushTarget{
-				index:  idx,
+				key:    key,
 				events: shard.events,
 			})
-			b.shards[idx] = &batchShard{}
+			b.shards[key] = &batchShard{}
 		}
 	}
 	b.mu.Unlock()
@@ -516,15 +635,16 @@ func (b *AsyncBatcher) flushIdleShardsWithContext(ctx context.Context) {
 	}
 
 	for _, ft := range toFlush {
-		if err := b.flushEvents(ctx, ft.index, ft.events); err != nil {
-			b.logger.Error("idle flush failed", "index", ft.index,
+		if err := b.flushEvents(ctx, ft.key, ft.events); err != nil {
+			b.logger.Error("idle flush failed", "index", ft.key.index,
+				"partition", ft.key.partition,
 				"events", len(ft.events), "error", err)
 		}
 	}
 }
 
 // flushEvents sorts events by timestamp and writes them to a part file.
-func (b *AsyncBatcher) flushEvents(ctx context.Context, index string, events []*event.Event) error {
+func (b *AsyncBatcher) flushEvents(ctx context.Context, key batchKey, events []*event.Event) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -545,12 +665,13 @@ func (b *AsyncBatcher) flushEvents(ctx context.Context, index string, events []*
 	sortElapsed := time.Since(sortStart)
 
 	b.logger.Debug("flush started",
-		"index", index,
+		"index", key.index,
+		"partition", key.partition,
 		"events", len(events),
 		"sort_ms", sortElapsed.Milliseconds(),
 	)
 
-	meta, err := b.writer.Write(ctx, index, events, 0)
+	meta, err := b.writer.Write(ctx, key.index, events, 0)
 	if err != nil {
 		return err
 	}
@@ -565,7 +686,8 @@ func (b *AsyncBatcher) flushEvents(ctx context.Context, index string, events []*
 	}
 
 	b.logger.Info("part committed",
-		"index", index,
+		"index", key.index,
+		"partition", meta.Partition,
 		"events", meta.EventCount,
 		"size_bytes", meta.SizeBytes,
 		"id", meta.ID,

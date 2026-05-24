@@ -65,7 +65,8 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 	e.logger.Info("part registry loaded", "parts", e.partRegistry.Count())
 
 	// Init compactor.
-	e.compactor = compaction.NewCompactor(e.logger)
+	compactionCfg := compactionConfigFromStorageConfig(e.storageCfg)
+	e.compactor = compaction.NewCompactorWithConfig(compactionCfg, e.logger)
 
 	// Initialize compaction manifest store for crash recovery.
 	manifestStore, err := compaction.NewManifestStoreWithFormatVersion(e.dataDir, int(e.formatMajor))
@@ -145,11 +146,25 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 	if e.storageCfg.MaxColumnsPerPart > 0 {
 		writerOpts = append(writerOpts, part.WithMaxColumns(e.storageCfg.MaxColumnsPerPart))
 	}
-	e.partWriter = part.NewWriter(e.partLayout, compression, part.DefaultRowGroupSize, writerOpts...)
+	rowGroupSize := compactionCfg.RowGroupSize
+	if rowGroupSize <= 0 {
+		rowGroupSize = part.DefaultRowGroupSize
+	}
+	e.partWriter = part.NewWriter(e.partLayout, compression, rowGroupSize, writerOpts...)
 
 	batcherCfg := batcherConfigFromStorageConfig(e.storageCfg)
 
 	e.batcher = part.NewAsyncBatcher(e.partWriter, e.partRegistry, batcherCfg, e.logger)
+	e.batcher.SetOnPressure(func(ev part.PressureEvent) {
+		if ev.Rejected {
+			e.metrics.IngestRejects.Add(1)
+			return
+		}
+		if ev.Delay > 0 {
+			e.metrics.IngestDelays.Add(1)
+			e.metrics.IngestDelayNs.Add(ev.Delay.Nanoseconds())
+		}
+	})
 	e.batcher.SetOnCommit(func(meta *part.Meta) error {
 		// Open mmap'd reader and add to query-visible segments.
 		if loadErr := e.loadPartAsSegment(meta); loadErr != nil {

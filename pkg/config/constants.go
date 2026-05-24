@@ -270,7 +270,7 @@ const (
 	// YAML key: storage.compression. Default: lz4.
 	LYNXDB_STORAGE_COMPRESSION = "LYNXDB_STORAGE_COMPRESSION"
 	// LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT is the flush batcher after this idle period (0 = disabled).
-	// YAML key: storage.flush_idle_timeout. Default: 30s.
+	// YAML key: storage.flush_idle_timeout. Default: 200ms.
 	LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT = "LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT"
 	// LYNXDB_STORAGE_FLUSH_THRESHOLD is the batcher flush threshold.
 	// YAML key: storage.flush_threshold. Default: 512mb.

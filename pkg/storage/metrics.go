@@ -81,6 +81,9 @@ type Metrics struct {
 	IngestErrors      atomic.Int64 // total ingest errors
 	IngestDedupDrops  atomic.Int64 // events dropped by ingest dedup
 	IngestParseErrors atomic.Int64 // events with parse failures (non-fatal, continued)
+	IngestDelays      atomic.Int64 // ingest batches delayed by L0 pressure
+	IngestDelayNs     atomic.Int64 // cumulative ingest delay duration
+	IngestRejects     atomic.Int64 // ingest batches rejected by L0 pressure
 
 	// Query execution metrics (O2: query observability).
 	QueryTotal     atomic.Int64 // total queries submitted
@@ -212,6 +215,9 @@ type MetricsSnapshot struct {
 		Errors      int64 `json:"errors"`
 		DedupDrops  int64 `json:"dedup_drops"`
 		ParseErrors int64 `json:"parse_errors"`
+		Delays      int64 `json:"delays"`
+		DelayMs     int64 `json:"delay_ms"`
+		Rejects     int64 `json:"rejects"`
 	} `json:"ingest"`
 
 	Query struct {
@@ -329,6 +335,9 @@ func (m *Metrics) Snapshot() *MetricsSnapshot {
 	snap.Ingest.Errors = m.IngestErrors.Load()
 	snap.Ingest.DedupDrops = m.IngestDedupDrops.Load()
 	snap.Ingest.ParseErrors = m.IngestParseErrors.Load()
+	snap.Ingest.Delays = m.IngestDelays.Load()
+	snap.Ingest.DelayMs = m.IngestDelayNs.Load() / int64(time.Millisecond)
+	snap.Ingest.Rejects = m.IngestRejects.Load()
 
 	snap.Query.Total = m.QueryTotal.Load()
 	snap.Query.Errors = m.QueryErrors.Load()

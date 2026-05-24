@@ -267,11 +267,6 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		}
 	}
 
-	// Make buffered ingest visible before deriving the cache generation. A
-	// flush can bump ingestGen via onCommit, so keying first would store the
-	// first post-ingest query under a generation the next query will not use.
-	e.flushBatcherForQuery()
-
 	// Build cache key from query + time bounds + ingest generation.
 	// Including the generation counter ensures that queries after new ingest
 	// always miss the cache, even if the query and time range are identical (E3).
@@ -621,6 +616,43 @@ func (e *Engine) flushBatcherForQuery() {
 	}
 }
 
+func (e *Engine) bufferedEventsForQuery() []*event.Event {
+	if e.batcher == nil {
+		return nil
+	}
+
+	return e.batcher.SnapshotEvents()
+}
+
+func (e *Engine) bufferedEventsForHints(hints *spl2.QueryHints) []*event.Event {
+	events := e.bufferedEventsForQuery()
+	if len(events) == 0 || hints == nil {
+		return events
+	}
+
+	filtered := events[:0]
+	for _, ev := range events {
+		idx := ev.Index
+		if idx == "" {
+			idx = DefaultIndexName
+		}
+		if !matchesSourceScope(idx, hints) {
+			continue
+		}
+		if hints.TimeBounds != nil {
+			if !hints.TimeBounds.Earliest.IsZero() && ev.Time.Before(hints.TimeBounds.Earliest) {
+				continue
+			}
+			if !hints.TimeBounds.Latest.IsZero() && ev.Time.After(hints.TimeBounds.Latest) {
+				continue
+			}
+		}
+		filtered = append(filtered, ev)
+	}
+
+	return filtered
+}
+
 // queryAnnotations holds pre-extracted optimizer annotations from the AST.
 type queryAnnotations struct {
 	joinStrategy  string
@@ -710,12 +742,13 @@ func (e *Engine) runQueryPipeline(
 		return e.runDistributedPipeline(ctx, prog, hints, onProgress, scanStart)
 	}
 
-	if aggSpec != nil {
+	hasBufferedEvents := len(e.bufferedEventsForQuery()) > 0
+	if aggSpec != nil && !hasBufferedEvents {
 		return e.runPartialAggPipeline(ctx, prog, hints, aggSpec, onProgress, scanStart)
 	}
 
 	// Check for transform+partial-agg annotation (rex/eval/where + stats).
-	if prog.Main != nil {
+	if prog.Main != nil && !hasBufferedEvents {
 		if tAnn, ok := prog.Main.GetAnnotation("transformPartialAgg"); ok {
 			if tSpec, ok := tAnn.(*optimizer.TransformPartialAggAnnotation); ok {
 				return e.runTransformPartialAggPipeline(ctx, prog, hints, tSpec, onProgress, scanStart)
@@ -1026,8 +1059,7 @@ func (e *Engine) runStreamingPipeline(
 	// Warn when a single source doesn't exist in the registry, with fuzzy matching.
 	qr.warnings = append(qr.warnings, e.checkSourceWarnings(hints)...)
 
-	// Flush buffered events so they are visible to the query scan.
-	e.flushBatcherForQuery()
+	memEvents := e.bufferedEventsForQuery()
 
 	// Pin the current epoch to prevent retired segments from being munmap'd
 	// while the streaming pipeline reads from them. The pipeline reads
@@ -1056,13 +1088,10 @@ func (e *Engine) runStreamingPipeline(
 		segFilterHints = &hintsCopy
 	}
 
-	// No separate buffer to scan — all data is in segments (parts).
-	var memEvents []*event.Event
-
 	if onProgress != nil {
 		onProgress(&SearchProgress{
 			Phase:          PhaseFilteringSegments,
-			BufferedEvents: 0,
+			BufferedEvents: len(memEvents),
 		})
 	}
 
@@ -1257,13 +1286,11 @@ func (e *Engine) buildProgramPipeline(
 // countStarFromMetadata counts events using segment metadata and buffered event count,
 // avoiding reading any column data. Used when the optimizer detects countStarOnly.
 func (e *Engine) countStarFromMetadata(hints *spl2.QueryHints) int64 {
-	// Flush buffered events so they are visible to the metadata count.
-	e.flushBatcherForQuery()
-
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	var total int64
+	total += int64(len(e.bufferedEventsForHints(hints)))
 
 	// Sum segment event counts from metadata.
 	var ss storeStats

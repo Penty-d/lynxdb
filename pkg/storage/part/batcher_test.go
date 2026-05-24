@@ -27,11 +27,15 @@ func testBatcher(t *testing.T, cfg BatcherConfig) (*AsyncBatcher, *Registry, str
 
 func makeEvents(n int, index string) []*event.Event {
 	now := time.Now()
+	return makeEventsAt(n, index, now)
+}
+
+func makeEventsAt(n int, index string, start time.Time) []*event.Event {
 	events := make([]*event.Event, n)
 
 	for i := 0; i < n; i++ {
 		events[i] = &event.Event{
-			Time:   now.Add(time.Duration(i) * time.Millisecond),
+			Time:   start.Add(time.Duration(i) * time.Millisecond),
 			Raw:    "test event line for batcher test",
 			Source: "test",
 			Index:  index,
@@ -514,12 +518,14 @@ func TestAsyncBatcher_Backpressure_IgnoresCompactedParts(t *testing.T) {
 	defer batcher.Close()
 
 	batcher.Start(context.Background())
+	partition := batcher.writer.layout.PartitionKey(time.Now())
 
 	for i := 0; i < 10; i++ {
 		registry.Add(&Meta{
-			ID:    fmt.Sprintf("l1-part-%d", i),
-			Index: "main",
-			Level: 1,
+			ID:        fmt.Sprintf("l1-part-%d", i),
+			Index:     "main",
+			Partition: partition,
+			Level:     1,
 		})
 	}
 
@@ -541,12 +547,77 @@ func TestAsyncBatcher_Backpressure_CountsL0Parts(t *testing.T) {
 	defer batcher.Close()
 
 	batcher.Start(context.Background())
+	partition := batcher.writer.layout.PartitionKey(time.Now())
 
-	registry.Add(&Meta{ID: "l0-part-a", Index: "main", Level: 0})
-	registry.Add(&Meta{ID: "l0-part-b", Index: "main", Level: 0})
+	registry.Add(&Meta{ID: "l0-part-a", Index: "main", Partition: partition, Level: 0})
+	registry.Add(&Meta{ID: "l0-part-b", Index: "main", Partition: partition, Level: 0})
 
 	if err := batcher.Add(makeEvents(1, "main")); !errors.Is(err, ErrTooManyParts) {
 		t.Fatalf("Add with L0 pressure: got %v, want ErrTooManyParts", err)
+	}
+}
+
+func TestAsyncBatcher_Backpressure_IsPartitionScoped(t *testing.T) {
+	cfg := BatcherConfig{
+		MaxEvents:       1_000_000,
+		MaxBytes:        1 << 30,
+		MaxWait:         10 * time.Second,
+		DelayThreshold:  1,
+		RejectThreshold: 2,
+		MaxDelayMs:      10,
+	}
+	batcher, registry, _ := testBatcher(t, cfg)
+	defer batcher.Close()
+
+	batcher.Start(context.Background())
+
+	hotTime := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	coldTime := hotTime.Add(48 * time.Hour)
+	hotPartition := batcher.writer.layout.PartitionKey(hotTime)
+
+	registry.Add(&Meta{ID: "hot-l0-a", Index: "main", Partition: hotPartition, Level: 0})
+	registry.Add(&Meta{ID: "hot-l0-b", Index: "main", Partition: hotPartition, Level: 0})
+
+	if err := batcher.Add(makeEventsAt(1, "main", coldTime)); err != nil {
+		t.Fatalf("cold partition Add should not inherit hot partition pressure: %v", err)
+	}
+	if err := batcher.Add(makeEventsAt(1, "main", hotTime)); !errors.Is(err, ErrTooManyParts) {
+		t.Fatalf("hot partition Add: got %v, want ErrTooManyParts", err)
+	}
+}
+
+func TestAsyncBatcher_BackpressureObserver(t *testing.T) {
+	cfg := BatcherConfig{
+		MaxEvents:       1_000_000,
+		MaxBytes:        1 << 30,
+		MaxWait:         10 * time.Second,
+		DelayThreshold:  1,
+		RejectThreshold: 2,
+		MaxDelayMs:      10,
+	}
+	batcher, registry, _ := testBatcher(t, cfg)
+	defer batcher.Close()
+
+	var observed []PressureEvent
+	batcher.SetOnPressure(func(ev PressureEvent) {
+		observed = append(observed, ev)
+	})
+	batcher.Start(context.Background())
+	partition := batcher.writer.layout.PartitionKey(time.Now())
+	registry.Add(&Meta{ID: "l0-part-a", Index: "main", Partition: partition, Level: 0})
+	registry.Add(&Meta{ID: "l0-part-b", Index: "main", Partition: partition, Level: 0})
+
+	if err := batcher.Add(makeEvents(1, "main")); !errors.Is(err, ErrTooManyParts) {
+		t.Fatalf("Add with L0 pressure: got %v, want ErrTooManyParts", err)
+	}
+	if len(observed) != 1 {
+		t.Fatalf("observed pressure events: got %d, want 1", len(observed))
+	}
+	if !observed[0].Rejected {
+		t.Fatalf("observed event should be rejected")
+	}
+	if observed[0].Index != "main" || observed[0].Partition != partition {
+		t.Fatalf("observed key: got %s/%s, want main/%s", observed[0].Index, observed[0].Partition, partition)
 	}
 }
 

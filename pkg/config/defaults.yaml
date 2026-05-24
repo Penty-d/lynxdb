@@ -18,7 +18,7 @@
 #   compression: lz4                 # Block compression: "lz4" or "zstd"
 #   row_group_size: 65536            # Rows per row group in segments
 #   flush_threshold: 512mb           # Batcher flush threshold
-#   flush_idle_timeout: 30s          # Flush batcher after this idle period (0 = disabled)
+#   flush_idle_timeout: 200ms        # Flush batcher after this idle period (0 = disabled)
 #   max_columns_per_part: 256        # Max columns per written part
 #   partition_by: daily              # Time-based partition granularity (daily, hourly)
 #

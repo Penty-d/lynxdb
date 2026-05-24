@@ -12,6 +12,10 @@ type IntraL0 struct {
 	// Threshold is the minimum number of L0 segments to trigger intra-L0 merge.
 	// Default: 2 * L0CompactionThreshold = 8.
 	Threshold int
+
+	// BatchSize is the number of adjacent L0 segments merged per output.
+	// Default: L0CompactionThreshold.
+	BatchSize int
 }
 
 // Plan returns merge plans for L0 segments when the count exceeds the threshold.
@@ -40,7 +44,10 @@ func (il *IntraL0) Plan(segments []*SegmentInfo) []*Plan {
 	})
 
 	// Group into batches of L0CompactionThreshold (4) adjacent segments.
-	batchSize := L0CompactionThreshold
+	batchSize := il.BatchSize
+	if batchSize < 2 {
+		batchSize = L0CompactionThreshold
+	}
 	var plans []*Plan
 	for i := 0; i+batchSize <= len(l0); i += batchSize {
 		batch := l0[i : i+batchSize]

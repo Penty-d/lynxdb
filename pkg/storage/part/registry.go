@@ -154,6 +154,22 @@ func (r *Registry) CountByLevel(level int) int {
 	return len(r.byLevel[level])
 }
 
+// CountByLevelPartition returns the number of registered parts at level for
+// a specific (index, partition) pair.
+func (r *Registry) CountByLevelPartition(index, partition string, level int) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var count int
+	for _, meta := range r.byLevel[level] {
+		if meta.Index == index && meta.Partition == partition {
+			count++
+		}
+	}
+
+	return count
+}
+
 // Indexes returns all index names that have parts.
 func (r *Registry) Indexes() []string {
 	r.mu.RLock()

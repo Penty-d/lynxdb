@@ -895,6 +895,9 @@ func (s *SegmentStreamIterator) matchesStreamSourceScope(segIndex string) bool {
 
 	// Single IndexName exact match.
 	if h.IndexName != "" {
+		if h.IndexName == "*" {
+			return true
+		}
 		return segIndex == h.IndexName
 	}
 

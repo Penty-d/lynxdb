@@ -384,8 +384,7 @@ func (e *Engine) recordPruningMetrics(ss *storeStats) {
 func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), traceSegments ...bool) (map[string][]*event.Event, storeStats, error) {
 	trace := len(traceSegments) > 0 && traceSegments[0]
 
-	// Flush buffered events so they are visible to the query scan.
-	e.flushBatcherForQuery()
+	memEvents := e.bufferedEventsForHints(hints)
 
 	// Pin the current epoch to prevent retired segments from being munmap'd
 	// while workers read from them. Unpin after all workers finish.
@@ -437,12 +436,19 @@ func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, on
 	store := make(map[string][]*event.Event)
 	var ss storeStats
 
-	// No separate buffer to scan — all data is in segments (parts).
+	for _, ev := range memEvents {
+		idx := ev.Index
+		if idx == "" {
+			idx = DefaultIndexName
+		}
+		store[idx] = append(store[idx], ev)
+	}
+	ss.BufferedEvents = len(memEvents)
 
 	if onProgress != nil {
 		onProgress(&SearchProgress{
 			Phase:          PhaseFilteringSegments,
-			BufferedEvents: 0,
+			BufferedEvents: ss.BufferedEvents,
 		})
 	}
 
@@ -892,6 +898,9 @@ func matchesSourceScope(segIndex string, hints *spl2.QueryHints) bool {
 
 	// Fallback: single IndexName exact match (existing behavior).
 	if hints.IndexName != "" {
+		if hints.IndexName == "*" {
+			return true
+		}
 		return segIndex == hints.IndexName
 	}
 
@@ -1103,9 +1112,6 @@ func (e *Engine) buildPartialAggStore(
 	spec *enginepipeline.PartialAggSpec,
 	onProgress func(*SearchProgress),
 ) ([][]*enginepipeline.PartialAggGroup, storeStats) {
-	// Flush buffered events so they are visible to the query scan.
-	e.flushBatcherForQuery()
-
 	// Pin epoch to prevent retired segments from being munmap'd during scan.
 	ep := e.pinEpoch()
 	segs := make([]*segmentHandle, len(ep.segments))
@@ -1274,9 +1280,6 @@ func (e *Engine) buildTransformPartialAggStore(
 	tSpec *optimizer.TransformPartialAggAnnotation,
 	onProgress func(*SearchProgress),
 ) ([][]*enginepipeline.PartialAggGroup, storeStats) {
-	// Flush buffered events so they are visible to the query scan.
-	e.flushBatcherForQuery()
-
 	// Pin epoch to prevent retired segments from being munmap'd during scan.
 	ep := e.pinEpoch()
 	segs := make([]*segmentHandle, len(ep.segments))
@@ -1652,9 +1655,6 @@ func readSegmentColumnar(
 // which reads row groups on-demand and allows operators to spill to disk.
 func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), traceSegments ...bool) (map[string][]*enginepipeline.Batch, storeStats, error) {
 	trace := len(traceSegments) > 0 && traceSegments[0]
-
-	// Flush buffered events so they are visible to the query scan.
-	e.flushBatcherForQuery()
 
 	// Pin epoch to prevent retired segments from being munmap'd during scan.
 	ep := e.pinEpoch()
