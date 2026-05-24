@@ -288,5 +288,5 @@ In distributed mode, Phase 1 runs on shard nodes and Phase 2 runs on the coordin
 - [Architecture Overview](/docs/architecture/overview) -- system-level view
 - [Segment Format](/docs/architecture/segment-format) -- how the scan operator reads `.lsg` files
 - [Indexing](/docs/architecture/indexing) -- bloom filters and inverted index integration
-- [Lynx Flow Reference](/docs/lynx-flow/overview) -- the query language that the parser implements
+- [Lynx Flow Reference](/docs/lynx-flow/reference) -- the query language that the parser implements
 - [Design Decisions](/docs/architecture/design-decisions) -- why Volcano, why a bytecode VM
