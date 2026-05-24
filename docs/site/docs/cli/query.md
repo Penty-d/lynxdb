@@ -35,10 +35,10 @@ lynxdb query [SPL2 query] [flags]
 | `--no-lint` | | `false` | Disable advisory query lints |
 | `--no-suggestions` | | `false` | Disable advisory query suggestions |
 | `--show-rewritten` | | `false` | Show normalized query rewrites |
-| `--queries-file` | | | Run queries from a file |
+| `--queries-file` | | | Run one SPL2 query per non-empty line from a file, or `-` for stdin |
 | `--param` | `-D` | | Set query parameter (`--param name=value`) |
 
-The query argument is required. `FROM main` is automatically prepended if the query starts with `|` or a command name.
+The query argument is required unless `--queries-file` is set. `FROM main` is automatically prepended if the query starts with `|` or a command name.
 
 `--analyze` accepts an optional value; bare `--analyze` defaults to `basic`.
 
@@ -124,6 +124,20 @@ lynxdb query 'level=error | stats count by source' --explain
 lynxdb query 'level=error | stats count' --timeout 30s
 ```
 
+### Query parameters
+
+Use `--param` to substitute `${name}` placeholders before execution:
+
+```bash
+lynxdb query --file events.ndjson '| where level=${level} | stats count' -D level=error --format ndjson --no-stats
+```
+
+Expected output:
+
+```json
+{"count":2}
+```
+
 ### Output control
 
 ```bash
@@ -156,6 +170,9 @@ lynxdb query 'FROM main | where status>=500' --since 1h \
 
 # Export as CSV
 lynxdb query 'FROM main | stats count by host' --format csv > report.csv
+
+# Run one query per non-empty line
+lynxdb query --queries-file rules.spl2 --since 24h --format ndjson
 ```
 
 ## Console Output
