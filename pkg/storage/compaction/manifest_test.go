@@ -1,8 +1,10 @@
 package compaction
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -243,5 +245,63 @@ func TestManifestStore_RemoveNonexistent(t *testing.T) {
 	// Removing a manifest that does not exist should not return an error.
 	if err := store.Remove("does-not-exist"); err != nil {
 		t.Errorf("Remove nonexistent: unexpected error: %v", err)
+	}
+}
+
+func TestManifestStore_ConcurrentCompleteTrimsHistory(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewManifestStore(dir)
+	if err != nil {
+		t.Fatalf("NewManifestStore: %v", err)
+	}
+
+	const total = maxHistoryEntries + 40
+	for i := 0; i < total; i++ {
+		m := &Manifest{
+			ID:          fmt.Sprintf("compact-concurrent-%04d", i),
+			Index:       "main",
+			InputIDs:    []string{"seg"},
+			OutputLevel: L1,
+			StartedAt:   time.Now(),
+		}
+		if err := store.Write(m); err != nil {
+			t.Fatalf("Write[%d]: %v", i, err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, total)
+	for i := 0; i < total; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m := &Manifest{
+				ID:              fmt.Sprintf("compact-concurrent-%04d", i),
+				Index:           "main",
+				InputIDs:        []string{"seg"},
+				OutputLevel:     L1,
+				StartedAt:       time.Now(),
+				OutputSegmentID: "out",
+				CompletedAt:     time.Now(),
+			}
+			errs <- store.Complete(m)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Complete: %v", err)
+		}
+	}
+
+	entries, err := os.ReadDir(store.historyDir)
+	if err != nil {
+		t.Fatalf("ReadDir(history): %v", err)
+	}
+	if len(entries) > maxHistoryEntries {
+		t.Fatalf("history entries: got %d, want <= %d", len(entries), maxHistoryEntries)
 	}
 }

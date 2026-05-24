@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -33,6 +34,7 @@ type ManifestStore struct {
 	pendingDir    string // path to compaction/pending/ directory
 	historyDir    string // path to compaction/history/ directory
 	formatVersion int
+	trimMu        sync.Mutex
 }
 
 // NewManifestStore creates a manifest store at the given directory.
@@ -199,6 +201,9 @@ func (ms *ManifestStore) loadDir(dir string) ([]*Manifest, error) {
 
 // trimHistory removes the oldest history entries if the count exceeds maxHistoryEntries.
 func (ms *ManifestStore) trimHistory() {
+	ms.trimMu.Lock()
+	defer ms.trimMu.Unlock()
+
 	entries, err := os.ReadDir(ms.historyDir)
 	if err != nil {
 		slog.Warn("manifest: failed to read history directory", "dir", ms.historyDir, "error", err)
@@ -217,7 +222,7 @@ func (ms *ManifestStore) trimHistory() {
 	// Remove oldest entries beyond the retention limit.
 	excess := len(entries) - maxHistoryEntries
 	for i := 0; i < excess; i++ {
-		if err := os.Remove(filepath.Join(ms.historyDir, entries[i].Name())); err != nil {
+		if err := os.Remove(filepath.Join(ms.historyDir, entries[i].Name())); err != nil && !os.IsNotExist(err) {
 			slog.Warn("manifest: failed to remove old history entry",
 				"file", entries[i].Name(), "error", err)
 		}
