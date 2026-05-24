@@ -110,7 +110,7 @@ Each operator implements the `Operator` interface with a `Next()` method that re
 
 ### `pkg/optimizer/` -- Query Optimizer
 
-The 23-rule query optimizer. Transforms the AST to reduce work at execution time.
+The 40-rule query optimizer. Transforms the AST to reduce work at execution time.
 
 Key responsibilities:
 - Expression simplification (constant folding, boolean algebra).

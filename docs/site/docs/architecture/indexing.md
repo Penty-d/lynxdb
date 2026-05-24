@@ -164,7 +164,7 @@ The overhead is well worth it: indexed full-text search can be 100-1000x faster 
 
 ## How the Optimizer Uses Indexes
 
-The 23-rule query optimizer integrates index usage across multiple rules:
+The query optimizer integrates index usage across multiple rules:
 
 ### 1. Time Range Pruning
 
