@@ -70,6 +70,8 @@ const sidebars: SidebarsConfig = {
             'lynx-flow/commands/timechart',
             'lynx-flow/commands/top',
             'lynx-flow/commands/rare',
+            'lynx-flow/commands/outliers',
+            'lynx-flow/commands/patterns',
             'lynx-flow/commands/streamstats',
             'lynx-flow/commands/eventstats',
             'lynx-flow/commands/join',
