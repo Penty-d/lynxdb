@@ -80,7 +80,7 @@ echo '192.168.1.1 - - [14/Feb/2026:14:23:01] "GET /api HTTP/1.1" 200' | \
     --data-binary @-
 ```
 
-Use `/api/v1/es` for Elasticsearch-style NDJSON shippers. `/api/v1/ingest/bulk` is an alias to the same handler, and `/api/v1/ingest/hec` is for Splunk HEC senders.
+Use `/api/v1/es/_bulk` for Elasticsearch-style NDJSON shippers. `/api/v1/ingest/bulk` is an alias to the same handler, and `/api/v1/ingest/hec` is for Splunk HEC senders.
 
 ## Query Data
 
@@ -200,17 +200,16 @@ Create a config file for persistent settings:
 lynxdb config init
 ```
 
-This creates `~/.config/lynxdb/config.yaml`:
+This creates `~/.config/lynxdb/config.yaml` with all values commented out. Uncomment and edit the lines you want to change. An example configuration:
 
 ```yaml
 listen: "localhost:3100"
-data_dir: "/var/lib/lynxdb"
+data_dir: "~/.local/share/lynxdb"
 retention: "7d"
 log_level: "info"
 
 storage:
   compression: "lz4"
-  flush_threshold: "512mb"
 ```
 
 See the full [Configuration Reference](/docs/configuration/overview) for all options.

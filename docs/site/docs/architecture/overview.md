@@ -51,12 +51,12 @@ LynxDB is a columnar log analytics database written from scratch in Go. Every co
 │                                                           │
 │  ┌─────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐ │
 │  │  SPL2   │→ │ Optimizer │→ │ Pipeline │→ │  Output  │ │
-│  │ Parser  │  │ (23 rules)│  │ (Volcano │  │  (JSON/  │ │
+│  │ Parser  │  │ (40 rules)│  │ (Volcano │  │  (JSON/  │ │
 │  │         │  │           │  │ iterator)│  │ table/csv│ │
 │  └─────────┘  └───────────┘  └──────────┘  └──────────┘ │
 │                                    │                      │
 │  ┌─────────────┐  ┌───────────────┤  ┌─────────────────┐ │
-│  │ Bytecode VM │  │  18 Pipeline  │  │  Segment Cache  │ │
+│  │ Bytecode VM │  │  Pipeline     │  │  Segment Cache  │ │
 │  │ (60+ ops,   │  │  Operators    │  │  (TTL + LRU,    │ │
 │  │  0 allocs)  │  │               │  │   persistent)   │ │
 │  └─────────────┘  └───────────────┘  └─────────────────┘ │
@@ -152,7 +152,7 @@ The query engine transforms SPL2 text into a streaming execution pipeline:
 flowchart LR
     A["SPL2 Text"] --> B["Parser"]
     B --> C["AST"]
-    C --> D["Optimizer<br/>(23 rules, 6 phases)"]
+    C --> D["Optimizer<br/>(40 rules, 6 phases)"]
     D --> E["Execution Plan"]
     E --> F["Volcano Pipeline<br/>(18 operators)"]
     F --> G["Results"]
@@ -161,7 +161,7 @@ flowchart LR
 Key components:
 
 - **Parser**: Recursive descent parser for full SPL2. Error recovery with syntax suggestions and Splunk SPL1 compatibility hints.
-- **Optimizer**: 23 rules in 6 phases -- expression simplification, predicate/projection pushdown, scan optimization, aggregation optimization, expression optimization, join optimization.
+- **Optimizer**: 40 rules in 6 phases -- expression simplification, predicate/projection pushdown, scan optimization, aggregation optimization, expression optimization, join optimization.
 - **Pipeline**: Volcano iterator model with 18 streaming operators. Pull-based with 1024-row batches. `head 10` on 100M events reads one batch, not the entire dataset.
 - **Bytecode VM**: Stack-based VM with 60+ opcodes for evaluating WHERE, EVAL, and STATS expressions. Fixed 256-slot stack. 22ns/op for a simple predicate (`status >= 500`). Zero heap allocations on the hot path.
 - **Cache**: Filesystem-based segment query cache. Key = `(segment_id, CRC32, query_hash, time_range)`. TTL + LRU eviction. Persistent across restarts.
@@ -212,7 +212,7 @@ HTTP POST /api/v1/ingest, /api/v1/ingest/raw, /api/v1/es/_bulk, or /api/v1/otlp/
 ```
 SPL2 query text
   → Parse to AST
-  → Optimize (23 rules, 6 phases)
+  → Optimize (40 rules, 6 phases)
   → Build Volcano pipeline
   → Scan operator:
     → Check segment time ranges (prune by time)

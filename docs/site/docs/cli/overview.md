@@ -71,11 +71,16 @@ Available on all commands:
 | `--server` | | `http://localhost:3100` | `LYNXDB_SERVER` | LynxDB server address |
 | `--token` | | | `LYNXDB_TOKEN` | API key for authentication |
 | `--profile` | `-p` | | `LYNXDB_PROFILE` | Connection profile name |
-| `--format` | `-F` | `auto` | | Output format: auto, json, ndjson, table, csv, tsv, raw |
+| `--format` | `-F` | `auto` | | Output format: auto, json, ndjson, table, box, ascii, markdown, vertical, line, G, csv, tsv, raw |
 | `--quiet` | `-q` | `false` | | Suppress non-data output |
 | `--verbose` | `-v` | `false` | | Show extra detail |
 | `--no-stats` | | `false` | | Suppress query statistics |
 | `--no-color` | | `false` | | Disable colored output |
+| `--theme` | | `auto` | | Human output theme: auto, dark, light, plain |
+| `--compact` | | `false` | | Use compact human output |
+| `--max-rows` | | `0` | | Maximum rows to show in human table output (`0` = all) |
+| `--max-width` | | `0` | | Maximum width for human table output (`0` = terminal width) |
+| `--null-value` | | | | Placeholder for null or empty values in human table output |
 | `--debug` | | `false` | | Enable debug logging to stderr |
 | `--tls-skip-verify` | | `false` | `LYNXDB_TLS_SKIP_VERIFY` | Skip TLS certificate verification |
 
@@ -92,9 +97,14 @@ lynxdb query 'level=error | stats count by source' --format csv
 
 # Human-readable table output
 lynxdb query 'level=error | stats count by source' --format table
+
+# Vertical output for wide rows
+lynxdb query 'level=error | head 2' --format vertical
 ```
 
-`NO_COLOR` disables colored output when set.
+`NO_COLOR` disables colored output when set. `--format line` and `--format G`
+are aliases for vertical output; the query suffix `\G` also switches auto
+format to vertical output.
 
 ## Exit Codes
 
@@ -120,7 +130,7 @@ Some commands have dedicated reference pages in this documentation set. Others a
 | Category | Commands |
 |----------|----------|
 | Querying and ingest | [`query`](/docs/cli/query), [`ingest`](/docs/cli/ingest), `import`, [`tail`](/docs/cli/tail), `fields`, `count`, `sample`, `watch`, `diff`, `last`, `explain`, `examples` |
-| Server and operations | [`server`](/docs/cli/server), `status`, `health`, `indexes`, `cache`, `jobs`, `doctor` |
+| Server and operations | [`server`](/docs/cli/server), `status`, `health`, `indexes`, `cache`, `jobs`, `doctor`, `shippers` |
 | Saved objects | [`mv`](/docs/cli/mv), `saved`, `save`, `run` |
 | Authentication and connection | `login`, `logout`, `auth`, [`config`](/docs/cli/config-cmd) |
 | Interactive and UI | [`shell`](/docs/cli/shell), `ui`, `open`, `share`, `top` |

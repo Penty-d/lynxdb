@@ -1,7 +1,7 @@
 ---
 sidebar_position: 4
 title: Query Engine
-description: LynxDB query engine internals -- recursive descent SPL2 parser, rule-based optimizer, Volcano iterator pipeline with 18 operators, and zero-allocation bytecode VM.
+description: LynxDB query engine internals -- recursive descent SPL2 parser, rule-based optimizer with 40 rules in 6 phases, Volcano iterator pipeline, and zero-allocation bytecode VM.
 ---
 
 # Query Engine
@@ -153,7 +153,7 @@ Each `Next()` call returns a batch of up to 1024 rows. This design has critical 
 - **Bounded memory**: Each operator holds at most one batch in memory. A pipeline scanning 100 GB of segments uses a few MB of memory.
 - **Composable**: Operators are independent and composable. Adding a new command means implementing one `Next()` method.
 
-### Pipeline Operators (18)
+### Pipeline Operators
 
 | Operator | SPL2 Command | Description |
 |----------|-------------|-------------|
@@ -175,6 +175,8 @@ Each `Next()` call returns a batch of up to 1024 rows. This design has critical 
 | **XYSeries** | `XYSERIES` | Pivots data into an X-Y series format. |
 | **Transaction** | `TRANSACTION` | Groups events into transactions by correlation fields. |
 | **Tail** | Live tail | Streams events as they arrive (SSE). |
+| **Sort (external)** | `SORT` (large sets) | External merge sort with spill-to-disk for result sets exceeding memory. |
+| **Unpack** | `UNPACK_*` | Parses structured log formats (JSON, syslog, CLF, nginx, etc.) into fields. |
 
 ## Bytecode VM
 
@@ -288,5 +290,5 @@ In distributed mode, Phase 1 runs on shard nodes and Phase 2 runs on the coordin
 - [Architecture Overview](/docs/architecture/overview) -- system-level view
 - [Segment Format](/docs/architecture/segment-format) -- how the scan operator reads `.lsg` files
 - [Indexing](/docs/architecture/indexing) -- bloom filters and inverted index integration
-- [Lynx Flow Reference](/docs/lynx-flow/overview) -- the query language that the parser implements
+- [Lynx Flow Reference](/docs/lynx-flow/reference) -- the query language that the parser implements
 - [Design Decisions](/docs/architecture/design-decisions) -- why Volcano, why a bytecode VM

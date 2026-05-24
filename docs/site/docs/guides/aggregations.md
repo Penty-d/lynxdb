@@ -39,6 +39,14 @@ Add `by <field>` to break results down by category:
 lynxdb query 'level=error | stats count by source'
 ```
 
+Result:
+
+| source | count |
+|--------|-------|
+| nginx | 847 |
+| api-gateway | 523 |
+| postgres | 211 |
+
 ### Group by multiple fields
 
 ```bash
@@ -65,6 +73,14 @@ LynxDB supports 15+ aggregation functions. Here are the most common ones.
 lynxdb query '_source=nginx | stats count, sum(bytes), avg(duration_ms) by uri'
 ```
 
+Result:
+
+| uri | count | sum(bytes) | avg(duration_ms) |
+|-----|-------|-----------|-----------------|
+| /api/v2/users | 1423 | 4892100 | 45.2 |
+| /api/v1/health | 891 | 124500 | 12.1 |
+| /api/v1/login | 456 | 342000 | 89.7 |
+
 ### Min and max
 
 ```bash
@@ -87,7 +103,7 @@ Compute latency percentiles:
 lynxdb query '_source=nginx | stats avg(duration_ms) AS avg_lat, perc50(duration_ms) AS p50, perc95(duration_ms) AS p95, perc99(duration_ms) AS p99 by uri'
 ```
 
-Available percentile functions: `perc50`, `perc75`, `perc90`, `perc95`, `perc99`.
+Available percentile functions: `perc50`, `perc75`, `perc90`, `perc95`, `perc99`. Short aliases `p50`, `p75`, `p90`, `p95`, `p99` are also accepted.
 
 ### Standard deviation
 

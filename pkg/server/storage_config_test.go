@@ -6,6 +6,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/storage/compaction"
+	"github.com/lynxbase/lynxdb/pkg/storage/part"
 )
 
 func TestCompactionConfigFromStorageConfigUsesConfiguredThresholds(t *testing.T) {
@@ -63,7 +64,7 @@ func TestBatcherConfigFromStorageConfigUsesConfiguredFlushSettings(t *testing.T)
 	}
 }
 
-func TestBatcherConfigFromStorageConfigUsesCompactionPressureThreshold(t *testing.T) {
+func TestBatcherConfigFromStorageConfigUsesCompactionPressureDelayThreshold(t *testing.T) {
 	storageCfg := config.DefaultConfig().Storage
 	storageCfg.L0Threshold = 42
 
@@ -71,8 +72,21 @@ func TestBatcherConfigFromStorageConfigUsesCompactionPressureThreshold(t *testin
 	if batcherCfg.DelayThreshold != 42 {
 		t.Fatalf("DelayThreshold: got %d, want 42", batcherCfg.DelayThreshold)
 	}
-	if batcherCfg.RejectThreshold != 84 {
-		t.Fatalf("RejectThreshold: got %d, want 84", batcherCfg.RejectThreshold)
+	if batcherCfg.RejectThreshold != part.DefaultRejectThreshold {
+		t.Fatalf("RejectThreshold: got %d, want %d", batcherCfg.RejectThreshold, part.DefaultRejectThreshold)
+	}
+}
+
+func TestBatcherConfigFromStorageConfigKeepsRejectAboveCompactionPressure(t *testing.T) {
+	storageCfg := config.DefaultConfig().Storage
+	storageCfg.L0Threshold = part.DefaultRejectThreshold
+
+	batcherCfg := batcherConfigFromStorageConfig(storageCfg)
+	if batcherCfg.DelayThreshold != part.DefaultRejectThreshold {
+		t.Fatalf("DelayThreshold: got %d, want %d", batcherCfg.DelayThreshold, part.DefaultRejectThreshold)
+	}
+	if batcherCfg.RejectThreshold != part.DefaultRejectThreshold*2 {
+		t.Fatalf("RejectThreshold: got %d, want %d", batcherCfg.RejectThreshold, part.DefaultRejectThreshold*2)
 	}
 }
 

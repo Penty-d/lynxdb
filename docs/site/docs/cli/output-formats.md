@@ -1,7 +1,7 @@
 ---
 sidebar_position: 12
 title: Output Formats
-description: LynxDB output format options -- json, ndjson, table, csv, tsv, raw, and auto-detection behavior.
+description: LynxDB output format options -- json, ndjson, table, box, ascii, markdown, vertical, csv, tsv, raw, and auto-detection behavior.
 ---
 
 # Output Formats
@@ -18,9 +18,15 @@ lynxdb query 'level=error | stats count by source' -F csv
 | Format | Description | Auto-selected when |
 |--------|-------------|--------------------|
 | `auto` | Auto-detect based on context (default) | Always the default |
-| `json` | Pretty-printed JSON (one object per line) | Pipe (non-TTY) output |
-| `ndjson` | Newline-delimited JSON (compact, one object per line) | Never auto-selected |
-| `table` | Aligned columns with headers and separator | Never auto-selected |
+| `json` | Newline-delimited JSON, one object per line | Pipe (non-TTY) output |
+| `ndjson` | Alias for `json` | Never auto-selected |
+| `table` | Box table with headers | TTY output with multiple columns |
+| `box` | Box table with headers | Never auto-selected |
+| `ascii` | ASCII table for terminals without box drawing | Never auto-selected |
+| `markdown` | Markdown table | Never auto-selected |
+| `vertical` | One record per block, one field per line | Never auto-selected |
+| `line` | Alias for `vertical` | Never auto-selected |
+| `G` | Alias for `vertical` | Never auto-selected |
 | `csv` | RFC 4180 CSV with header row | Never auto-selected |
 | `tsv` | Tab-separated values with header row | Never auto-selected |
 | `raw` | `_raw` field value per line, or tab-separated k=v | Never auto-selected |
@@ -32,29 +38,23 @@ The default `--format auto` adapts based on context:
 | Context | Behavior |
 |---------|----------|
 | TTY + single scalar result | Plain value (just the number or string) |
-| TTY + multiple results | Colorized JSON with numbered results (`#1`, `#2`, ...) |
+| TTY + multiple results | Human table |
 | Non-TTY (pipe) | `json` (one JSON object per line) |
 
 ## Examples by Format
 
-### json
+### json and ndjson
 
 ```bash
 lynxdb query 'level=error | stats count by source' --format json
 ```
 
 ```json
-{
-  "source": "nginx",
-  "count": 340
-}
-{
-  "source": "api-gateway",
-  "count": 120
-}
+{"source":"nginx","count":340}
+{"source":"api-gateway","count":120}
 ```
 
-### ndjson
+`ndjson` uses the same byte format:
 
 ```bash
 lynxdb query 'level=error | stats count by source' --format ndjson
@@ -72,10 +72,46 @@ lynxdb query 'level=error | stats count by source' --format table
 ```
 
 ```
-source          count
---------------  -----
-nginx             340
-api-gateway       120
+┌─────────────┬───────┐
+│ source      │ count │
+├─────────────┼───────┤
+│ nginx       │   340 │
+│ api-gateway │   120 │
+└─────────────┴───────┘
+(2 rows)
+```
+
+Use `--format ascii` when box-drawing characters are not desired:
+
+```bash
+lynxdb query 'level=error | stats count by source' --format ascii
+```
+
+Use `--format markdown` for README or issue comments:
+
+```bash
+lynxdb query 'level=error | stats count by source' --format markdown
+```
+
+### vertical
+
+```bash
+lynxdb query 'level=error | head 1' --format vertical
+```
+
+```text
+  record 1
+    _time  2026-01-15T00:00:00Z
+   source  nginx
+    level  error
+  message  upstream timeout
+```
+
+The query suffix `\G` is equivalent to `--format vertical` when `--format` is
+still `auto`:
+
+```bash
+lynxdb query 'level=error | head 1 \G'
 ```
 
 ### csv
@@ -125,6 +161,19 @@ lynxdb query 'level=error | stats count' --no-color
 # Environment variable (any non-empty value)
 NO_COLOR=1 lynxdb query 'level=error | stats count'
 ```
+
+## Human Table Controls
+
+These global flags apply to `table`, `box`, `ascii`, `markdown`, `vertical`,
+`line`, `G`, and TTY `auto` output:
+
+| Flag | Description |
+|------|-------------|
+| `--compact` | Reduce table spacing |
+| `--theme auto|dark|light|plain` | Select the human output theme |
+| `--max-rows <n>` | Show at most `n` rows in human output |
+| `--max-width <n>` | Wrap tables to `n` columns (`0` = terminal width) |
+| `--null-value <text>` | Placeholder for null or empty values |
 
 ## Piping and Scripting
 

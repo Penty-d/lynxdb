@@ -154,6 +154,14 @@ lynxdb query '| where isnull(response_code)'
 lynxdb query '_source=nginx | stats count by uri | where count > 100'
 ```
 
+Result:
+
+| uri | count |
+|-----|-------|
+| /api/v2/users | 1423 |
+| /api/v1/health | 891 |
+| /api/v1/login | 456 |
+
 ---
 
 ## The FROM command
@@ -202,6 +210,13 @@ Use [`HEAD`](/docs/lynx-flow/commands/head) to return only the first N results:
 lynxdb query '_source=nginx status>=500 | head 10'
 ```
 
+Result:
+
+| _time | status | uri | duration_ms |
+|-------|--------|-----|-------------|
+| 2026-01-15T14:23:01Z | 502 | /api/v2/users | 3421 |
+| 2026-01-15T14:22:58Z | 500 | /api/v1/health | 1205 |
+
 Use [`TAIL`](/docs/lynx-flow/commands/tail) for the last N:
 
 ```bash
@@ -223,8 +238,15 @@ lynxdb query 'level=error | dedup host'
 ### TABLE -- pick specific columns
 
 ```bash
-lynxdb query 'level=error | table _timestamp, source, message'
+lynxdb query 'level=error | table _time, source, message'
 ```
+
+Result:
+
+| _time | source | message |
+|-------|--------|---------|
+| 2026-01-15T14:23:01Z | nginx | upstream timed out |
+| 2026-01-15T14:22:55Z | api-gw | connection refused |
 
 ### FIELDS -- include or exclude
 

@@ -6,11 +6,23 @@ description: Create, manage, pause, and drop materialized views with the LynxDB 
 
 # mv (Materialized Views)
 
-Manage materialized views -- precomputed aggregations that accelerate repeated queries by 100-400x.
+Manage materialized views -- precomputed aggregations that accelerate repeated queries.
 
 ```
 lynxdb mv <subcommand>
 ```
+
+## Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `create <name> <query>` | Create a materialized view |
+| `list` | List materialized views |
+| `status <name>` | Show view status and backfill progress |
+| `backfill <name>` | Manually trigger a backfill |
+| `pause <name>` | Pause a view pipeline |
+| `resume <name>` | Resume a paused view pipeline |
+| `drop <name>` | Drop a materialized view |
 
 ## mv create
 
@@ -39,7 +51,7 @@ lynxdb mv create daily_summary \
 
 # Time-bucketed view for repeated aggregations
 lynxdb mv create errors_5m \
-  'FROM main | where level="ERROR" | stats count, avg(duration) by source, time_bucket(timestamp, "5m") AS bucket' \
+  'FROM main | where level="ERROR" | stats count, avg(duration) by source, time_bucket(_time, "5m") AS bucket' \
   --retention 90d
 
 # Cascading view (build on top of another view)
@@ -147,6 +159,20 @@ lynxdb mv resume <name>
 
 ```bash
 lynxdb mv resume errors_5m
+```
+
+---
+
+## mv backfill
+
+Manually trigger a backfill for an existing materialized view.
+
+```
+lynxdb mv backfill <name>
+```
+
+```bash
+lynxdb mv backfill errors_5m
 ```
 
 ## How Acceleration Works

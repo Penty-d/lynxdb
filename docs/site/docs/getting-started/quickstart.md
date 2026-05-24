@@ -52,7 +52,54 @@ lynxdb version
 
 ## Option 1: Query Local Files (No Server)
 
-The fastest way to try LynxDB -- query any log file without starting a server:
+The fastest way to try LynxDB is local file mode. It starts no server and writes
+nothing outside the process.
+
+Create a small NDJSON file:
+
+```bash
+cat > events.ndjson <<'EOF'
+{"_time":"2026-01-15T00:00:00Z","level":"error","status":500,"duration_ms":120,"message":"failed"}
+{"_time":"2026-01-15T00:01:00Z","level":"info","status":200,"duration_ms":15,"message":"ok"}
+{"_time":"2026-01-15T00:02:00Z","level":"error","status":503,"duration_ms":250,"message":"timeout"}
+EOF
+```
+
+Run an aggregation:
+
+```bash
+lynxdb query --file events.ndjson '| stats count by level | sort level' --format ndjson --no-stats
+```
+
+Expected output:
+
+```json
+{"count":2,"level":"error"}
+{"count":1,"level":"info"}
+```
+
+Run a filter and projection:
+
+```bash
+lynxdb query --file events.ndjson '| where status>=500 | table level, status, message | sort message' --format vertical --no-stats
+```
+
+Expected output:
+
+```text
+  record 1
+    level  error
+  message  failed
+   status  500
+
+
+  record 2
+    level  error
+  message  timeout
+   status  503
+```
+
+You can query any log file the same way:
 
 ```bash
 # Query a local log file

@@ -39,6 +39,16 @@ lynxdb server [flags]
 | `--cluster.roles` | | Comma-separated node roles: `meta`, `ingest`, `query` |
 | `--cluster.seeds` | | Comma-separated seed node addresses (`host:port`) |
 | `--cluster.grpc-port` | | gRPC port for inter-node communication |
+| `--ingest-es-enabled` | `true` | Enable the Elasticsearch-compatible bulk endpoint |
+| `--ingest-es-version` | | Elasticsearch version advertised in compatibility handshakes |
+| `--otlp-http-listen` | | OTLP HTTP listen address (empty disables) |
+| `--otlp-grpc-listen` | | OTLP gRPC listen address (empty disables) |
+| `--otlp-grpc-max-recv-bytes` | | OTLP gRPC max receive message size |
+| `--ingest-max-compressed-body-bytes` | | Max compressed shipper body size |
+| `--ingest-max-decompressed-body-bytes` | | Max decompressed shipper body size |
+| `--ingest-staging-enabled` | `true` | Enable the server-side shipper staging buffer |
+| `--ingest-staging-max-bytes` | | Staging buffer byte ceiling |
+| `--ingest-staging-max-age` | | Staging buffer max age |
 | `--syslog <addr>` | | Enable UDP and TCP syslog on address (default port `5514`) |
 | `--syslog-udp <addr>` | | Enable UDP syslog only |
 | `--syslog-tcp <addr>` | | Enable TCP syslog only (default port `6514` with `--syslog-tls`) |
@@ -70,6 +80,12 @@ lynxdb server --syslog :514 --data-dir /var/lib/lynxdb
 # With syslog over TLS
 lynxdb server --tls --syslog-tcp :6514 --syslog-tls --data-dir /var/lib/lynxdb
 
+# With OTLP HTTP and gRPC receivers
+lynxdb server --otlp-http-listen :4318 --otlp-grpc-listen :4317
+
+# Disable the Elasticsearch-compatible bulk endpoint
+lynxdb server --ingest-es-enabled=false
+
 # With your own certificates
 lynxdb server --tls-cert /etc/ssl/lynxdb.crt --tls-key /etc/ssl/lynxdb.key
 ```
@@ -82,7 +98,7 @@ lynxdb server --tls-cert /etc/ssl/lynxdb.crt --tls-key /etc/ssl/lynxdb.key
   Data:    /var/lib/lynxdb
   Listen:  0.0.0.0:8080
 
-time=2026-01-15T10:00:00.000Z level=INFO msg="starting LynxDB" version=0.1.0 addr=0.0.0.0:8080
+time=2026-01-15T10:00:00.000Z level=INFO msg="starting LynxDB" version=X.Y.Z addr=0.0.0.0:8080
 ```
 
 ## Authentication

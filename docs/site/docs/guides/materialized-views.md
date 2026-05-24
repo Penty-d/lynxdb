@@ -24,7 +24,7 @@ Use [`lynxdb mv create`](/docs/cli/mv):
 
 ```bash
 lynxdb mv create mv_errors_5m \
-  'level=error | stats count, avg(duration) by source, time_bucket(_timestamp, "5m") AS bucket' \
+  'level=error | stats count, avg(duration) by source, time_bucket(_time, "5m") AS bucket' \
   --retention 90d
 ```
 
@@ -41,7 +41,7 @@ Use [`POST /api/v1/views`](/docs/api/views):
 ```bash
 curl -X POST localhost:3100/api/v1/views -d '{
   "name": "mv_errors_5m",
-  "q": "level=error | stats count, avg(duration) by source, time_bucket(_timestamp, \"5m\") AS bucket",
+  "q": "level=error | stats count, avg(duration) by source, time_bucket(_time, \"5m\") AS bucket",
   "retention": "90d"
 }'
 ```
@@ -124,7 +124,7 @@ Build views on top of other views to create multi-granularity rollups. This is u
 ```bash
 # Base view: 5-minute buckets
 lynxdb mv create mv_errors_5m \
-  'level=error | stats count, avg(duration) by source, time_bucket(_timestamp, "5m") AS bucket' \
+  'level=error | stats count, avg(duration) by source, time_bucket(_time, "5m") AS bucket' \
   --retention 90d
 
 # Hourly rollup (reads from the 5-minute view, not raw events)
@@ -161,7 +161,7 @@ Set a retention period to automatically discard old precomputed data:
 
 ```bash
 lynxdb mv create mv_5xx_hourly \
-  '_source=nginx status>=500 | stats count, perc95(duration_ms) by uri, time_bucket(_timestamp, "1h") AS hour' \
+  '_source=nginx status>=500 | stats count, perc95(duration_ms) by uri, time_bucket(_time, "1h") AS hour' \
   --retention 30d
 ```
 
@@ -234,7 +234,7 @@ Think about what queries you run most often and include those aggregations in th
 ```bash
 # If you often query count, avg, and p99, include all three:
 lynxdb mv create mv_nginx_5m \
-  '_source=nginx | stats count, avg(duration_ms), perc99(duration_ms) by uri, time_bucket(_timestamp, "5m") AS bucket' \
+  '_source=nginx | stats count, avg(duration_ms), perc99(duration_ms) by uri, time_bucket(_time, "5m") AS bucket' \
   --retention 90d
 ```
 
@@ -249,12 +249,12 @@ The optimizer can only rewrite queries that match the view's aggregation pattern
 ```bash
 # 1. Fine-grained error tracking
 lynxdb mv create mv_errors_5m \
-  'level=error | stats count by source, time_bucket(_timestamp, "5m") AS bucket' \
+  'level=error | stats count by source, time_bucket(_time, "5m") AS bucket' \
   --retention 90d
 
 # 2. Nginx latency tracking
 lynxdb mv create mv_nginx_latency_5m \
-  '_source=nginx | stats count, avg(duration_ms), perc95(duration_ms), perc99(duration_ms) by uri, time_bucket(_timestamp, "5m") AS bucket' \
+  '_source=nginx | stats count, avg(duration_ms), perc95(duration_ms), perc99(duration_ms) by uri, time_bucket(_time, "5m") AS bucket' \
   --retention 90d
 
 # 3. Hourly rollup for long-term trends

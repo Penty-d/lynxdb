@@ -73,22 +73,26 @@ lynxdb query '_source=nginx | timechart count span=5m by status'
 
 ## BIN -- bucket timestamps
 
-The [`BIN`](/docs/lynx-flow/commands/bin) command groups the `_timestamp` field into fixed-size time buckets without aggregating. This is useful when you want to assign events to time windows and then aggregate with `STATS`.
+The [`BIN`](/docs/lynx-flow/commands/bin) command groups the `_time` field into fixed-size time buckets without aggregating. This is useful when you want to assign events to time windows and then aggregate with `STATS`.
+
+:::info
+`_time` and `_timestamp` are interchangeable in LynxDB queries. `_time` is the canonical name used in API output.
+:::
 
 ### Basic binning
 
 ```bash
 lynxdb query '_source=nginx
-  | bin _timestamp span=5m
-  | stats count, avg(duration_ms) AS avg_lat by _timestamp'
+  | bin _time span=5m
+  | stats count, avg(duration_ms) AS avg_lat by _time'
 ```
 
 ### Correlate metrics with binned timestamps
 
 ```bash
 lynxdb query '_source=postgres duration_ms>1000
-  | bin _timestamp span=5m
-  | stats count AS slow_queries, avg(duration_ms) AS avg_latency by _timestamp
+  | bin _time span=5m
+  | stats count AS slow_queries, avg(duration_ms) AS avg_latency by _time
   | where slow_queries > 10'
 ```
 
@@ -113,7 +117,7 @@ The `time_bucket()` function works inside [`EVAL`](/docs/lynx-flow/commands/eval
 
 ```bash
 lynxdb query 'level=error
-  | stats count by source, time_bucket(_timestamp, "5m") AS bucket
+  | stats count by source, time_bucket(_time, "5m") AS bucket
   | sort bucket'
 ```
 
@@ -121,7 +125,7 @@ lynxdb query 'level=error
 
 ```bash
 lynxdb query '_source=nginx
-  | eval hour_bucket = time_bucket(_timestamp, "1h")
+  | eval hour_bucket = time_bucket(_time, "1h")
   | stats avg(duration_ms) AS avg_lat, count by hour_bucket
   | sort hour_bucket'
 ```
@@ -132,7 +136,7 @@ lynxdb query '_source=nginx
 
 ```bash
 lynxdb mv create mv_errors_5m \
-  'level=error | stats count, avg(duration) by source, time_bucket(_timestamp, "5m") AS bucket' \
+  'level=error | stats count, avg(duration) by source, time_bucket(_time, "5m") AS bucket' \
   --retention 90d
 ```
 
@@ -182,7 +186,7 @@ Smooth out spiky time series with a running average:
 lynxdb query '_source=nginx
   | timechart avg(duration_ms) AS avg_lat span=5m
   | streamstats avg(avg_lat) AS moving_avg window=6
-  | table _timestamp, avg_lat, moving_avg'
+  | table _time, avg_lat, moving_avg'
 ```
 
 The `window=6` parameter computes the average over the previous 6 rows (30 minutes at 5-minute intervals).
@@ -199,8 +203,8 @@ lynxdb query --file access.log '| timechart count span=1h'
 
 # Analyze kubectl output over time
 kubectl logs deploy/api --since=6h | lynxdb query '
-  | bin _timestamp span=5m
-  | stats count, avg(duration_ms) by _timestamp'
+  | bin _time span=5m
+  | stats count, avg(duration_ms) by _time'
 ```
 
 ---

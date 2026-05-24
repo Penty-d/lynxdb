@@ -161,6 +161,9 @@ See [Query API](/docs/api/query) for the exact request and response formats.
 | `GET` | `/cache/stats` | Query cache statistics | [Server](/docs/api/server) |
 | `DELETE` | `/cache` | Clear query cache | [Server](/docs/api/server) |
 | `GET/POST/DELETE` | `/auth/...` | Auth key management, only when auth is enabled | [Server](/docs/api/server) |
+| `GET` | `/indexes` | List indexes | [Ingest](/docs/api/ingest) |
+| `POST` | `/indexes` | Create an index | [Ingest](/docs/api/ingest) |
+| `GET` | `/shippers` | List registered shippers | [Server](/docs/api/server) |
 | `POST` | `/es/_bulk` | Preferred Elasticsearch bulk API | [Compatibility](/docs/api/compatibility) |
 | `POST` | `/es/{index}/_doc` | ES single-doc ingest | [Compatibility](/docs/api/compatibility) |
 | `GET` | `/es/` | ES cluster info handshake | [Compatibility](/docs/api/compatibility) |

@@ -81,7 +81,7 @@ See [Query Engine](/docs/architecture/query-engine) for how the parser fits into
 
 ### `pkg/engine/pipeline/` -- Volcano Iterator Pipeline
 
-The streaming query execution engine. Implements the Volcano iterator model with 18 operators.
+The streaming query execution engine. Implements the Volcano iterator model.
 
 ```
 pkg/engine/pipeline/
@@ -110,7 +110,7 @@ Each operator implements the `Operator` interface with a `Next()` method that re
 
 ### `pkg/optimizer/` -- Query Optimizer
 
-The 23-rule query optimizer. Transforms the AST to reduce work at execution time.
+The 40-rule query optimizer. Transforms the AST to reduce work at execution time.
 
 Key responsibilities:
 - Expression simplification (constant folding, boolean algebra).
