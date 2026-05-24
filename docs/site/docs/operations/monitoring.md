@@ -13,7 +13,7 @@ The `/health` endpoint is designed for load balancers and container orchestrator
 
 ```bash
 curl http://localhost:3100/health
-# {"status": "ok"}
+# {"data":{"status":"healthy","degraded":false,"version":"X.Y.Z"}}
 ```
 
 Returns `200 OK` when the server is ready to accept requests. Use this for:
@@ -40,11 +40,11 @@ CLI shorthand:
 lynxdb status
 
 # Output:
-#   LynxDB v0.1.0 -- uptime 2d 5h 30m -- healthy
+#   LynxDB vX.Y.Z -- uptime 2d 5h 30m -- healthy
 #
 #   Storage:     1.2 GB
 #   Events:      3,456,789 total    123,456 today
-#   Segments:    42    Memtable: 8200 events
+#   Segments:    42    Buffered: 8200 events
 #   Sources:     nginx (45%), api-gateway (30%), postgres (25%)
 #   Oldest:      2025-01-08T10:30:00Z
 #   Indexes:     3
@@ -186,7 +186,7 @@ The `lynxdb doctor` command runs a comprehensive health check:
 lynxdb doctor
 
 # Output:
-#   ok Binary        v0.1.0 (linux/amd64, go1.25.4)
+#   ok Binary        vX.Y.Z (linux/amd64, go1.25.4)
 #   ok Config        /home/user/.config/lynxdb/config.yaml (valid)
 #   ok Data dir      /var/lib/lynxdb (42 GB free)
 #   ok Server        localhost:3100 (healthy, uptime 2d 5h)
@@ -228,14 +228,14 @@ The `--analyze` output shows:
 
 ### Prometheus Scraping
 
-Poll the `/api/v1/stats` endpoint at regular intervals:
+Poll the `/metrics` endpoint, which serves Prometheus-native text format:
 
 ```yaml
 # prometheus.yml
 scrape_configs:
   - job_name: 'lynxdb'
     scrape_interval: 30s
-    metrics_path: '/api/v1/stats'
+    metrics_path: '/metrics'
     static_configs:
       - targets: ['lynxdb:3100']
 ```
@@ -254,7 +254,7 @@ spec:
       app: lynxdb
   endpoints:
     - port: http
-      path: /api/v1/stats
+      path: /metrics
       interval: 30s
 ```
 
