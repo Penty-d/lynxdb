@@ -1,6 +1,6 @@
 ---
-title: untable
-description: Convert wide tabular rows into name and value rows.
+title: Untable
+description: Unpivot columns into rows - the inverse of XYSERIES.
 ---
 
 # untable
