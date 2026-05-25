@@ -122,21 +122,59 @@ func setBuiltinTagField(e *event.Event, k, v string) bool {
 	return true
 }
 
-var kvPattern = regexp.MustCompile(`(\w+)=("(?:[^"\\]|\\.)*"|[^\s,]+)`)
-
 func parseKeyValuePairs(s string) map[string]string {
-	result := make(map[string]string)
-	matches := kvPattern.FindAllStringSubmatch(s, -1)
-	for _, m := range matches {
-		key := m[1]
-		value := m[2]
-		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
-			value = value[1 : len(value)-1]
+	result := make(map[string]string, 4)
+	for i := 0; i < len(s); {
+		for i < len(s) && !isKVKeyByte(s[i]) {
+			i++
+		}
+		keyStart := i
+		for i < len(s) && isKVKeyByte(s[i]) {
+			i++
+		}
+		if keyStart == i || i >= len(s) || s[i] != '=' {
+			continue
+		}
+		key := s[keyStart:i]
+		i++
+
+		valueStart := i
+		var value string
+		if i < len(s) && s[i] == '"' {
+			i++
+			valueStart = i
+			escaped := false
+			for i < len(s) {
+				if s[i] == '"' && !escaped {
+					break
+				}
+				escaped = s[i] == '\\' && !escaped
+				if s[i] != '\\' {
+					escaped = false
+				}
+				i++
+			}
+			value = s[valueStart:i]
+			if i < len(s) && s[i] == '"' {
+				i++
+			}
+		} else {
+			for i < len(s) && s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r' && s[i] != ',' {
+				i++
+			}
+			value = s[valueStart:i]
 		}
 		result[key] = value
 	}
 
 	return result
+}
+
+func isKVKeyByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9') ||
+		b == '_'
 }
 
 // Sentinel errors for tryParseTime — avoid fmt.Errorf allocations on hot path.
@@ -605,18 +643,33 @@ func SelectivePipeline(requiredFields map[string]bool) *Pipeline {
 
 // SplitRawLines splits raw text into individual events by newline.
 func SplitRawLines(raw, source, sourceType string) []*event.Event {
-	lines := strings.Split(raw, "\n")
-	var events []*event.Event
-	for _, line := range lines {
+	events := make([]*event.Event, 0, strings.Count(raw, "\n")+1)
+	start := 0
+	for start <= len(raw) {
+		end := strings.IndexByte(raw[start:], '\n')
+		if end < 0 {
+			end = len(raw)
+		} else {
+			end += start
+		}
+		line := raw[start:end]
 		// Trim trailing \r (Windows line endings) but avoid full TrimSpace scan.
-		line = strings.TrimRight(line, "\r")
+		line = strings.TrimSuffix(line, "\r")
 		if isBlankLine(line) {
+			if end == len(raw) {
+				break
+			}
+			start = end + 1
 			continue
 		}
 		e := event.NewEvent(time.Time{}, line)
 		e.Source = source
 		e.SourceType = sourceType
 		events = append(events, e)
+		if end == len(raw) {
+			break
+		}
+		start = end + 1
 	}
 
 	return events
