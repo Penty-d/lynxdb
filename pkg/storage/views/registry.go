@@ -246,11 +246,10 @@ func syncDir(dir string) error {
 	if err != nil {
 		return fmt.Errorf("views: sync dir %s: %w", dir, err)
 	}
+	defer d.Close()
 	if err := d.Sync(); err != nil {
-		d.Close()
-
 		return fmt.Errorf("views: sync dir %s: %w", dir, err)
 	}
 
-	return d.Close()
+	return nil
 }
