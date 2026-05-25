@@ -216,6 +216,8 @@ func (r *RollupIterator) rollupRows(span string, groups map[string]*rollupBucket
 }
 
 func (r *RollupIterator) Close() error {
+	var errs []error
+
 	r.acct.Close()
 	if r.spillMgr != nil {
 		r.spillBytesTotal = sumSpillPathBytes(r.spillPaths)
@@ -225,7 +227,10 @@ func (r *RollupIterator) Close() error {
 	}
 	r.spillPaths = nil
 
-	return r.child.Close()
+	if err := r.child.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // MemoryUsed returns the current tracked memory for this operator.

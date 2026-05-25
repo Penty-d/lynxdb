@@ -194,6 +194,8 @@ func (j *JoinIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (j *JoinIterator) Close() error {
+	var errs []error
+
 	// Cancel the prefetch context first — this unblocks a left.Next() call
 	// that may be stuck on slow I/O, allowing the goroutine to exit promptly.
 	if j.prefetchCancel != nil {
@@ -224,7 +226,9 @@ func (j *JoinIterator) Close() error {
 	}
 
 	if j.partLeftReader != nil {
-		j.partLeftReader.Close()
+		if err := j.partLeftReader.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("join: close left partition reader: %w", err))
+		}
 		j.partLeftReader = nil
 	}
 	if j.rightPartWriters != nil {
@@ -232,7 +236,9 @@ func (j *JoinIterator) Close() error {
 			if sw == nil {
 				continue
 			}
-			_ = sw.CloseFile()
+			if err := sw.CloseFile(); err != nil {
+				errs = append(errs, fmt.Errorf("join: close right partition writer: %w", err))
+			}
 			if j.spillMgr != nil {
 				j.spillMgr.Release(sw.Path())
 			}
@@ -253,9 +259,14 @@ func (j *JoinIterator) Close() error {
 	j.rightPartPaths = nil
 
 	j.acct.Close()
-	j.left.Close()
+	if err := j.left.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := j.right.Close(); err != nil {
+		errs = append(errs, err)
+	}
 
-	return j.right.Close()
+	return errors.Join(errs...)
 }
 
 // MemoryUsed returns the current tracked memory for this operator.

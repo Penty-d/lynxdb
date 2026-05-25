@@ -116,6 +116,8 @@ func (t *TopIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (t *TopIterator) Close() error {
+	var errs []error
+
 	t.acct.Close()
 	if t.spillMgr != nil {
 		t.spillBytesTotal = sumSpillPathBytes(t.spillPaths)
@@ -125,7 +127,10 @@ func (t *TopIterator) Close() error {
 	}
 	t.spillPaths = nil
 
-	return t.child.Close()
+	if err := t.child.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // MemoryUsed returns the current tracked memory for this operator.

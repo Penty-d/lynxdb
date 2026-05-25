@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"errors"
+	"os"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -45,3 +47,118 @@ func TestJoinIteratorSkipsManyNonMatchingBatchesIteratively(t *testing.T) {
 		t.Fatalf("Next() returned %d rows, want EOF", batch.Len)
 	}
 }
+
+func TestJoinIteratorCloseReturnsLeftAndRightErrors(t *testing.T) {
+	leftErr := errors.New("left close failed")
+	rightErr := errors.New("right close failed")
+
+	iter := NewJoinIterator(
+		&closeErrorIterator{closeErr: leftErr},
+		&closeErrorIterator{closeErr: rightErr},
+		"key",
+		"inner",
+	)
+
+	err := iter.Close()
+	if !errors.Is(err, leftErr) {
+		t.Fatalf("Close() error = %v, want left close error", err)
+	}
+	if !errors.Is(err, rightErr) {
+		t.Fatalf("Close() error = %v, want right close error", err)
+	}
+}
+
+func TestSortIteratorCloseReturnsErrorsAndReleasesResources(t *testing.T) {
+	mergerErr := errors.New("merger close failed")
+	childErr := errors.New("child close failed")
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := mgr.NewSpillFile("sort-close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := f.Name()
+	if _, err := f.WriteString("spill data"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	acct := memgov.NewTestBudget("sort", 1024).NewAccount("sort")
+	if err := acct.Grow(512); err != nil {
+		t.Fatal(err)
+	}
+
+	iter := &SortIterator{
+		child:      &closeErrorIterator{closeErr: childErr},
+		acct:       acct,
+		spillMgr:   mgr,
+		spillFiles: []string{path},
+		merger:     closeErrorSpillMerger{err: mergerErr},
+	}
+
+	err = iter.Close()
+	if !errors.Is(err, mergerErr) {
+		t.Fatalf("Close() error = %v, want merger close error", err)
+	}
+	if !errors.Is(err, childErr) {
+		t.Fatalf("Close() error = %v, want child close error", err)
+	}
+	if got := acct.Used(); got != 0 {
+		t.Fatalf("acct.Used() = %d, want 0", got)
+	}
+	if count, _ := mgr.Stats(); count != 0 {
+		t.Fatalf("spill file count = %d, want 0", count)
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("spill file stat error = %v, want not exist", statErr)
+	}
+}
+
+func TestConcurrentUnionIteratorCloseReturnsChildErrors(t *testing.T) {
+	firstErr := errors.New("first child close failed")
+	secondErr := errors.New("second child close failed")
+
+	iter := NewConcurrentUnionIterator(
+		[]Iterator{
+			&closeErrorIterator{closeErr: firstErr},
+			&closeErrorIterator{closeErr: secondErr},
+		},
+		OrderInterleaved,
+		&ParallelConfig{MaxBranchParallelism: 2, ChannelBufferSize: 1},
+	)
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := iter.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch != nil {
+		t.Fatalf("Next() returned %d rows, want EOF", batch.Len)
+	}
+
+	err = iter.Close()
+	if !errors.Is(err, firstErr) {
+		t.Fatalf("Close() error = %v, want first child close error", err)
+	}
+	if !errors.Is(err, secondErr) {
+		t.Fatalf("Close() error = %v, want second child close error", err)
+	}
+}
+
+type closeErrorSpillMerger struct {
+	err error
+}
+
+func (c closeErrorSpillMerger) Next() (map[string]event.Value, error) { return nil, nil }
+
+func (c closeErrorSpillMerger) NextBatch(int) (*Batch, error) { return nil, nil }
+
+func (c closeErrorSpillMerger) Close() error { return c.err }
