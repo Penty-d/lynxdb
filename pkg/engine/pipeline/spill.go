@@ -371,7 +371,15 @@ func newSpillMergerWithMgr(paths []string, sortFields []SortField, mgr *SpillMan
 	for i, r := range readers {
 		row, err := r.ReadRow()
 		if err != nil {
-			continue // exhausted or error — skip this reader
+			if errors.Is(err, io.EOF) {
+				continue
+			}
+
+			closeErr := closeSpillReaders(readers)
+			return nil, errors.Join(
+				fmt.Errorf("spill: prime reader %d: %w", i, err),
+				closeErr,
+			)
 		}
 		h.entries = append(h.entries, mergeEntry{row: row, index: i})
 	}
@@ -459,9 +467,8 @@ func (sm *SpillMerger) Next() (map[string]event.Value, error) {
 	result := entry.row
 
 	// Read the next row from the same reader and push it back.
-	nextRow, err := sm.readers[entry.index].ReadRow()
-	if err == nil {
-		heap.Push(sm.h, mergeEntry{row: nextRow, index: entry.index})
+	if err := sm.refill(entry.index); err != nil {
+		return nil, err
 	}
 
 	return result, nil
@@ -483,9 +490,8 @@ func (sm *SpillMerger) NextBatch(batchSize int) (*Batch, error) {
 		batch.AddRow(entry.row)
 
 		// Refill from the same reader.
-		nextRow, err := sm.readers[entry.index].ReadRow()
-		if err == nil {
-			heap.Push(sm.h, mergeEntry{row: nextRow, index: entry.index})
+		if err := sm.refill(entry.index); err != nil {
+			return nil, err
 		}
 	}
 
@@ -496,11 +502,35 @@ func (sm *SpillMerger) NextBatch(batchSize int) (*Batch, error) {
 	return batch, nil
 }
 
-// Close closes all spill readers.
-func (sm *SpillMerger) Close() error {
-	for _, r := range sm.readers {
-		r.Close()
+func (sm *SpillMerger) refill(index int) error {
+	nextRow, err := sm.readers[index].ReadRow()
+	if err == nil {
+		heap.Push(sm.h, mergeEntry{row: nextRow, index: index})
+
+		return nil
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("spill: refill reader %d: %w", index, err)
+}
+
+// Close closes all spill readers.
+func (sm *SpillMerger) Close() error {
+	return closeSpillReaders(sm.readers)
+}
+
+func closeSpillReaders(readers []*SpillReader) error {
+	var errs []error
+	for _, r := range readers {
+		if r == nil {
+			continue
+		}
+		if err := r.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
