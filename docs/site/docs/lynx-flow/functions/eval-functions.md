@@ -137,7 +137,7 @@ Returns true when the current event matches a search expression (the same syntax
 
 | Function | Description |
 |----------|-------------|
-| `match(s, regex)` | Anchored full regex match. Pattern must be a literal. |
+| `match(s, regex)` | True if the regex matches anywhere in `s`. Pattern must be a literal; use `^`/`$` to anchor. |
 | `startswith(s, prefix)` | True if `s` begins with `prefix`. |
 | `endswith(s, suffix)` | True if `s` ends with `suffix`. |
 | `contains(s, substr)` | True if `s` contains `substr`. |
