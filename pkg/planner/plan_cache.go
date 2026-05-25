@@ -113,8 +113,9 @@ func (p *Plan) Clone() *Plan {
 		return nil
 	}
 	clone := &Plan{
-		RawQuery:   p.RawQuery,
-		ResultType: p.ResultType,
+		RawQuery:        p.RawQuery,
+		ResultType:      p.ResultType,
+		SkipResultCache: p.SkipResultCache,
 	}
 	if p.Program != nil {
 		clone.Program = cloneProgram(p.Program)

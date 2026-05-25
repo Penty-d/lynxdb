@@ -542,6 +542,7 @@ type QueryParams struct {
 	Program            *spl2.Program
 	Hints              *spl2.QueryHints // pre-extracted by planner; avoids duplicate extraction
 	ExternalTimeBounds *spl2.TimeBounds
+	SkipResultCache    bool
 	ResultType         ResultType
 	ProfileLevel       string // "", "basic", "full", "trace"
 

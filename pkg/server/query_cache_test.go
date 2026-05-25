@@ -66,6 +66,56 @@ func TestQueryCacheUsesGenerationAfterPreQueryFlush(t *testing.T) {
 	}
 }
 
+func TestQueryCacheSkippedWhenRequested(t *testing.T) {
+	queryCfg := config.DefaultConfig().Query
+	queryCfg.SpillDir = t.TempDir()
+	fsync := false
+
+	e := NewEngine(Config{
+		DataDir: t.TempDir(),
+		Storage: config.DefaultConfig().Storage,
+		Logger:  discardLogger(),
+		Query:   queryCfg,
+		Ingest:  config.IngestConfig{FSync: &fsync},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := e.Start(ctx); err != nil {
+		cancel()
+		t.Fatalf("engine start: %v", err)
+	}
+	defer cancel()
+	defer func() {
+		if err := e.Shutdown(5 * time.Second); err != nil {
+			t.Fatalf("shutdown: %v", err)
+		}
+	}()
+
+	base := time.Now().UTC()
+	events := make([]*event.Event, 3)
+	for i := range events {
+		ev := event.NewEvent(base.Add(time.Duration(i)*time.Millisecond), fmt.Sprintf("dynamic-%d", i))
+		ev.Index = "main"
+		events[i] = ev
+	}
+	if err := e.Ingest(events); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		got := submitAndWaitWithSkipResultCache(t, e, "from main | stats count", true)
+		if got.Status != JobStatusDone {
+			t.Fatalf("query[%d] status = %s, error=%s", i, got.Status, got.Error)
+		}
+		if got.Stats.CacheHit {
+			t.Fatalf("query[%d] unexpectedly hit cache", i)
+		}
+		if entries := e.CacheStats().EntryCount; entries != 0 {
+			t.Fatalf("query[%d] cache entries = %d, want 0", i, entries)
+		}
+	}
+}
+
 func TestQueryReadsBufferedEventsWithoutCreatingParts(t *testing.T) {
 	queryCfg := config.DefaultConfig().Query
 	queryCfg.SpillDir = t.TempDir()
@@ -121,6 +171,10 @@ func TestQueryReadsBufferedEventsWithoutCreatingParts(t *testing.T) {
 }
 
 func submitAndWait(t *testing.T, e *Engine, query string) JobSnapshot {
+	return submitAndWaitWithSkipResultCache(t, e, query, false)
+}
+
+func submitAndWaitWithSkipResultCache(t *testing.T, e *Engine, query string, skipResultCache bool) JobSnapshot {
 	t.Helper()
 
 	normalized := spl2.NormalizeQuery(query)
@@ -136,10 +190,11 @@ func submitAndWait(t *testing.T, e *Engine, query string) JobSnapshot {
 	hints := spl2.ExtractQueryHints(prog)
 
 	job, err := e.SubmitQuery(context.Background(), QueryParams{
-		Query:      normalized,
-		Program:    prog,
-		Hints:      hints,
-		ResultType: DetectResultType(prog),
+		Query:           normalized,
+		Program:         prog,
+		Hints:           hints,
+		SkipResultCache: skipResultCache,
+		ResultType:      DetectResultType(prog),
 	})
 	if err != nil {
 		t.Fatalf("submit query: %v", err)

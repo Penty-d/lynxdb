@@ -135,6 +135,84 @@ func TestQueryNoSuggestions_SendsServerFlag(t *testing.T) {
 	}
 }
 
+func TestQuerySinceSendsRelativeTimeBounds(t *testing.T) {
+	reqCh := make(chan struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		reqCh <- req
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"type":     "events",
+				"events":   []map[string]interface{}{},
+				"total":    0,
+				"has_more": false,
+			},
+			"meta": map[string]interface{}{},
+		})
+	}))
+	defer srv.Close()
+
+	_, _, err := runCmd(t, "--server", srv.URL, "--quiet", "query", "--since", "1h", "error")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+
+	req := <-reqCh
+	if req.From != "-1h" || req.To != "now" {
+		t.Fatalf("bounds = (%q, %q), want (-1h, now)", req.From, req.To)
+	}
+}
+
+func TestWatchSinceSendsRelativeTimeBounds(t *testing.T) {
+	resetAllFlags(t)
+	reqCh := make(chan struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		reqCh <- req
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"type":     "events",
+				"events":   []map[string]interface{}{},
+				"total":    0,
+				"has_more": false,
+			},
+			"meta": map[string]interface{}{},
+		})
+	}))
+	defer srv.Close()
+	globalServer = srv.URL
+	globalHTTPClient = nil
+
+	if _, _, err := doWatchQuery("error", "15m"); err != nil {
+		t.Fatalf("watch query failed: %v", err)
+	}
+
+	req := <-reqCh
+	if req.From != "-15m" || req.To != "now" {
+		t.Fatalf("bounds = (%q, %q), want (-15m, now)", req.From, req.To)
+	}
+}
+
 func TestQueryQueriesFileNoSuggestions_SendsServerFlag(t *testing.T) {
 	reqCh := make(chan *bool, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -911,6 +911,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		Program:            plan.Program,
 		Hints:              plan.Hints,
 		ExternalTimeBounds: plan.ExternalTimeBounds,
+		SkipResultCache:    plan.SkipResultCache || req.SkipResultCache,
 		ResultType:         plan.ResultType,
 		ProfileLevel:       req.Profile,
 		ParseDuration:      plan.ParseDuration,

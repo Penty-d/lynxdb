@@ -59,6 +59,8 @@ type plannerImpl struct {
 }
 
 func (p *plannerImpl) Plan(req PlanRequest) (*Plan, error) {
+	skipResultCache := DynamicTimeBounds(req.From, req.To) || QueryUsesDynamicTimeSyntax(req.Query)
+
 	// Normalize implicit search syntax (e.g. "level=error" -> "search level=error")
 	// before parsing so all clients benefit from bare field=value support.
 	query := spl2.NormalizeQuery(req.Query)
@@ -74,6 +76,7 @@ func (p *plannerImpl) Plan(req PlanRequest) (*Plan, error) {
 			plan := cached.Clone()
 			// Always apply fresh external time bounds.
 			plan.ExternalTimeBounds = externalTB
+			plan.SkipResultCache = plan.SkipResultCache || skipResultCache
 
 			return plan, nil
 		}
@@ -130,6 +133,7 @@ func (p *plannerImpl) Plan(req PlanRequest) (*Plan, error) {
 
 	resultType := server.DetectResultType(prog)
 	hints := spl2.ExtractQueryHints(prog)
+	skipResultCache = skipResultCache || programUsesDynamicTime(prog)
 
 	plan := &Plan{
 		RawQuery:           query,
@@ -138,6 +142,7 @@ func (p *plannerImpl) Plan(req PlanRequest) (*Plan, error) {
 		Hints:              hints,
 		OptimizerStats:     opt.Stats,
 		ExternalTimeBounds: externalTB,
+		SkipResultCache:    skipResultCache,
 		ParseDuration:      parseDuration,
 		OptimizeDuration:   optimizeDuration,
 		RuleDetails:        opt.GetRuleDetails(),

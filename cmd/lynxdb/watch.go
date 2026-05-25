@@ -244,13 +244,13 @@ func doWatchQuery(query, since string) ([]map[string]interface{}, time.Duration,
 
 	var from, to string
 	if since != "" {
-		tr, err := timerange.FromSince(strings.TrimPrefix(since, "-"), time.Now())
-		if err != nil {
+		duration := strings.TrimPrefix(since, "-")
+		if _, err := timerange.ParseRelative(duration); err != nil {
 			return nil, 0, fmt.Errorf("invalid --since: %w", err)
 		}
 
-		from = tr.Earliest.Format(time.RFC3339Nano)
-		to = tr.Latest.Format(time.RFC3339Nano)
+		from = "-" + duration
+		to = "now"
 	}
 
 	start := time.Now()

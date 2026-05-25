@@ -270,26 +270,28 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		TimeRange:  [2]int64{earliest, latest},
 	}
 
-	if cached, cacheErr := e.cache.Get(ctx, cacheKey); cacheErr != nil {
-		logger.Debug("cache get failed", "error", cacheErr)
-	} else if cached != nil {
-		e.metrics.QueryCacheHits.Add(1)
-		rows := cachedResultToResultRows(cached)
-		if params.ResultType == ResultTypeEvents {
-			canonicalizeEventMetadataFields(rows, queryAllowsDefaultEventMetadata(params.Program))
-		}
-		elapsed := time.Since(start)
-		job.mu.Lock()
-		job.Results = rows
-		job.Stats = SearchStats{
-			RowsReturned: int64(len(rows)),
-			ElapsedMS:    float64(elapsed.Milliseconds()),
-			CacheHit:     true,
-		}
-		job.complete(JobStatusDone)
-		job.mu.Unlock()
+	if !params.SkipResultCache {
+		if cached, cacheErr := e.cache.Get(ctx, cacheKey); cacheErr != nil {
+			logger.Debug("cache get failed", "error", cacheErr)
+		} else if cached != nil {
+			e.metrics.QueryCacheHits.Add(1)
+			rows := cachedResultToResultRows(cached)
+			if params.ResultType == ResultTypeEvents {
+				canonicalizeEventMetadataFields(rows, queryAllowsDefaultEventMetadata(params.Program))
+			}
+			elapsed := time.Since(start)
+			job.mu.Lock()
+			job.Results = rows
+			job.Stats = SearchStats{
+				RowsReturned: int64(len(rows)),
+				ElapsedMS:    float64(elapsed.Milliseconds()),
+				CacheHit:     true,
+			}
+			job.complete(JobStatusDone)
+			job.mu.Unlock()
 
-		return
+			return
+		}
 	}
 
 	onProgress(&SearchProgress{Phase: PhaseBufferScan})
@@ -317,8 +319,10 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 			}
 			job.complete(JobStatusDone)
 			job.mu.Unlock()
-			if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(rows)); err != nil {
-				logger.Debug("cache put failed", "error", err)
+			if !params.SkipResultCache {
+				if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(rows)); err != nil {
+					logger.Debug("cache put failed", "error", err)
+				}
 			}
 
 			return
@@ -587,8 +591,10 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	}
 
 	// Store in cache (non-fatal; log failures for observability).
-	if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(qr.rows)); err != nil {
-		logger.Debug("cache put failed", "error", err)
+	if !params.SkipResultCache {
+		if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(qr.rows)); err != nil {
+			logger.Debug("cache put failed", "error", err)
+		}
 	}
 }
 
