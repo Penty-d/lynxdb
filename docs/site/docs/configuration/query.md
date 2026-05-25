@@ -147,11 +147,11 @@ How long completed async job results are kept before garbage collection.
 | Config Key | `query.job_ttl` |
 |---|---|
 | **Env Var** | `LYNXDB_QUERY_JOB_TTL` |
-| **Default** | `10m` |
+| **Default** | `5m` |
 
 ```yaml
 query:
-  job_ttl: "10m"
+  job_ttl: "5m"
 ```
 
 ### Job GC Interval
@@ -161,11 +161,11 @@ How often the server cleans up expired async jobs.
 | Config Key | `query.job_gc_interval` |
 |---|---|
 | **Env Var** | `LYNXDB_QUERY_JOB_GC_INTERVAL` |
-| **Default** | `1m` |
+| **Default** | `30s` |
 
 ```yaml
 query:
-  job_gc_interval: "1m"
+  job_gc_interval: "30s"
 ```
 
 ## Advisory Lints
@@ -211,8 +211,8 @@ query:
   max_result_limit: 50000
   broad_source_lint_threshold: 10
   broad_segment_lint_threshold: 1000
-  job_ttl: "10m"
-  job_gc_interval: "1m"
+  job_ttl: "5m"
+  job_gc_interval: "30s"
 ```
 
 ## Tuning Guidelines
