@@ -5,12 +5,13 @@ set -euo pipefail
 #
 # Required tools:
 # - git, for cloning rsigma
-# - cargo, for building the rsigma CLI
+# - rsigma, installed by mise from the pinned git tag
 # - go, for the final SPL2 parse check
 #
 # Used by developers and the scheduled rsigma drift workflow.
 
 rsigma_ref="v0.9.0"
+requested_rsigma_ref=""
 with_matches=false
 output_dir=""
 
@@ -25,7 +26,7 @@ while (($# > 0)); do
         echo "--rsigma-ref requires a tag or sha" >&2
         exit 2
       fi
-      rsigma_ref="$2"
+      requested_rsigma_ref="$2"
       shift 2
       ;;
     --output-dir)
@@ -47,8 +48,12 @@ while (($# > 0)); do
   esac
 done
 
-if ! command -v cargo >/dev/null 2>&1; then
-  echo "cargo is required to build rsigma-cli" >&2
+if [[ -n "$requested_rsigma_ref" ]]; then
+  echo "warning: --rsigma-ref is ignored; the rsigma version is pinned in mise.toml" >&2
+fi
+
+if ! rsigma_bin="$(command -v rsigma)"; then
+  echo "rsigma is required; install via \`mise install\` - the rsigma version is pinned in mise.toml" >&2
   exit 1
 fi
 
@@ -61,15 +66,7 @@ mkdir -p "$golden_dir"
 
 git clone --depth 1 --branch "$rsigma_ref" https://github.com/timescale/rsigma "$tmpdir/rsigma"
 
-(cd "$tmpdir/rsigma" && cargo build --release -p rsigma)
-
 src_dir="$tmpdir/rsigma/crates/rsigma-convert/tests/golden/lynxdb"
-rsigma_target_dir="${CARGO_TARGET_DIR:-$tmpdir/rsigma/target}"
-rsigma_bin="$rsigma_target_dir/release/rsigma"
-if [[ ! -x "$rsigma_bin" ]]; then
-  echo "built rsigma binary not found at $rsigma_bin" >&2
-  exit 1
-fi
 
 yaml_files=()
 while IFS= read -r file; do
@@ -172,7 +169,7 @@ func main() {
 }
 GO
   echo "writing reference match sets using local_reference_evaluator"
-  echo "rsigma ${rsigma_ref} convert is still used for SPL2; this repository's sync path does not have a matched-indices rsigma eval mode, so --with-matches maps the deterministic synthetic datasets with the local reference evaluator."
+  echo "rsigma ${rsigma_ref} convert is still used for SPL2 from the mise-pinned binary; this repository's sync path does not have a matched-indices rsigma eval mode, so --with-matches maps the deterministic synthetic datasets with the local reference evaluator."
   (cd "$repo_root" && go run "$tmpdir/write_rsigma_matches.go" "$golden_dir")
 fi
 
