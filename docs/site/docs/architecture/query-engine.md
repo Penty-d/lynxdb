@@ -1,7 +1,7 @@
 ---
 sidebar_position: 4
 title: Query Engine
-description: LynxDB query engine internals -- recursive descent SPL2 parser, rule-based optimizer with 40 rules in 6 phases, Volcano iterator pipeline, and zero-allocation bytecode VM.
+description: LynxDB query engine internals -- recursive descent SPL2 parser, rule-based multi-phase optimizer, Volcano iterator pipeline, and zero-allocation bytecode VM.
 ---
 
 # Query Engine
@@ -67,7 +67,7 @@ The search predicate parser handles the first stage of an SPL2 query -- the impl
 
 ## Optimizer
 
-The optimizer transforms the AST to reduce work at execution time. The current implementation applies 40 rules in 6 ordered phases.
+The optimizer transforms the AST to reduce work at execution time. Rules are organized into ordered phases that run in this sequence.
 
 ### Phase 1: Expression Simplification
 
