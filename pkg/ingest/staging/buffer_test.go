@@ -145,7 +145,7 @@ func TestBuffer_CloseDrainsAndStops(t *testing.T) {
 	}
 }
 
-func TestBuffer_CloseCancelsBackgroundFlush(t *testing.T) {
+func TestBuffer_CloseContextDeadlineCancelsBackgroundFlush(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBytes = 1 << 20
 	cfg.MaxAge = time.Millisecond
@@ -170,15 +170,15 @@ func TestBuffer_CloseCancelsBackgroundFlush(t *testing.T) {
 		t.Fatal("background flush did not start")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	if err := buf.Close(ctx); err != nil {
-		t.Fatalf("Close: %v", err)
+	if err := buf.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close err = %v, want DeadlineExceeded", err)
 	}
 
 	select {
 	case <-cancelled:
-	default:
+	case <-time.After(time.Second):
 		t.Fatal("background flush context was not cancelled")
 	}
 }

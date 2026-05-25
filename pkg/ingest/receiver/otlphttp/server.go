@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
@@ -83,7 +84,9 @@ func (r *Receiver) Start(ctx context.Context) error {
 	r.listen.Store(ln.Addr().String())
 	go func() {
 		<-ctx.Done()
-		_ = r.server.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = r.server.Shutdown(shutdownCtx)
 	}()
 	r.markReady(nil)
 	r.logger.Info("OTLP HTTP receiver started", "addr", r.Addr())

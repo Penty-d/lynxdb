@@ -129,7 +129,6 @@ func (b *Buffer) Close(ctx context.Context) error {
 		b.mu.Lock()
 		if !b.closed {
 			b.closed = true
-			b.cancel()
 			close(b.stop)
 		}
 		b.mu.Unlock()
@@ -137,11 +136,14 @@ func (b *Buffer) Close(ctx context.Context) error {
 		select {
 		case <-b.done:
 		case <-ctx.Done():
+			b.cancel()
+			b.account.Close()
 			return ctx.Err()
 		}
 	}
 
 	err := b.flush(ctx, "shutdown")
+	b.cancel()
 	b.account.Close()
 	return err
 }
