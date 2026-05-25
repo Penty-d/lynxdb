@@ -255,6 +255,52 @@ func TestAsyncBatcher_ConcurrentFlushWaitsForCommit(t *testing.T) {
 	}
 }
 
+func TestAsyncBatcher_CloseContextDoesNotBlockOnThresholdFlush(t *testing.T) {
+	cfg := BatcherConfig{
+		MaxEvents: 1,
+		MaxBytes:  1 << 30,
+		MaxWait:   10 * time.Second,
+	}
+	batcher, _, _ := testBatcher(t, cfg)
+
+	commitStarted := make(chan struct{})
+	releaseCommit := make(chan struct{})
+	commitDone := make(chan struct{})
+	var once sync.Once
+	batcher.SetOnCommit(func(_ *Meta) error {
+		once.Do(func() {
+			close(commitStarted)
+		})
+		<-releaseCommit
+		close(commitDone)
+		return nil
+	})
+	batcher.Start(context.Background())
+
+	if err := batcher.Add(makeEvents(1, "main")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	select {
+	case <-commitStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("threshold flush did not start commit")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := batcher.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext: got %v, want %v", err, context.DeadlineExceeded)
+	}
+
+	close(releaseCommit)
+	select {
+	case <-commitDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("threshold flush did not finish after release")
+	}
+}
+
 func TestAsyncBatcher_OnCommitCallback(t *testing.T) {
 	cfg := BatcherConfig{
 		MaxEvents: 50,
