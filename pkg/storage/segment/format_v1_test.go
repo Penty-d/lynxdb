@@ -276,6 +276,55 @@ func TestV1_ReadEventsFiltered(t *testing.T) {
 	}
 }
 
+func TestReadEventsFiltered_IntPredicatesWithFractionalLiterals(t *testing.T) {
+	events := []*event.Event{
+		event.NewEvent(time.Now(), `{"status":1}`),
+		event.NewEvent(time.Now(), `{"status":2}`),
+	}
+	events[0].SetField("status", event.IntValue(1))
+	events[1].SetField("status", event.IntValue(2))
+
+	var buf bytes.Buffer
+	sw := NewWriter(&buf)
+	if _, err := sw.Write(events); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	r, err := OpenSegment(buf.Bytes())
+	if err != nil {
+		t.Fatalf("OpenSegment: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		op    string
+		value string
+		want  int
+	}{
+		{name: "gte fractional rounds up", op: ">=", value: "1.9", want: 1},
+		{name: "gt whole", op: ">", value: "1.0", want: 1},
+		{name: "lte fractional rounds down", op: "<=", value: "1.1", want: 1},
+		{name: "lt whole", op: "<", value: "2.0", want: 1},
+		{name: "eq fractional matches none", op: "==", value: "1.9", want: 0},
+		{name: "neq fractional matches all", op: "!=", value: "1.9", want: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := r.ReadEventsFiltered(
+				[]Predicate{{Field: "status", Op: tt.op, Value: tt.value}},
+				nil,
+				[]string{"status"},
+			)
+			if err != nil {
+				t.Fatalf("ReadEventsFiltered: %v", err)
+			}
+			if len(got) != tt.want {
+				t.Fatalf("matches: got %d, want %d", len(got), tt.want)
+			}
+		})
+	}
+}
+
 func TestV1_ReadEventsFiltered_WithSearchBitmap(t *testing.T) {
 	events := generateTestEvents(200)
 

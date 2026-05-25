@@ -1346,20 +1346,26 @@ func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*
 				}
 			}
 		case column.EncodingDelta:
-			predValF, err := strconv.ParseFloat(pred.Value, 64)
-			if err != nil {
+			predVal, mode, ok := coerceIntPredicateValue(pred.Value, pred.Op)
+			if !ok {
+				continue
+			}
+			if mode == intPredicateAlways {
+				predBitmap.Or(selected)
+				continue
+			}
+			if mode == intPredicateNever {
 				continue
 			}
 			values, err := r.cachedReadInt64s(rgi, cc)
 			if err != nil {
 				return nil, fmt.Errorf("segment.ReadEventsFiltered: read column %q for predicate: %w", pred.Field, err)
 			}
-			predValI := int64(predValF)
 			iter := selected.Iterator()
 			for iter.HasNext() {
 				pos := iter.Next()
 				localIdx := int(pos - rgStart)
-				if localIdx >= 0 && localIdx < len(values) && evalInt64Predicate(values[localIdx], pred.Op, predValI) {
+				if localIdx >= 0 && localIdx < len(values) && evalInt64Predicate(values[localIdx], pred.Op, predVal) {
 					predBitmap.Add(pos)
 				}
 			}
@@ -1389,8 +1395,14 @@ func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*
 func evalConstPredicate(cc *ConstColumnEntry, pred Predicate) bool {
 	switch column.EncodingType(cc.EncodingType) {
 	case column.EncodingDelta:
-		predValF, err := strconv.ParseFloat(pred.Value, 64)
-		if err != nil {
+		predVal, mode, ok := coerceIntPredicateValue(pred.Value, pred.Op)
+		if !ok {
+			return false
+		}
+		if mode == intPredicateAlways {
+			return true
+		}
+		if mode == intPredicateNever {
 			return false
 		}
 		val, err := strconv.ParseInt(cc.Value, 10, 64)
@@ -1398,7 +1410,7 @@ func evalConstPredicate(cc *ConstColumnEntry, pred Predicate) bool {
 			return false
 		}
 
-		return evalInt64Predicate(val, pred.Op, int64(predValF))
+		return evalInt64Predicate(val, pred.Op, predVal)
 	case column.EncodingGorilla:
 		predVal, err := strconv.ParseFloat(pred.Value, 64)
 		if err != nil {

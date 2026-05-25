@@ -477,37 +477,12 @@ func parseRangeBSIValue(valueKind uint8, value, op string) (int64, bool, error) 
 }
 
 func parseIntRangeValue(value, op string) (int64, bool, error) {
-	if n, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return n, true, nil
-	}
-
-	f, err := strconv.ParseFloat(value, 64)
-	if err != nil || math.IsNaN(f) {
-		return 0, false, nil
-	}
-	if math.IsInf(f, 0) {
+	n, mode, ok := coerceIntPredicateValue(value, op)
+	if !ok || mode != intPredicateCompare {
 		return 0, false, nil
 	}
 
-	switch op {
-	case ">":
-		f = math.Floor(f)
-	case ">=":
-		f = math.Ceil(f)
-	case "<":
-		f = math.Ceil(f)
-	case "<=":
-		f = math.Floor(f)
-	}
-	const (
-		minInt64Float = -9223372036854775808.0
-		maxInt64Float = 9223372036854775808.0
-	)
-	if f < minInt64Float || f >= maxInt64Float {
-		return 0, false, nil
-	}
-
-	return int64(f), true, nil
+	return n, true, nil
 }
 
 func rangeBSIOffset(raw, minValue int64) int64 {
