@@ -127,7 +127,7 @@ Optional ingest deduplication helps with at-least-once delivery pipelines.
 ```yaml
 ingest:
   max_body_size: "100mb"
-  max_batch_size: 5000
+  max_batch_size: 1000
   max_line_bytes: 1048576
   mode: "full"
   fsync: true
