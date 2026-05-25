@@ -145,6 +145,44 @@ func TestBuffer_CloseDrainsAndStops(t *testing.T) {
 	}
 }
 
+func TestBuffer_CloseCancelsBackgroundFlush(t *testing.T) {
+	cfg := testConfig()
+	cfg.MaxBytes = 1 << 20
+	cfg.MaxAge = time.Millisecond
+
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	sink := Sink(func(ctx context.Context, _ []*event.Event) error {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return ctx.Err()
+	})
+	buf := NewBuffer(cfg, sink, memgov.NopAccount(), nil)
+
+	if err := buf.Add(context.Background(), events("close-cancel")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background flush did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := buf.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("background flush context was not cancelled")
+	}
+}
+
 func testConfig() Config {
 	return Config{
 		Enabled:           true,
