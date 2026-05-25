@@ -281,7 +281,9 @@ func (w *ColumnarSpillWriter) flushBatch() error {
 
 	// Track actual bytes written.
 	actualBytes := w.bytes - startBytes
-	w.mgr.TrackBytes(actualBytes)
+	if w.mgr != nil {
+		w.mgr.TrackBytes(actualBytes)
+	}
 
 	w.written += rowCount
 	w.rows = w.rows[:0]
