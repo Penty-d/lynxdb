@@ -36,16 +36,17 @@ func (mw *MemtableFrameWriter) Append(data []byte) (bufmgr.FrameRef, error) {
 		return bufmgr.FrameRef{}, nil
 	}
 
+	frameSize := mw.mgr.FrameSize()
+	if dataLen > frameSize {
+		return bufmgr.FrameRef{}, fmt.Errorf(
+			"bufmgr.MemtableFrameWriter.Append: data size %d exceeds frame size %d",
+			dataLen, frameSize)
+	}
+
 	if mw.current == nil || mw.offset+dataLen > mw.current.Size() {
 		if err := mw.allocNewFrame(); err != nil {
 			return bufmgr.FrameRef{}, err
 		}
-	}
-
-	if dataLen > mw.current.Size() {
-		return bufmgr.FrameRef{}, fmt.Errorf(
-			"bufmgr.MemtableFrameWriter.Append: data size %d exceeds frame size %d",
-			dataLen, mw.current.Size())
 	}
 
 	if err := mw.current.WriteAt(data, mw.offset); err != nil {

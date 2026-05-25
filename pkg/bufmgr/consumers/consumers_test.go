@@ -354,6 +354,35 @@ func TestUnit_SegmentCacheConsumer_Get_EvictedFrame_ReturnsFalse(t *testing.T) {
 	}
 }
 
+func TestUnit_SegmentCacheConsumer_Get_ReusedSameSegmentDifferentColumn_ReturnsFalse(t *testing.T) {
+	mgr, err := bufmgr.NewManager(bufmgr.ManagerConfig{
+		MaxFrames:     1,
+		FrameSize:     64,
+		EnableOffHeap: false,
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	sc := NewSegmentCacheConsumer(mgr)
+	key1 := SegmentCacheKey{SegmentID: "seg-reuse", Column: "message", RowGroup: 0}
+	key2 := SegmentCacheKey{SegmentID: "seg-reuse", Column: "host", RowGroup: 0}
+	if err := sc.Put(key1, []byte("first")); err != nil {
+		t.Fatalf("Put key1: %v", err)
+	}
+	if err := sc.Put(key2, []byte("second")); err != nil {
+		t.Fatalf("Put key2: %v", err)
+	}
+
+	if frames, ok := sc.Get(key1); ok {
+		for _, f := range frames {
+			f.Unpin()
+		}
+		t.Fatal("Get key1 returned reused frame for key2")
+	}
+}
+
 func TestConcurrent_SegmentCacheConsumer_PutGet_NoRace(t *testing.T) {
 	mgr := newTestManager(t, 128)
 	sc := NewSegmentCacheConsumer(mgr)
@@ -476,6 +505,30 @@ func TestUnit_MemtableFrameWriter_Append_DataLargerThanFrame_ReturnsError(t *tes
 	_, err := mw.Append(huge)
 	if err == nil {
 		t.Fatal("Append with data larger than frame size should return error")
+	}
+}
+
+func TestUnit_MemtableFrameWriter_Append_DataLargerThanFrameDoesNotAllocate(t *testing.T) {
+	mgr, err := bufmgr.NewManager(bufmgr.ManagerConfig{
+		MaxFrames:     1,
+		FrameSize:     64,
+		EnableOffHeap: false,
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	mw := NewMemtableFrameWriter(mgr)
+	t.Cleanup(func() { mw.ReleaseAll() })
+
+	if _, err := mw.Append(make([]byte, 65)); err == nil {
+		t.Fatal("Append oversized data should return error")
+	}
+	if mw.FrameCount() != 0 {
+		t.Fatalf("FrameCount = %d, want 0", mw.FrameCount())
+	}
+	if got := mgr.Stats().FreeFrames; got != 1 {
+		t.Fatalf("FreeFrames = %d, want 1", got)
 	}
 }
 
@@ -1270,6 +1323,31 @@ func TestUnit_FrameHashTable_Put_EntryExceedsFrameSize_ReturnsError(t *testing.T
 	_, err := ht.Put(uint64(1), []byte("k"), hugeVal)
 	if err == nil {
 		t.Fatal("Put with entry larger than frame should return error")
+	}
+}
+
+func TestUnit_FrameHashTable_Put_EntryExceedsFrameSizeDoesNotAllocate(t *testing.T) {
+	mgr, err := bufmgr.NewManager(bufmgr.ManagerConfig{
+		MaxFrames:     1,
+		FrameSize:     64,
+		EnableOffHeap: false,
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	alloc := NewQueryOperatorAllocator(mgr, "ht-job-oversized")
+	t.Cleanup(func() { alloc.ReleaseAll() })
+	ht := NewFrameHashTable(alloc)
+
+	if _, err := ht.Put(1, []byte("key"), make([]byte, 64)); err == nil {
+		t.Fatal("Put entry exceeding frame size should return error")
+	}
+	if ht.FrameCount() != 0 {
+		t.Fatalf("FrameCount = %d, want 0", ht.FrameCount())
+	}
+	if alloc.FrameCount() != 0 {
+		t.Fatalf("allocator FrameCount = %d, want 0", alloc.FrameCount())
 	}
 }
 
