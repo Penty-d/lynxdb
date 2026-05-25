@@ -15,10 +15,7 @@ permissions:
   issues: write
 
 env:
-  GO_VERSION: "1.25.4"
-  RSIGMA_REF: main
   DRIFT_OUTPUT_DIR: /tmp/rsigma-drift-out
-  CARGO_TARGET_DIR: /tmp/rsigma-cargo-target
 
 jobs:
   drift:
@@ -29,25 +26,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up mise
+        uses: jdx/mise-action@v3
         with:
-          go-version: ${{ env.GO_VERSION }}
+          version: 2026.5.7
+          install: true
+          cache: true
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            /tmp/rsigma-cargo-target
-          key: rsigma-drift-${{ runner.os }}-${{ env.RSIGMA_REF }}
-
-      - name: Generate rsigma main corpus
-        run: scripts/sync_rsigma_golden.sh --rsigma-ref "$RSIGMA_REF" --output-dir "$DRIFT_OUTPUT_DIR"
+      - name: Generate rsigma corpus
+        run: scripts/sync_rsigma_golden.sh --output-dir "$DRIFT_OUTPUT_DIR"
 
       - name: Diff generated corpus
         id: diff

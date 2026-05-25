@@ -17,9 +17,6 @@ concurrency:
   group: nightly-trigger
   cancel-in-progress: false
 
-env:
-  GO_VERSION: "1.25.4"
-
 jobs:
   tag-nightly:
     name: Create Nightly Tag
@@ -31,15 +28,12 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up mise
+        uses: jdx/mise-action@v3
         with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+          version: 2026.5.7
+          install: true
+          cache: true
 
       - name: Resolve nightly tag
         id: nightly

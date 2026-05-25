@@ -8,9 +8,6 @@ on:
 permissions:
   contents: read
 
-env:
-  GO_VERSION: "1.25.4"
-
 jobs:
   benchmarks:
     name: rsigma compatibility benchmarks
@@ -20,10 +17,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up mise
+        uses: jdx/mise-action@v3
         with:
-          go-version: ${{ env.GO_VERSION }}
+          version: 2026.5.7
+          install: true
+          cache: true
 
       - name: Run benchmarks
         run: go test -run '^$' -bench='Benchmark(ParseGoldenCorpus|PlanGoldenCorpus|ExecuteRegexShape)$' -benchmem -count=5 ./pkg/sigmaqueries/... | tee rsigma-benchmarks.txt

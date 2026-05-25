@@ -14,9 +14,6 @@ concurrency:
   group: nightly-release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  GO_VERSION: "1.25.4"
-
 jobs:
   goreleaser:
     name: Build & Publish Nightly
@@ -29,15 +26,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up mise
+        uses: jdx/mise-action@v3
         with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+          version: 2026.5.7
+          install: true
+          cache: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -126,15 +120,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up mise
+        uses: jdx/mise-action@v3
+        with:
+          version: 2026.5.7
+          install: true
+          cache: true
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
           name: nightly-release-artifacts
           path: artifacts/
-
-      - name: Install rclone
-        run: |
-          curl -fsSL https://rclone.org/install.sh | sudo bash
 
       - name: Configure rclone for R2
         run: |
@@ -187,6 +184,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up mise
+        uses: jdx/mise-action@v3
+        with:
+          version: 2026.5.7
+          install: true
+          cache: true
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
@@ -229,6 +233,16 @@ jobs:
       - homebrew
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up mise
+        uses: jdx/mise-action@v3
+        with:
+          version: 2026.5.7
+          install: true
+          cache: true
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -277,9 +291,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install rclone
-        run: |
-          curl -fsSL https://rclone.org/install.sh | sudo bash
+      - name: Set up mise
+        uses: jdx/mise-action@v3
+        with:
+          version: 2026.5.7
+          install: true
+          cache: true
 
       - name: Configure rclone for R2
         run: |
