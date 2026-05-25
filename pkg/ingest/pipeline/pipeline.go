@@ -83,32 +83,43 @@ func (p *KeyValueParser) Process(events []*event.Event) ([]*event.Event, error) 
 	for _, e := range events {
 		pairs := parseKeyValuePairs(e.Raw)
 		for k, v := range pairs {
-			// Set built-in fields directly on the struct so
-			// GetField returns them correctly.
-			switch k {
-			case "host":
-				if e.Host == "" {
-					e.Host = v
-				}
-			case "source":
-				if e.Source == "" {
-					e.Source = v
-				}
-			case "sourcetype":
-				if e.SourceType == "" {
-					e.SourceType = v
-				}
-			case "index":
-				if e.Index == "" {
-					e.Index = v
-				}
-			default:
-				e.SetField(k, event.StringValue(v))
+			if setBuiltinTagField(e, k, v) {
+				continue
 			}
+			e.SetField(k, event.StringValue(v))
 		}
 	}
 
 	return events, nil
+}
+
+// setBuiltinTagField writes v to the event's built-in tag slot (host, source,
+// sourcetype, index) when k names one of them AND the slot is currently empty.
+// Returns true if k matched a built-in tag — regardless of whether the slot
+// was updated — so callers can skip the fallback SetField path.
+func setBuiltinTagField(e *event.Event, k, v string) bool {
+	switch k {
+	case "host":
+		if e.Host == "" {
+			e.Host = v
+		}
+	case "source":
+		if e.Source == "" {
+			e.Source = v
+		}
+	case "sourcetype":
+		if e.SourceType == "" {
+			e.SourceType = v
+		}
+	case "index":
+		if e.Index == "" {
+			e.Index = v
+		}
+	default:
+		return false
+	}
+
+	return true
 }
 
 var kvPattern = regexp.MustCompile(`(\w+)=("(?:[^"\\]|\\.)*"|[^\s,]+)`)
@@ -403,29 +414,12 @@ func (p *MetadataOnlyParser) Process(events []*event.Event) ([]*event.Event, err
 					continue
 				}
 			}
-			switch k {
-			case "host":
-				if e.Host == "" {
-					e.Host = strVal
-				}
-			case "source":
-				if e.Source == "" {
-					e.Source = strVal
-				}
-			case "sourcetype":
-				if e.SourceType == "" {
-					e.SourceType = strVal
-				}
-			case "index":
-				if e.Index == "" {
-					e.Index = strVal
-				}
-			case "level":
-				e.SetField("level", event.StringValue(strVal))
-			default:
-				// Timestamp fields — set as string field for TimestampNormalizer to pick up.
-				e.SetField(k, event.StringValue(strVal))
+			if setBuiltinTagField(e, k, strVal) {
+				continue
 			}
+			// level + timestamp fields fall through to SetField — TimestampNormalizer
+			// picks up the timestamp candidates from there.
+			e.SetField(k, event.StringValue(strVal))
 		}
 	}
 	return events, nil
