@@ -41,6 +41,17 @@ from nginx
 curl -fsSL https://lynxdb.org/install.sh | sh
 ```
 
+## Development setup
+
+LynxDB pins every required toolchain and CLI in `mise.toml`: Go, Bun, Rust, Node, Python, rclone, golangci-lint, GoReleaser, gh, and rsigma-cli. Install [mise](https://mise.jdx.dev) once, then:
+
+```bash
+curl https://mise.run | sh
+mise install
+mise run build
+mise run test
+```
+
 Pipe logs through lynxdb - no server, no config:
 
 ```bash
