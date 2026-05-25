@@ -15,7 +15,9 @@ func (NopGovernor) OnPressure(MemoryClass, PressureCallback) {}
 
 // NopLease returns an already-released lease. Nil-safe for defer patterns.
 func NopLease() *Lease {
-	return &Lease{closed: true}
+	lease := &Lease{}
+	lease.released.Store(true)
+	return lease
 }
 
 // NopQueryBudget returns a no-op QueryBudget backed by NopGovernor.

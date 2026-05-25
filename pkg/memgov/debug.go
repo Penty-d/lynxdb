@@ -32,7 +32,7 @@ func trackLease(l *Lease) {
 	leakDetector.mu.Unlock()
 
 	runtime.SetFinalizer(l, func(l *Lease) {
-		if !l.closed {
+		if !l.IsReleased() {
 			leakDetector.mu.Lock()
 			stack := leakDetector.active[l]
 			delete(leakDetector.active, l)

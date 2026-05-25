@@ -70,11 +70,23 @@ func (om *operatorMemory) Reserve(n int64) error {
 		return nil
 	}
 
+	om.mu.Lock()
+	if om.closed {
+		om.mu.Unlock()
+		return ErrClosed
+	}
+	om.mu.Unlock()
+
 	if err := om.gov.Reserve(ClassNonRevocable, n); err != nil {
 		return err
 	}
 
 	om.mu.Lock()
+	if om.closed {
+		om.mu.Unlock()
+		om.gov.Release(ClassNonRevocable, n)
+		return ErrClosed
+	}
 	om.reserved += n
 	om.pinned += n
 	om.used += n
@@ -88,20 +100,28 @@ func (om *operatorMemory) Reserve(n int64) error {
 
 func (om *operatorMemory) TryGrow(n int64) (*Lease, error) {
 	if n <= 0 {
-		return &Lease{gov: om.gov, class: ClassSpillable, bytes: 0, closed: true}, nil
+		return releasedLease(om.gov, ClassSpillable), nil
 	}
+
+	om.mu.Lock()
+	if om.closed {
+		om.mu.Unlock()
+		return nil, ErrClosed
+	}
+	om.mu.Unlock()
 
 	if err := om.gov.Reserve(ClassSpillable, n); err != nil {
 		return nil, err
 	}
 
-	lease := &Lease{
-		gov:   om.gov,
-		class: ClassSpillable,
-		bytes: n,
-	}
+	lease := om.newLease(n)
 
 	om.mu.Lock()
+	if om.closed {
+		om.mu.Unlock()
+		lease.Release()
+		return nil, ErrClosed
+	}
 	om.leases = append(om.leases, lease)
 	om.revocable += n
 	om.used += n
@@ -189,25 +209,29 @@ func (om *operatorMemory) Release(n int64) {
 
 func (om *operatorMemory) Close() {
 	om.mu.Lock()
-	defer om.mu.Unlock()
-
 	if om.closed {
+		om.mu.Unlock()
 		return
 	}
 	om.closed = true
+	leases := om.leases
+	om.leases = nil
+	reserved := om.reserved
+	om.reserved = 0
+	om.mu.Unlock()
 
 	// Release all leases.
-	for _, lease := range om.leases {
+	for _, lease := range leases {
 		lease.Release()
 	}
-	om.leases = nil
 
 	// Release reserved bytes.
-	if om.reserved > 0 {
-		om.gov.Release(ClassNonRevocable, om.reserved)
-		om.reserved = 0
+	if reserved > 0 {
+		om.gov.Release(ClassNonRevocable, reserved)
 	}
 
+	om.mu.Lock()
+	defer om.mu.Unlock()
 	if om.used > 0 {
 		slog.Debug("operatorMemory.Close: residual bytes",
 			"label", om.label, "used", om.used)
@@ -230,4 +254,24 @@ func (om *operatorMemory) MaxUsed() int64 {
 	defer om.mu.Unlock()
 
 	return om.maxUsed
+}
+
+func (om *operatorMemory) newLease(n int64) *Lease {
+	return &Lease{
+		gov:   om.gov,
+		class: ClassSpillable,
+		bytes: n,
+		onRelease: func(MemoryClass, int64) {
+			om.mu.Lock()
+			om.revocable -= n
+			if om.revocable < 0 {
+				om.revocable = 0
+			}
+			om.used -= n
+			if om.used < 0 {
+				om.used = 0
+			}
+			om.mu.Unlock()
+		},
+	}
 }
