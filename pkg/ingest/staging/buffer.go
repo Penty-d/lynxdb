@@ -45,22 +45,25 @@ type Buffer struct {
 	oldest  time.Time
 	closed  bool
 
-	stop chan struct{}
-	done chan struct{}
+	cancel context.CancelFunc
+	stop   chan struct{}
+	done   chan struct{}
 }
 
 func NewBuffer(cfg Config, sink Sink, account memgov.MemoryAccount, metrics Metrics) *Buffer {
 	cfg = normalizeConfig(cfg)
+	runCtx, cancel := context.WithCancel(context.Background())
 	b := &Buffer{
 		cfg:     cfg,
 		sink:    sink,
 		account: memgov.EnsureAccount(account),
 		metrics: metrics,
+		cancel:  cancel,
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
 	if cfg.Enabled {
-		go b.drainLoop()
+		go b.drainLoop(runCtx)
 	} else {
 		close(b.done)
 	}
@@ -133,11 +136,14 @@ func (b *Buffer) Close(ctx context.Context) error {
 		select {
 		case <-b.done:
 		case <-ctx.Done():
+			b.cancel()
+			b.account.Close()
 			return ctx.Err()
 		}
 	}
 
 	err := b.flush(ctx, "shutdown")
+	b.cancel()
 	b.account.Close()
 	return err
 }
@@ -188,7 +194,7 @@ func (b *Buffer) callSinkWithRetries(ctx context.Context, batch []*event.Event) 
 	return err
 }
 
-func (b *Buffer) drainLoop() {
+func (b *Buffer) drainLoop(ctx context.Context) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	defer close(b.done)
@@ -198,8 +204,10 @@ func (b *Buffer) drainLoop() {
 		case <-ticker.C:
 			trigger := b.flushTrigger(time.Now())
 			if trigger != "" {
-				_ = b.flush(context.Background(), trigger)
+				_ = b.flush(ctx, trigger)
 			}
+		case <-ctx.Done():
+			return
 		case <-b.stop:
 			return
 		}

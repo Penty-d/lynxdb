@@ -33,7 +33,9 @@ func Install(archivePath string) error {
 	if err != nil {
 		return fmt.Errorf("upgrade.Install: create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
 
 	binaryPath, err := extractArchive(archivePath, tmpDir)
 	if err != nil {
@@ -51,7 +53,7 @@ func Install(archivePath string) error {
 	// Clean up .new on failure.
 	defer func() {
 		if err != nil {
-			os.Remove(newExecPath)
+			_ = os.Remove(newExecPath)
 		}
 	}()
 
@@ -91,15 +93,16 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() {
+		_ = in.Close()
+	}()
 
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
 		return err
 	}
 

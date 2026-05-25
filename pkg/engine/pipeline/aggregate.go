@@ -1407,19 +1407,9 @@ func (a *AggregateIterator) finalizeState(s *aggState, fn string) event.Value {
 
 		return event.FloatValue(0)
 	case aggValues:
-		var strs []string
-		for _, v := range s.all {
-			strs = append(strs, fmt.Sprintf("%v", v))
-		}
-
-		return event.StringValue(strings.Join(strs, "|||"))
+		return event.StringValue(joinAllStrings(s.all, "|||"))
 	case aggList:
-		var strs []string
-		for _, v := range s.all {
-			strs = append(strs, fmt.Sprintf("%v", v))
-		}
-
-		return event.StringValue(strings.Join(strs, "|||"))
+		return event.StringValue(joinAllStrings(s.all, "|||"))
 	case aggMode:
 		return modeFromCounts(s.mode)
 	case "first", "earliest":
@@ -1576,10 +1566,17 @@ func joinMapKeys(m map[string]bool, sep string) string {
 }
 
 // joinAllStrings joins interface{} values (expected strings) with a separator.
+// Values are emitted as strings; non-string entries fall back to fmt.Sprint to
+// preserve historical behavior while avoiding the format-parsing cost for the
+// hot string-only path used by values()/list() aggregations.
 func joinAllStrings(all []interface{}, sep string) string {
 	strs := make([]string, len(all))
 	for i, v := range all {
-		strs[i] = fmt.Sprintf("%v", v)
+		if s, ok := v.(string); ok {
+			strs[i] = s
+			continue
+		}
+		strs[i] = fmt.Sprint(v)
 	}
 
 	return strings.Join(strs, sep)

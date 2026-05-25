@@ -27,7 +27,6 @@ type CompareIterator struct {
 	// Emission phase.
 	output *Batch
 	offset int
-	done   bool
 }
 
 // NewCompareIterator creates a new compare iterator.

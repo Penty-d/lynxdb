@@ -116,13 +116,25 @@ func (t *Theme) Diagnostic(d Diagnostic) string {
 	return b.String()
 }
 
+func (t *Theme) printf(format string, args ...interface{}) {
+	_, _ = fmt.Fprintf(t.w, format, args...)
+}
+
+func (t *Theme) print(args ...interface{}) {
+	_, _ = fmt.Fprint(t.w, args...)
+}
+
+func (t *Theme) println(args ...interface{}) {
+	_, _ = fmt.Fprintln(t.w, args...)
+}
+
 // PrintSuccess prints a green "check" message to the theme's writer.
 func (t *Theme) PrintSuccess(quiet bool, format string, args ...interface{}) {
 	if quiet {
 		return
 	}
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(t.w, "  %s %s\n", t.StatusOK.Render("\u2714"), msg)
+	t.printf("  %s %s\n", t.StatusOK.Render("\u2714"), msg)
 }
 
 // PrintWarning prints a yellow warning message to the theme's writer.
@@ -131,7 +143,7 @@ func (t *Theme) PrintWarning(quiet bool, format string, args ...interface{}) {
 		return
 	}
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(t.w, "  %s  %s\n", t.StatusWarn.Render("\u26a0"), msg)
+	t.printf("  %s  %s\n", t.StatusWarn.Render("\u26a0"), msg)
 }
 
 // PrintHint prints a dim hint to the theme's writer (TTY-only).
@@ -140,7 +152,7 @@ func (t *Theme) PrintHint(quiet bool, format string, args ...interface{}) {
 		return
 	}
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(t.w, "  %s\n", t.Dim.Render(msg))
+	t.printf("  %s\n", t.Dim.Render(msg))
 }
 
 // PrintMeta prints metadata to the theme's writer.
@@ -148,7 +160,7 @@ func (t *Theme) PrintMeta(quiet bool, format string, args ...interface{}) {
 	if quiet {
 		return
 	}
-	fmt.Fprintf(t.w, format+"\n", args...)
+	t.printf(format+"\n", args...)
 }
 
 // PrintNextSteps prints dim "Next steps:" hints to the theme's writer.
@@ -156,10 +168,10 @@ func (t *Theme) PrintNextSteps(quiet bool, steps ...string) {
 	if quiet || len(steps) == 0 {
 		return
 	}
-	fmt.Fprintln(t.w)
-	fmt.Fprintf(t.w, "  %s\n", t.Dim.Render("Next steps:"))
+	t.println()
+	t.printf("  %s\n", t.Dim.Render("Next steps:"))
 	for _, s := range steps {
-		fmt.Fprintf(t.w, "  %s\n", t.Dim.Render("  "+s))
+		t.printf("  %s\n", t.Dim.Render("  "+s))
 	}
 }
 
@@ -191,7 +203,7 @@ func (t *Theme) RenderError(err error) {
 	if err == nil {
 		return
 	}
-	fmt.Fprint(t.w, t.Diagnostic(Diagnostic{
+	t.print(t.Diagnostic(Diagnostic{
 		Code:    "ERROR",
 		Message: err.Error(),
 	}))
@@ -199,7 +211,7 @@ func (t *Theme) RenderError(err error) {
 
 // RenderConnectionError prints a connection error with helpful suggestions.
 func (t *Theme) RenderConnectionError(server string) {
-	fmt.Fprint(t.w, t.Diagnostic(Diagnostic{
+	t.print(t.Diagnostic(Diagnostic{
 		Code:       "CONNECTION",
 		Message:    "Cannot connect to " + server,
 		Suggestion: "Start the server, check the environment, or point --server at the right endpoint.",
@@ -214,7 +226,7 @@ func (t *Theme) RenderConnectionError(server string) {
 
 // RenderServerError prints a server error with code, message, and optional suggestion.
 func (t *Theme) RenderServerError(code, message, suggestion string) {
-	fmt.Fprint(t.w, t.Diagnostic(Diagnostic{
+	t.print(t.Diagnostic(Diagnostic{
 		Code:       code,
 		Message:    message,
 		Suggestion: suggestion,
@@ -234,17 +246,17 @@ func (t *Theme) RenderRequiredFlagError(flags []string, usageLine, example strin
 		formatted[i] = "--" + f
 	}
 
-	fmt.Fprintf(t.w, "\n  %s missing required %s: %s\n", t.IconError(), noun, strings.Join(formatted, ", "))
+	t.printf("\n  %s missing required %s: %s\n", t.IconError(), noun, strings.Join(formatted, ", "))
 
 	if usageLine != "" {
-		fmt.Fprintf(t.w, "\n  %s\n    %s\n", t.Bold.Render("Usage:"), usageLine)
+		t.printf("\n  %s\n    %s\n", t.Bold.Render("Usage:"), usageLine)
 	}
 
 	if example != "" {
-		fmt.Fprintf(t.w, "\n  %s\n%s\n", t.Bold.Render("Examples:"), example)
+		t.printf("\n  %s\n%s\n", t.Bold.Render("Examples:"), example)
 	}
 
-	fmt.Fprintln(t.w)
+	t.println()
 }
 
 // RenderQueryError prints a query parse error with caret positioning and error code.
@@ -263,8 +275,8 @@ func (t *Theme) renderQueryErrorCode(query string, position, length int, message
 	if code != "" {
 		prefix = code
 	}
-	fmt.Fprintf(t.w, "\n  %s %s: %s\n\n", t.IconError(), prefix, message)
-	fmt.Fprintf(t.w, "    %s\n", query)
+	t.printf("\n  %s %s: %s\n\n", t.IconError(), prefix, message)
+	t.printf("    %s\n", query)
 
 	// Always show at least one caret character when position is valid.
 	if length <= 0 {
@@ -273,7 +285,7 @@ func (t *Theme) renderQueryErrorCode(query string, position, length int, message
 
 	if position >= 0 {
 		caret := strings.Repeat(" ", position) + strings.Repeat("^", length)
-		fmt.Fprintf(t.w, "    %s\n", t.Error.Render(caret))
+		t.printf("    %s\n", t.Error.Render(caret))
 	}
 
 	if suggestion != "" {
@@ -284,8 +296,8 @@ func (t *Theme) renderQueryErrorCode(query string, position, length int, message
 			prefix = "Did you mean: "
 		}
 
-		fmt.Fprintf(t.w, "    %s\n", t.Info.Render(prefix+suggestion))
+		t.printf("    %s\n", t.Info.Render(prefix+suggestion))
 	}
 
-	fmt.Fprintln(t.w)
+	t.println()
 }

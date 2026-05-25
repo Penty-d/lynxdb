@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -32,7 +33,16 @@ func (t *TeeIterator) Init(ctx context.Context) error {
 	t.writer = f
 	t.enc = json.NewEncoder(f)
 
-	return t.child.Init(ctx)
+	if err := t.child.Init(ctx); err != nil {
+		t.writer = nil
+		t.enc = nil
+		return errors.Join(
+			fmt.Errorf("tee: init child: %w", err),
+			wrapTeeCloseError(t.dest, f.Close()),
+		)
+	}
+
+	return nil
 }
 
 func (t *TeeIterator) Next(ctx context.Context) (*Batch, error) {
@@ -51,20 +61,24 @@ func (t *TeeIterator) Next(ctx context.Context) (*Batch, error) {
 func (t *TeeIterator) Close() error {
 	var closeErr error
 	if t.writer != nil {
-		closeErr = t.writer.Close()
+		closeErr = wrapTeeCloseError(t.dest, t.writer.Close())
 	}
 
 	childErr := t.child.Close()
-	if closeErr != nil {
-		return closeErr
-	}
-
-	return childErr
+	return errors.Join(closeErr, childErr)
 }
 
 func (t *TeeIterator) Schema() []FieldInfo { return t.child.Schema() }
 
 func (t *TeeIterator) Child() Iterator { return t.child }
+
+func wrapTeeCloseError(dest string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("tee: close %s: %w", dest, err)
+}
 
 // teeToMap converts a pipeline row (map[string]event.Value) to a JSON-friendly map.
 func teeToMap(row map[string]event.Value) map[string]interface{} {

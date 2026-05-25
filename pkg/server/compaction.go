@@ -232,7 +232,7 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 		return streamWriter.WriteRowGroup(ctx, batch)
 	}), rateLimiter)
 	if err != nil {
-		streamWriter.Abort()
+		_ = streamWriter.Abort()
 		consecutive := e.compactionFailures.record(idx, partition)
 		e.metrics.CompactionErrors.Add(1)
 		if consecutive >= compactionEscalateThreshold {
@@ -259,7 +259,7 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 	// and performs the atomic rename (tmp_ → final path).
 	outputMeta, err := streamWriter.Finalize(ctx)
 	if err != nil {
-		streamWriter.Abort()
+		_ = streamWriter.Abort()
 		consecutive := e.compactionFailures.record(idx, partition)
 		e.metrics.CompactionErrors.Add(1)
 		if consecutive >= compactionEscalateThreshold {

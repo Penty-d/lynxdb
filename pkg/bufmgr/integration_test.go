@@ -327,12 +327,6 @@ func TestIntegration_GovernorWithMultipleManagers_SharedBudget(t *testing.T) {
 	}
 
 	// Each manager allocates all its frames. The caller reserves from the governor.
-	type frameRecord struct {
-		mgr   Manager
-		frame *Frame
-	}
-	var allFrames []frameRecord
-
 	for mgrIdx, mgr := range managers {
 		for i := 0; i < framesPerMgr; i++ {
 			if err := gov.Reserve(memgov.ClassPageCache, int64(frameSize)); err != nil {
@@ -343,7 +337,6 @@ func TestIntegration_GovernorWithMultipleManagers_SharedBudget(t *testing.T) {
 				t.Fatalf("mgr[%d].AllocFrame %d: %v", mgrIdx, i, err)
 			}
 			mgr.UnpinFrame(f.ID)
-			allFrames = append(allFrames, frameRecord{mgr: mgr, frame: f})
 		}
 	}
 

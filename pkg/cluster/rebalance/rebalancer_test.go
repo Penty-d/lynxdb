@@ -52,20 +52,6 @@ func (m *mockMetaStateProvider) PromoteISRReplica(_ context.Context, _ string) (
 	return 0, nil
 }
 
-func (m *mockMetaStateProvider) setVersion(v uint64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.version = v
-}
-
-func (m *mockMetaStateProvider) setPlan(p *RebalancePlan) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.plan = p
-}
-
 func (m *mockMetaStateProvider) getAppliedPlans() []*RebalancePlan {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -184,11 +184,6 @@ func fetchShipperMetrics(ctx context.Context) ([]shipperListenerCheck, map[strin
 	}, metrics, nil
 }
 
-func fetchShipperListenerChecks(ctx context.Context) ([]shipperListenerCheck, error) {
-	listeners, _, err := fetchShipperMetrics(ctx)
-	return listeners, err
-}
-
 func formatShipperDoctorConnectError(err error) error {
 	msg := err.Error()
 	if strings.Contains(msg, "server gave HTTP response to HTTPS client") {

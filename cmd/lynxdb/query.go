@@ -372,23 +372,9 @@ func queryRowsFromReader(query string, reader io.Reader, defaultSource, source, 
 }
 
 func queryRowsFromServer(query, since, from, to, timeout, analyze string, noLint, noSuggestions bool) ([]map[string]interface{}, error) {
-	var earliest, latest string
-	if since != "" {
-		tr, err := timerange.FromSince(since, time.Now())
-		if err != nil {
-			return nil, fmt.Errorf("invalid --since: %w", err)
-		}
-		earliest = tr.Earliest.Format(time.RFC3339Nano)
-		latest = tr.Latest.Format(time.RFC3339Nano)
-	} else if from != "" && to != "" {
-		tr, err := timerange.FromAbsoluteRange(from, to)
-		if err != nil {
-			return nil, fmt.Errorf("invalid time range: %w", err)
-		}
-		earliest = tr.Earliest.Format(time.RFC3339Nano)
-		latest = tr.Latest.Format(time.RFC3339Nano)
-	} else if from != "" || to != "" {
-		return nil, fmt.Errorf("--from and --to must both be specified")
+	earliest, latest, err := queryTimeBoundsFromFlags(since, from, to)
+	if err != nil {
+		return nil, err
 	}
 
 	ctx := context.Background()
@@ -644,26 +630,12 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 }
 
 func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string, noLint, noSuggestions, showRewritten bool) error {
-	var earliest, latest string
-	if since != "" {
-		tr, err := timerange.FromSince(since, time.Now())
-		if err != nil {
-			return fmt.Errorf("invalid --since: %w", err)
-		}
-		earliest = tr.Earliest.Format(time.RFC3339Nano)
-		latest = tr.Latest.Format(time.RFC3339Nano)
-	} else if from != "" && to != "" {
-		tr, err := timerange.FromAbsoluteRange(from, to)
-		if err != nil {
-			return fmt.Errorf("invalid time range: %w", err)
-		}
-		earliest = tr.Earliest.Format(time.RFC3339Nano)
-		latest = tr.Latest.Format(time.RFC3339Nano)
-	} else if from != "" || to != "" {
-		return fmt.Errorf("--from and --to must both be specified")
+	earliest, latest, err := queryTimeBoundsFromFlags(since, from, to)
+	if err != nil {
+		return err
 	}
 
-	if err := validateQueryBeforeTUI(query); err != nil {
+	if err := validateQueryBeforeServer(query); err != nil {
 		return err
 	}
 
@@ -681,6 +653,30 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten)
 }
 
+func queryTimeBoundsFromFlags(since, from, to string) (string, string, error) {
+	if since != "" {
+		duration := strings.TrimPrefix(since, "-")
+		if _, err := timerange.ParseRelative(duration); err != nil {
+			return "", "", fmt.Errorf("invalid --since: %w", err)
+		}
+
+		return "-" + duration, "now", nil
+	}
+	if from != "" && to != "" {
+		tr, err := timerange.FromAbsoluteRange(from, to)
+		if err != nil {
+			return "", "", fmt.Errorf("invalid time range: %w", err)
+		}
+
+		return tr.Earliest.Format(time.RFC3339Nano), tr.Latest.Format(time.RFC3339Nano), nil
+	}
+	if from != "" || to != "" {
+		return "", "", fmt.Errorf("--from and --to must both be specified")
+	}
+
+	return "", "", nil
+}
+
 func stripVerticalQuerySuffix(query string) (string, bool) {
 	trimmed := strings.TrimRight(query, " \t\r\n;")
 	trimmed = strings.TrimRight(trimmed, " \t\r\n")
@@ -692,7 +688,7 @@ func stripVerticalQuerySuffix(query string) (string, bool) {
 	return stripped, true
 }
 
-func validateQueryBeforeTUI(query string) error {
+func validateQueryBeforeServer(query string) error {
 	if err := spl2.CheckUnsupportedCommands(query); err != nil {
 		return err
 	}

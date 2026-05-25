@@ -110,7 +110,9 @@ func (f *MetaFSM) Snapshot() (raft.FSMSnapshot, error) {
 // Restore implements raft.FSM. It replaces the current state with a
 // previously snapshotted version.
 func (f *MetaFSM) Restore(rc io.ReadCloser) error {
-	defer rc.Close()
+	defer func() {
+		_ = rc.Close()
+	}()
 
 	// Limit snapshot reads to 256MB as defense against corrupted snapshots.
 	const maxSnapshotSize = 256 << 20
@@ -192,7 +194,7 @@ type fsmSnapshot struct {
 // Persist implements raft.FSMSnapshot.
 func (s *fsmSnapshot) Persist(sink raft.SnapshotSink) error {
 	if _, err := sink.Write(s.data); err != nil {
-		sink.Cancel()
+		_ = sink.Cancel()
 
 		return fmt.Errorf("meta.fsmSnapshot.Persist: %w", err)
 	}

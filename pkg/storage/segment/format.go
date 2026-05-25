@@ -350,6 +350,21 @@ func decodeFooterWithLayout(data []byte, includeRange bool) (*Footer, error) {
 	catCount := binary.LittleEndian.Uint32(payload[pos : pos+4])
 	pos += 4
 
+	minRowGroupBytes := 42
+	if includeRange {
+		minRowGroupBytes += 16
+	}
+	if !footerCountFits(uint64(rgCount), pos, minRowGroupBytes, len(payload)) {
+		return nil, ErrCorruptSegment
+	}
+	minCatalogBytes := 3
+	if includeRange {
+		minCatalogBytes++
+	}
+	if !footerCountFits(uint64(catCount), pos, minCatalogBytes, len(payload)) {
+		return nil, ErrCorruptSegment
+	}
+
 	f.RowGroups = make([]RowGroupMeta, rgCount)
 	for rg := uint32(0); rg < rgCount; rg++ {
 		// Row count.
@@ -375,6 +390,9 @@ func decodeFooterWithLayout(data []byte, includeRange bool) (*Footer, error) {
 		pos += 2
 
 		if constCount > 0 {
+			if !footerCountFits(uint64(constCount), pos, 5, len(payload)) {
+				return nil, ErrCorruptSegment
+			}
 			f.RowGroups[rg].ConstColumns = make([]ConstColumnEntry, constCount)
 			for i := uint16(0); i < constCount; i++ {
 				// Name.
@@ -383,6 +401,9 @@ func decodeFooterWithLayout(data []byte, includeRange bool) (*Footer, error) {
 				}
 				nameLen := binary.LittleEndian.Uint16(payload[pos : pos+2])
 				pos += 2
+				if nameLen > 1024 {
+					return nil, ErrCorruptSegment
+				}
 				if pos+int(nameLen) > len(payload) {
 					return nil, ErrCorruptSegment
 				}
@@ -417,6 +438,9 @@ func decodeFooterWithLayout(data []byte, includeRange bool) (*Footer, error) {
 		colCount := binary.LittleEndian.Uint32(payload[pos : pos+4])
 		pos += 4
 
+		if !footerCountFits(uint64(colCount), pos, 52, len(payload)) {
+			return nil, ErrCorruptSegment
+		}
 		f.RowGroups[rg].Columns = make([]ColumnChunkMeta, colCount)
 
 		for c := uint32(0); c < colCount; c++ {
@@ -428,6 +452,9 @@ func decodeFooterWithLayout(data []byte, includeRange bool) (*Footer, error) {
 			}
 			nameLen := binary.LittleEndian.Uint16(payload[pos : pos+2])
 			pos += 2
+			if nameLen > 1024 {
+				return nil, ErrCorruptSegment
+			}
 			if pos+int(nameLen) > len(payload) {
 				return nil, ErrCorruptSegment
 			}
@@ -509,6 +536,9 @@ func decodeFooterWithLayout(data []byte, includeRange bool) (*Footer, error) {
 		pos += 8
 	}
 
+	if !footerCountFits(uint64(catCount), pos, minCatalogBytes, len(payload)) {
+		return nil, ErrCorruptSegment
+	}
 	f.Catalog = make([]CatalogEntry, catCount)
 	for i := uint32(0); i < catCount; i++ {
 		if pos+2 > len(payload) {
@@ -561,6 +591,17 @@ func decodeFooterWithLayout(data []byte, includeRange bool) (*Footer, error) {
 	}
 
 	return f, nil
+}
+
+func footerCountFits(count uint64, pos int, minItemBytes int, payloadLen int) bool {
+	if count == 0 {
+		return true
+	}
+	if pos < 0 || pos > payloadLen || minItemBytes <= 0 {
+		return false
+	}
+	remaining := uint64(payloadLen - pos)
+	return count <= remaining/uint64(minItemBytes)
 }
 
 func footerCapsSummary(required, optional uint64) uint32 {

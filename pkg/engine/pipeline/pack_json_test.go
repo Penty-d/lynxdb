@@ -41,7 +41,7 @@ func TestPackJson_SpecificFields(t *testing.T) {
 	}
 
 	outCol := result.Columns["output"]
-	if outCol == nil || len(outCol) < 2 {
+	if len(outCol) < 2 {
 		t.Fatal("missing output column")
 	}
 
@@ -90,7 +90,7 @@ func TestPackJson_AllFields(t *testing.T) {
 	}
 
 	outCol := result.Columns["output"]
-	if outCol == nil || len(outCol) < 1 {
+	if len(outCol) < 1 {
 		t.Fatal("missing output column")
 	}
 

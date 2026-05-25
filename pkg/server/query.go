@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -63,44 +62,28 @@ func DetectResultType(prog *spl2.Program) ResultType {
 
 // ParseTimeBounds parses from/to time strings into TimeBounds.
 func ParseTimeBounds(from, to string) *spl2.TimeBounds {
-	if from == "" && to == "" {
-		return nil
-	}
-	tb := &spl2.TimeBounds{}
-	now := time.Now()
-	if from != "" {
-		if t, err := parseTimeValue(from, now); err == nil {
-			tb.Earliest = t
-		}
-	}
-	if to != "" {
-		if t, err := parseTimeValue(to, now); err == nil {
-			tb.Latest = t
-		}
-	}
-
+	tb, _ := ParseTimeBoundsStrict(from, to)
 	return tb
 }
 
-func parseTimeValue(s string, now time.Time) (time.Time, error) {
-	s = strings.TrimSpace(s)
-	if strings.EqualFold(s, "now") {
-		return now, nil
-	}
-	if strings.HasPrefix(s, "-") {
-		dur, err := timerange.ParseRelative(s[1:])
-		if err != nil {
-			return time.Time{}, err
-		}
+// ErrInvalidTimeBounds is returned when query from/to parameters cannot be parsed.
+var ErrInvalidTimeBounds = errors.New("invalid query time bounds")
 
-		return now.Add(-dur), nil
+// ParseTimeBoundsStrict parses from/to time strings into TimeBounds and returns
+// explicit errors instead of silently dropping invalid bounds.
+func ParseTimeBoundsStrict(from, to string) (*spl2.TimeBounds, error) {
+	tr, err := timerange.ParseOptionalRange(from, to, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidTimeBounds, err)
 	}
-	// Try RFC3339Nano first (exact format from CLI flags).
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return t, nil
+	if tr == nil {
+		return nil, nil
 	}
 
-	return timerange.ParseAbsolute(s)
+	return &spl2.TimeBounds{
+		Earliest: tr.Earliest,
+		Latest:   tr.Latest,
+	}, nil
 }
 
 // ErrTooManyQueries is returned when the concurrency limit is exceeded.
@@ -174,6 +157,7 @@ func (e *Engine) SubmitQuery(ctx context.Context, params QueryParams) (*SearchJo
 	e.jobsWG.Add(1)
 	go func() {
 		defer e.jobsWG.Done()
+		defer jobCancel()
 		e.executeQuery(jobCtx, job, params)
 	}()
 
@@ -286,26 +270,28 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		TimeRange:  [2]int64{earliest, latest},
 	}
 
-	if cached, cacheErr := e.cache.Get(ctx, cacheKey); cacheErr != nil {
-		logger.Debug("cache get failed", "error", cacheErr)
-	} else if cached != nil {
-		e.metrics.QueryCacheHits.Add(1)
-		rows := cachedResultToResultRows(cached)
-		if params.ResultType == ResultTypeEvents {
-			canonicalizeEventMetadataFields(rows, queryAllowsDefaultEventMetadata(params.Program))
-		}
-		elapsed := time.Since(start)
-		job.mu.Lock()
-		job.Results = rows
-		job.Stats = SearchStats{
-			RowsReturned: int64(len(rows)),
-			ElapsedMS:    float64(elapsed.Milliseconds()),
-			CacheHit:     true,
-		}
-		job.complete(JobStatusDone)
-		job.mu.Unlock()
+	if !params.SkipResultCache {
+		if cached, cacheErr := e.cache.Get(ctx, cacheKey); cacheErr != nil {
+			logger.Debug("cache get failed", "error", cacheErr)
+		} else if cached != nil {
+			e.metrics.QueryCacheHits.Add(1)
+			rows := cachedResultToResultRows(cached)
+			if params.ResultType == ResultTypeEvents {
+				canonicalizeEventMetadataFields(rows, queryAllowsDefaultEventMetadata(params.Program))
+			}
+			elapsed := time.Since(start)
+			job.mu.Lock()
+			job.Results = rows
+			job.Stats = SearchStats{
+				RowsReturned: int64(len(rows)),
+				ElapsedMS:    float64(elapsed.Milliseconds()),
+				CacheHit:     true,
+			}
+			job.complete(JobStatusDone)
+			job.mu.Unlock()
 
-		return
+			return
+		}
 	}
 
 	onProgress(&SearchProgress{Phase: PhaseBufferScan})
@@ -333,8 +319,10 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 			}
 			job.complete(JobStatusDone)
 			job.mu.Unlock()
-			if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(rows)); err != nil {
-				logger.Debug("cache put failed", "error", err)
+			if !params.SkipResultCache {
+				if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(rows)); err != nil {
+					logger.Debug("cache put failed", "error", err)
+				}
 			}
 
 			return
@@ -603,15 +591,9 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	}
 
 	// Store in cache (non-fatal; log failures for observability).
-	if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(qr.rows)); err != nil {
-		logger.Debug("cache put failed", "error", err)
-	}
-}
-
-func (e *Engine) flushBatcherForQuery() {
-	if e.batcher != nil {
-		if err := e.batcher.Flush(); err != nil {
-			e.logger.Warn("pre-query batcher flush failed", "error", err)
+	if !params.SkipResultCache {
+		if err := e.cache.Put(ctx, cacheKey, resultRowsToCachedResult(qr.rows)); err != nil {
+			logger.Debug("cache put failed", "error", err)
 		}
 	}
 }

@@ -8,9 +8,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// cellPaddingRight is the right-padding (in chars) applied to each table cell.
-const cellPaddingRight = 2
-
 // Table is a styled table renderer for CLI output. It stays tabular by default
 // and truncates over-wide cells to fit the terminal; callers can explicitly set
 // StyleVertical for record-oriented output.

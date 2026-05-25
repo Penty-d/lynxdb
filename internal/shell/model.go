@@ -918,7 +918,7 @@ func renderMarkdownTable(rows []map[string]interface{}) string {
 				b.WriteString(" | ")
 			}
 			if v, ok := row[c]; ok {
-				b.WriteString(fmt.Sprintf("%v", v))
+				fmt.Fprintf(&b, "%v", v)
 			}
 		}
 		b.WriteString(" |\n")

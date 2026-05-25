@@ -40,6 +40,7 @@ type ColumnarSpillWriter struct {
 	rows    []map[string]event.Value // buffered rows (up to columnarBatchSize)
 	written int                      // total rows written (across all batches)
 	bytes   int64                    // total bytes written to file
+	closed  bool
 }
 
 // NewColumnarSpillWriter creates a new columnar spill writer. The file is
@@ -100,17 +101,23 @@ func (w *ColumnarSpillWriter) Flush() error {
 // CloseFile flushes remaining rows and closes the file handle without
 // removing the file. Use this when the spill file will be read back later.
 func (w *ColumnarSpillWriter) CloseFile() error {
+	if w.closed {
+		return nil
+	}
 	if err := w.Flush(); err != nil {
-		w.file.Close()
+		_ = w.file.Close()
+		w.closed = true
 
 		return err
 	}
 	if err := w.buf.Flush(); err != nil {
-		w.file.Close()
+		_ = w.file.Close()
+		w.closed = true
 
 		return fmt.Errorf("columnar_spill: flush bufio: %w", err)
 	}
 
+	w.closed = true
 	return w.file.Close()
 }
 
@@ -281,7 +288,9 @@ func (w *ColumnarSpillWriter) flushBatch() error {
 
 	// Track actual bytes written.
 	actualBytes := w.bytes - startBytes
-	w.mgr.TrackBytes(actualBytes)
+	if w.mgr != nil {
+		w.mgr.TrackBytes(actualBytes)
+	}
 
 	w.written += rowCount
 	w.rows = w.rows[:0]
@@ -323,8 +332,8 @@ func (r *ColumnarSpillReader) ReadBatch() (*Batch, error) {
 
 	// Read magic.
 	var magic [4]byte
-	if _, err := io.ReadFull(r.buf, magic[:]); err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	if n, err := io.ReadFull(r.buf, magic[:]); err != nil {
+		if errors.Is(err, io.EOF) && n == 0 {
 			r.done = true
 
 			return nil, io.EOF
@@ -500,7 +509,15 @@ func newColumnarSpillMergerWithMgr(paths []string, sortFields []SortField, mgr *
 	for i, r := range readers {
 		row, err := r.ReadRow()
 		if err != nil {
-			continue // exhausted or error — skip
+			if errors.Is(err, io.EOF) {
+				continue
+			}
+
+			closeErr := closeColumnarSpillReaders(readers)
+			return nil, errors.Join(
+				fmt.Errorf("columnar_spill: prime reader %d: %w", i, err),
+				closeErr,
+			)
 		}
 		h.entries = append(h.entries, mergeEntry{row: row, index: i})
 	}
@@ -586,9 +603,8 @@ func (m *ColumnarSpillMerger) Next() (map[string]event.Value, error) {
 	result := entry.row
 
 	// Refill from the same reader.
-	nextRow, err := m.readers[entry.index].ReadRow()
-	if err == nil {
-		heap.Push(m.h, mergeEntry{row: nextRow, index: entry.index})
+	if err := m.refill(entry.index); err != nil {
+		return nil, err
 	}
 
 	return result, nil
@@ -610,9 +626,8 @@ func (m *ColumnarSpillMerger) NextBatch(batchSize int) (*Batch, error) {
 		batch.AddRow(entry.row)
 
 		// Refill from the same reader.
-		nextRow, err := m.readers[entry.index].ReadRow()
-		if err == nil {
-			heap.Push(m.h, mergeEntry{row: nextRow, index: entry.index})
+		if err := m.refill(entry.index); err != nil {
+			return nil, err
 		}
 	}
 
@@ -623,13 +638,37 @@ func (m *ColumnarSpillMerger) NextBatch(batchSize int) (*Batch, error) {
 	return batch, nil
 }
 
-// Close closes all underlying readers.
-func (m *ColumnarSpillMerger) Close() error {
-	for _, r := range m.readers {
-		r.Close()
+func (m *ColumnarSpillMerger) refill(index int) error {
+	nextRow, err := m.readers[index].ReadRow()
+	if err == nil {
+		heap.Push(m.h, mergeEntry{row: nextRow, index: index})
+
+		return nil
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("columnar_spill: refill reader %d: %w", index, err)
+}
+
+// Close closes all underlying readers.
+func (m *ColumnarSpillMerger) Close() error {
+	return closeColumnarSpillReaders(m.readers)
+}
+
+func closeColumnarSpillReaders(readers []*ColumnarSpillReader) error {
+	var errs []error
+	for _, r := range readers {
+		if r == nil {
+			continue
+		}
+		if err := r.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // SpillMergerI is the interface for k-way merge over spill files.

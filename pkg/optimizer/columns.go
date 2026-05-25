@@ -104,29 +104,27 @@ func rawNeededByCommands(cmds []spl2.Command) bool {
 	// Aggregation commands (stats, timechart, top, rare) produce derived rows
 	// without _raw. TABLE/FIELDS that omit _raw also don't need it.
 	terminal := cmds[len(cmds)-1]
-	switch terminal.(type) {
+	switch terminal := terminal.(type) {
 	case *spl2.StatsCommand, *spl2.TimechartCommand,
 		*spl2.TopCommand, *spl2.RareCommand:
 		return false // aggregated output, _raw not in result
 	case *spl2.TableCommand:
 		// TABLE lists explicit output columns. Only need _raw if it's listed.
-		tc := terminal.(*spl2.TableCommand)
-		for _, f := range tc.Fields {
+		for _, f := range terminal.Fields {
 			if f == "_raw" {
 				return true
 			}
 		}
 		return false
 	case *spl2.FieldsCommand:
-		fc := terminal.(*spl2.FieldsCommand)
-		if fc.Remove {
+		if terminal.Remove {
 			// "| fields - _raw" — explicitly removes _raw, still might need
 			// it upstream, but the output doesn't include it. However,
 			// upstream commands might still need it. Conservative: keep it.
 			return true
 		}
 		// "| fields level, status" — only need _raw if it's listed.
-		for _, f := range fc.Fields {
+		for _, f := range terminal.Fields {
 			if f == "_raw" {
 				return true
 			}

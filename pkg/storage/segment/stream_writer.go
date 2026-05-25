@@ -109,12 +109,6 @@ func (sw *StreamWriter) WriteRowGroup(events []*event.Event) error {
 		return ErrNoEvents
 	}
 
-	// Determine effective row group size.
-	rgSize := sw.rgSize
-	if rgSize <= 0 {
-		rgSize = DefaultRowGroupSize
-	}
-
 	// Union new fields into fieldSet with type promotion.
 	for _, e := range events {
 		for _, name := range e.FieldNames() {

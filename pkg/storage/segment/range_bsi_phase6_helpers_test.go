@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RoaringBitmap/roaring"
-
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
@@ -264,16 +262,4 @@ func filterPredicates(node *RGFilterNode) []Predicate {
 	default:
 		return nil
 	}
-}
-
-func shiftedRangeBSIMask(mask *roaring.Bitmap, offset uint32) *roaring.Bitmap {
-	if mask == nil {
-		return nil
-	}
-	out := roaring.New()
-	it := mask.Iterator()
-	for it.HasNext() {
-		out.Add(it.Next() + offset)
-	}
-	return out
 }

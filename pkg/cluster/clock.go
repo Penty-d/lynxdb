@@ -97,7 +97,9 @@ func ntpOffset(addr string) (time.Duration, error) {
 	if err != nil {
 		return 0, fmt.Errorf("dial NTP: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		return 0, fmt.Errorf("set deadline: %w", err)

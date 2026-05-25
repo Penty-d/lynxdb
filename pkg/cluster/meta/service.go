@@ -42,7 +42,7 @@ func NewService(r *raft.Raft, fsm *MetaFSM, cfg config.ClusterConfig, logger *sl
 
 // Handshake handles a node joining the cluster.
 func (s *Service) Handshake(ctx context.Context, req *clusterpb.HandshakeRequest) (*clusterpb.HandshakeResponse, error) {
-	ctx, span := tracing.Tracer().Start(ctx, "lynxdb.meta.Handshake",
+	_, span := tracing.Tracer().Start(ctx, "lynxdb.meta.Handshake",
 		tracing.WithNodeID(req.NodeId),
 		tracing.WithIsLeader(s.raft.State() == raft.Leader),
 	)

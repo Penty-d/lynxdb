@@ -657,30 +657,6 @@ func valueCompletion(value string, count int64) CompletionItem {
 	}
 }
 
-// lastWord returns the last whitespace-delimited word from s.
-func lastWord(s string) string {
-	s = strings.TrimRight(s, " \t")
-	lastSpace := strings.LastIndexAny(s, " \t")
-	if lastSpace < 0 {
-		return s
-	}
-
-	return s[lastSpace+1:]
-}
-
-// lastCommandWord returns the last significant SPL2 keyword in the text before cursor.
-func lastCommandWord(s string) string {
-	words := strings.Fields(s)
-	for i := len(words) - 1; i >= 0; i-- {
-		w := strings.TrimRight(words[i], ",|()")
-		if w != "" {
-			return w
-		}
-	}
-
-	return ""
-}
-
 // extractFieldNames collects unique field names from result rows.
 // It samples up to the first 10 rows to avoid scanning large result sets.
 func extractFieldNames(rows []map[string]interface{}) []string {

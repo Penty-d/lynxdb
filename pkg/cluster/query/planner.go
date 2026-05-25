@@ -145,7 +145,7 @@ func findSplitPoint(commands []spl2.Command) int {
 
 // isPushable returns true if a command can be executed on individual shards.
 func isPushable(cmd spl2.Command) bool {
-	switch cmd.(type) {
+	switch cmd := cmd.(type) {
 	case *spl2.SearchCommand,
 		*spl2.WhereCommand,
 		*spl2.EvalCommand,
@@ -158,8 +158,7 @@ func isPushable(cmd spl2.Command) bool {
 		*spl2.RareCommand:
 		return true
 	case *spl2.FieldsCommand:
-		fc := cmd.(*spl2.FieldsCommand)
-		return !fc.Remove // only keep-mode is safe to push
+		return !cmd.Remove // only keep-mode is safe to push
 	default:
 		return false
 	}

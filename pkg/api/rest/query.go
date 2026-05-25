@@ -113,25 +113,28 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 		return
 	}
 	normalizedQuery, rewrites := spl2.NormalizeQueryWithRewrites(query)
+	skipResultCache := planner.DynamicTimeBounds(req.effectiveFrom(), req.effectiveTo()) ||
+		planner.QueryUsesDynamicTimeSyntax(query)
 
 	mode, wait := mapQueryMode(req.Wait)
 	queryCfg := s.currentQueryConfig()
 	limit := clampLimit(req.Limit, queryCfg)
 
 	result, err := s.queryService.Submit(r.Context(), usecases.SubmitRequest{
-		Query:         normalizedQuery,
-		From:          req.effectiveFrom(),
-		To:            req.effectiveTo(),
-		Limit:         limit,
-		Offset:        req.Offset,
-		Mode:          mode,
-		Wait:          wait,
-		Profile:       req.Profile,
-		NoLint:        req.Lint != nil && !*req.Lint,
-		NoSuggestions: req.Suggestions != nil && !*req.Suggestions,
-		LintLimit:     req.LintLimit,
-		LintFull:      req.LintFull,
-		Rewrites:      rewrites,
+		Query:           normalizedQuery,
+		From:            req.effectiveFrom(),
+		To:              req.effectiveTo(),
+		Limit:           limit,
+		Offset:          req.Offset,
+		Mode:            mode,
+		Wait:            wait,
+		Profile:         req.Profile,
+		NoLint:          req.Lint != nil && !*req.Lint,
+		NoSuggestions:   req.Suggestions != nil && !*req.Suggestions,
+		LintLimit:       req.LintLimit,
+		LintFull:        req.LintFull,
+		Rewrites:        rewrites,
+		SkipResultCache: skipResultCache,
 	})
 	if err != nil {
 		handlePlanError(w, err)
@@ -146,7 +149,7 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 			return
 		}
 		writeSyncResultFromUsecase(w, result, limit, req.Offset, normalizedQuery, queryCfg,
-			!(req.Lint != nil && !*req.Lint), req.LintLimit, req.LintFull)
+			req.Lint == nil || *req.Lint, req.LintLimit, req.LintFull)
 	} else {
 		writeJobHandleFromUsecase(w, result)
 	}
@@ -207,6 +210,11 @@ func handlePlanError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, usecases.ErrTooManyQueries) {
 		respondError(w, ErrCodeTooManyRequests, http.StatusTooManyRequests, err.Error())
+
+		return
+	}
+	if errors.Is(err, server.ErrInvalidTimeBounds) {
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
 
 		return
 	}

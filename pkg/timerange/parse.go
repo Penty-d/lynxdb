@@ -145,6 +145,38 @@ func ParseRange(from, to string, now time.Time) (*TimeRange, error) {
 	}, nil
 }
 
+// ParseOptionalRange parses optional from/to strings without applying defaults.
+// If both inputs are empty it returns nil. If only one side is provided, the
+// other side remains the zero time.
+func ParseOptionalRange(from, to string, now time.Time) (*TimeRange, error) {
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	if from == "" && to == "" {
+		return nil, nil
+	}
+
+	var tr TimeRange
+	if from != "" {
+		t, err := Parse(from, now)
+		if err != nil {
+			return nil, fmt.Errorf("parse from %q: %w", from, err)
+		}
+		tr.Earliest = t
+	}
+	if to != "" {
+		t, err := Parse(to, now)
+		if err != nil {
+			return nil, fmt.Errorf("parse to %q: %w", to, err)
+		}
+		tr.Latest = t
+	}
+	if !tr.Earliest.IsZero() && !tr.Latest.IsZero() && tr.Earliest.After(tr.Latest) {
+		return nil, fmt.Errorf("from must be before to")
+	}
+
+	return &tr, nil
+}
+
 // snapTo truncates a time to the start of the given unit.
 // Supported units: 's' (second), 'm' (minute), 'h' (hour), 'd' (day UTC), 'w' (week, Monday UTC).
 func snapTo(t time.Time, unit byte) time.Time {

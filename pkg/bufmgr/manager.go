@@ -132,7 +132,6 @@ type manager struct {
 	evictions  atomic.Int64
 	writebacks atomic.Int64
 	allocs     atomic.Int64
-	frees      atomic.Int64
 }
 
 // NewManager creates a buffer manager with the given configuration.

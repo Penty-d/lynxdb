@@ -84,9 +84,7 @@ func (p *ApacheErrorParser) Parse(input string, emit func(key string, val event.
 				return nil
 			}
 			tidPart := rest[colonIdx+1:]
-			if strings.HasPrefix(tidPart, "tid ") {
-				tidPart = tidPart[4:]
-			}
+			tidPart = strings.TrimPrefix(tidPart, "tid ")
 			if !emit("tid", InferValue(strings.TrimSpace(tidPart))) {
 				return nil
 			}

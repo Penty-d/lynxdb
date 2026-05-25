@@ -75,10 +75,12 @@ func (ep *segmentEpoch) drainAndClose(logger *slog.Logger) {
 				"segment_count", len(ep.segments),
 				"remaining_readers", ep.readers.Load())
 			// Wait for the hard deadline.
+			hardTimer := time.NewTimer(20 * time.Second) // 10s warn + 20s = 30s total
+			defer hardTimer.Stop()
 			select {
 			case <-ep.done:
 				// Readers released after warning.
-			case <-time.After(20 * time.Second): // 10s warn + 20s = 30s total
+			case <-hardTimer.C:
 				logger.Error("epoch drain timeout — segment refs leaked",
 					"epoch_id", ep.id,
 					"segment_count", len(ep.segments),

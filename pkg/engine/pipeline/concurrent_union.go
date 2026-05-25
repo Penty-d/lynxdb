@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -137,6 +138,8 @@ func (c *ConcurrentUnionIterator) Next(ctx context.Context) (*Batch, error) {
 // all child iterators. Uses a timeout to prevent goroutine leaks from
 // misbehaving child iterators.
 func (c *ConcurrentUnionIterator) Close() error {
+	var errs []error
+
 	// Cancel master context. Since OrderPreserved child contexts are derived
 	// from masterCtx (via startPreservedChild), this propagates to all child
 	// goroutines. OrderInterleaved workers also use masterCtx directly.
@@ -157,10 +160,12 @@ func (c *ConcurrentUnionIterator) Close() error {
 	}
 
 	for _, child := range c.children {
-		child.Close()
+		if err := child.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // Schema returns nil — union schema is the superset of all children.

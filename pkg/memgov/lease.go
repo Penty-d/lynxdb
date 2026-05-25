@@ -2,6 +2,7 @@ package memgov
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 // Lease represents a scoped memory reservation. Must be Released when no
@@ -12,20 +13,25 @@ import (
 // defer lease.Release() makes leaks harder than the old Grow()/Shrink()/Close()
 // pattern where forgetting Shrink() or Close() silently leaked bytes.
 type Lease struct {
-	gov    Governor
-	class  MemoryClass
-	bytes  int64
-	closed bool
+	gov       Governor
+	class     MemoryClass
+	bytes     int64
+	released  atomic.Bool
+	onRelease func(MemoryClass, int64)
 }
 
 // Release returns the reserved bytes to the governor.
 // Safe to call multiple times (idempotent). Nil-safe.
 func (l *Lease) Release() {
-	if l == nil || l.closed {
+	if l == nil || !l.released.CompareAndSwap(false, true) {
 		return
 	}
-	l.gov.Release(l.class, l.bytes)
-	l.closed = true
+	if l.gov != nil && l.bytes > 0 {
+		l.gov.Release(l.class, l.bytes)
+	}
+	if l.onRelease != nil {
+		l.onRelease(l.class, l.bytes)
+	}
 }
 
 // Bytes returns the number of bytes held by this lease.
@@ -45,7 +51,7 @@ func (l *Lease) IsReleased() bool {
 		return true
 	}
 
-	return l.closed
+	return l.released.Load()
 }
 
 // QueryBudget manages per-query memory with lease tracking.
@@ -94,21 +100,29 @@ func NewQueryBudget(gov Governor, label string) QueryBudget {
 
 func (qb *queryBudget) Borrow(class MemoryClass, n int64) (*Lease, error) {
 	if n <= 0 {
-		return &Lease{gov: qb.gov, class: class, bytes: 0, closed: true}, nil
+		return releasedLease(qb.gov, class), nil
 	}
+
+	qb.mu.Lock()
+	if qb.closed {
+		qb.mu.Unlock()
+		return nil, ErrClosed
+	}
+	qb.mu.Unlock()
 
 	if err := qb.gov.Reserve(class, n); err != nil {
 		return nil, err
 	}
 
-	lease := &Lease{
-		gov:   qb.gov,
-		class: class,
-		bytes: n,
-	}
+	lease := qb.newLease(class, n)
 	trackLease(lease)
 
 	qb.mu.Lock()
+	if qb.closed {
+		qb.mu.Unlock()
+		lease.Release()
+		return nil, ErrClosed
+	}
 	qb.leases = append(qb.leases, lease)
 	qb.byClass[class] += n
 	if qb.byClass[class] > qb.peak[class] {
@@ -121,21 +135,29 @@ func (qb *queryBudget) Borrow(class MemoryClass, n int64) (*Lease, error) {
 
 func (qb *queryBudget) TryBorrow(class MemoryClass, n int64) (*Lease, bool) {
 	if n <= 0 {
-		return &Lease{gov: qb.gov, class: class, bytes: 0, closed: true}, true
+		return releasedLease(qb.gov, class), true
 	}
+
+	qb.mu.Lock()
+	if qb.closed {
+		qb.mu.Unlock()
+		return nil, false
+	}
+	qb.mu.Unlock()
 
 	if !qb.gov.TryReserve(class, n) {
 		return nil, false
 	}
 
-	lease := &Lease{
-		gov:   qb.gov,
-		class: class,
-		bytes: n,
-	}
+	lease := qb.newLease(class, n)
 	trackLease(lease)
 
 	qb.mu.Lock()
+	if qb.closed {
+		qb.mu.Unlock()
+		lease.Release()
+		return nil, false
+	}
 	qb.leases = append(qb.leases, lease)
 	qb.byClass[class] += n
 	if qb.byClass[class] > qb.peak[class] {
@@ -162,19 +184,44 @@ func (qb *queryBudget) RevocableBytes() int64 {
 
 func (qb *queryBudget) Close() {
 	qb.mu.Lock()
-	defer qb.mu.Unlock()
-
 	if qb.closed {
+		qb.mu.Unlock()
 		return
 	}
 	qb.closed = true
+	leases := qb.leases
+	qb.leases = nil
+	qb.mu.Unlock()
 
-	for _, lease := range qb.leases {
+	for _, lease := range leases {
 		lease.Release()
 	}
-	qb.leases = nil
 
+	qb.mu.Lock()
 	for i := range qb.byClass {
 		qb.byClass[i] = 0
 	}
+	qb.mu.Unlock()
+}
+
+func (qb *queryBudget) newLease(class MemoryClass, n int64) *Lease {
+	return &Lease{
+		gov:   qb.gov,
+		class: class,
+		bytes: n,
+		onRelease: func(class MemoryClass, n int64) {
+			qb.mu.Lock()
+			qb.byClass[class] -= n
+			if qb.byClass[class] < 0 {
+				qb.byClass[class] = 0
+			}
+			qb.mu.Unlock()
+		},
+	}
+}
+
+func releasedLease(gov Governor, class MemoryClass) *Lease {
+	lease := &Lease{gov: gov, class: class}
+	lease.released.Store(true)
+	return lease
 }

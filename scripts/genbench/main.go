@@ -110,7 +110,7 @@ func writeJSON(path string, n int) {
 		fmt.Fprintf(os.Stderr, "create %s: %v\n", path, err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	defer closeOutput(f, path)
 
 	base := time.Date(2026, 2, 14, 0, 0, 0, 0, time.UTC)
 	userCount := 0
@@ -144,10 +144,13 @@ func writeJSON(path string, n int) {
 			level = "error"
 		}
 
-		fmt.Fprintf(f,
+		if _, err := fmt.Fprintf(f,
 			`{"timestamp":"%s","level":"%s","source":"%s","msg":"%s","status":%d,"duration":%d,"trace_id":"%s","method":"%s","path":"%s"}`+"\n",
 			ts.Format(time.RFC3339Nano), level, source, msg, status, duration, traceID, method, urlPath,
-		)
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "write %s: %v\n", path, err)
+			os.Exit(1)
+		}
 	}
 
 	fmt.Printf("wrote %s: %d lines, ~%.1f%% /user_ (%d)\n", path, n, float64(userCount)/float64(n)*100, userCount)
@@ -160,7 +163,7 @@ func writeText(path string, n int) {
 		fmt.Fprintf(os.Stderr, "create %s: %v\n", path, err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	defer closeOutput(f, path)
 
 	base := time.Date(2026, 2, 14, 0, 0, 0, 0, time.UTC)
 	userCount := 0
@@ -180,7 +183,10 @@ func writeText(path string, n int) {
 		if r < 5 {
 			// /user_ templates (indices 0-2)
 			tmpl := textTemplates[rng.Intn(3)]
-			fmt.Fprintf(f, tmpl+"\n", tsStr, host, source, pid, clientIP)
+			if _, err := fmt.Fprintf(f, tmpl+"\n", tsStr, host, source, pid, clientIP); err != nil {
+				fmt.Fprintf(os.Stderr, "write %s: %v\n", path, err)
+				os.Exit(1)
+			}
 			userCount++
 		} else if r < 30 {
 			// Status-bearing templates (indices 3-4)
@@ -190,7 +196,10 @@ func writeText(path string, n int) {
 			}
 			dur := rng.Intn(5000) + 1
 			tmpl := textTemplates[3+rng.Intn(2)]
-			fmt.Fprintf(f, tmpl+"\n", tsStr, host, source, pid, status, dur, clientIP)
+			if _, err := fmt.Fprintf(f, tmpl+"\n", tsStr, host, source, pid, status, dur, clientIP); err != nil {
+				fmt.Fprintf(os.Stderr, "write %s: %v\n", path, err)
+				os.Exit(1)
+			}
 		} else if r < 50 {
 			// Database/cache templates (indices 5-7)
 			key := fmt.Sprintf("session:%08x", rng.Uint32())
@@ -203,39 +212,53 @@ func writeText(path string, n int) {
 			idx := 8 + rng.Intn(len(textTemplates)-8)
 			switch idx {
 			case 8: // rate limit
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, "api-default", rng.Intn(100))
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, "api-default", rng.Intn(100))
 			case 9: // auth
 				users := []string{"alice", "bob", "charlie", "diana", "eve"}
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, users[rng.Intn(len(users))])
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, users[rng.Intn(len(users))])
 			case 10: // payload
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, rng.Intn(100000))
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, rng.Intn(100000))
 			case 11: // retry
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, rng.Intn(5)+1, sources[rng.Intn(len(sources))])
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, rng.Intn(5)+1, sources[rng.Intn(len(sources))])
 			case 12: // circuit breaker
 				states := []string{"closed", "open", "half-open"}
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, states[rng.Intn(len(states))], rng.Intn(100))
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, states[rng.Intn(len(states))], rng.Intn(100))
 			case 13: // conn pool
 				active := rng.Intn(50)
 				idle := rng.Intn(20)
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, active, idle, 100)
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, active, idle, 100)
 			case 14: // TLS
 				protos := []string{"TLSv1.2", "TLSv1.3"}
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, protos[rng.Intn(len(protos))])
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, protos[rng.Intn(len(protos))])
 			case 15: // DNS
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, "api.example.com", clientIP, rng.Intn(300))
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, "api.example.com", clientIP, rng.Intn(300))
 			case 16: // health check
 				statuses := []string{"healthy", "unhealthy", "degraded"}
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, sources[rng.Intn(len(sources))], statuses[rng.Intn(len(statuses))])
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, sources[rng.Intn(len(sources))], statuses[rng.Intn(len(statuses))])
 			case 17: // load balance
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, sources[rng.Intn(len(sources))])
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, sources[rng.Intn(len(sources))])
 			case 18: // compression
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, 0.1+rng.Float64()*0.9)
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, 0.1+rng.Float64()*0.9)
 			case 19: // CORS
 				origins := []string{"https://app.example.com", "https://admin.example.com"}
-				fmt.Fprintf(f, textTemplates[idx]+"\n", tsStr, host, source, pid, origins[rng.Intn(len(origins))], rng.Intn(2) == 0)
+				writeFormatted(path, f, textTemplates[idx]+"\n", tsStr, host, source, pid, origins[rng.Intn(len(origins))], rng.Intn(2) == 0)
 			}
 		}
 	}
 
 	fmt.Printf("wrote %s: %d lines, ~%.1f%% /user_ (%d)\n", path, n, float64(userCount)/float64(n)*100, userCount)
+}
+
+func closeOutput(f *os.File, path string) {
+	if err := f.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "close %s: %v\n", path, err)
+		os.Exit(1)
+	}
+}
+
+func writeFormatted(path string, f *os.File, format string, args ...interface{}) {
+	if _, err := fmt.Fprintf(f, format, args...); err != nil {
+		fmt.Fprintf(os.Stderr, "write %s: %v\n", path, err)
+		os.Exit(1)
+	}
 }

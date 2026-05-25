@@ -38,6 +38,9 @@ const defaultMaxConcurrentIngests = 64
 
 // NewHTTPReceiver creates a new HTTP receiver.
 func NewHTTPReceiver(addr string, pipe *pipeline.Pipeline, sink EventSink, logger *slog.Logger) *HTTPReceiver {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	r := &HTTPReceiver{
 		pipeline:  pipe,
 		sink:      sink,

@@ -392,7 +392,7 @@ func (r *Reader) StatsByName(name string) *ColumnStats {
 func (r *Reader) readChunk(cc *ColumnChunkMeta) ([]byte, error) {
 	start := cc.Offset
 	end := cc.Offset + cc.Length
-	if start < 0 || end > int64(len(r.data)) {
+	if start < 0 || cc.Length < 0 || end < start || end > int64(len(r.data)) {
 		return nil, fmt.Errorf("%w: column %q offset out of range", ErrCorruptSegment, cc.Name)
 	}
 	chunkData := r.data[start:end]
@@ -1346,20 +1346,26 @@ func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*
 				}
 			}
 		case column.EncodingDelta:
-			predValF, err := strconv.ParseFloat(pred.Value, 64)
-			if err != nil {
+			predVal, mode, ok := coerceIntPredicateValue(pred.Value, pred.Op)
+			if !ok {
+				continue
+			}
+			if mode == intPredicateAlways {
+				predBitmap.Or(selected)
+				continue
+			}
+			if mode == intPredicateNever {
 				continue
 			}
 			values, err := r.cachedReadInt64s(rgi, cc)
 			if err != nil {
 				return nil, fmt.Errorf("segment.ReadEventsFiltered: read column %q for predicate: %w", pred.Field, err)
 			}
-			predValI := int64(predValF)
 			iter := selected.Iterator()
 			for iter.HasNext() {
 				pos := iter.Next()
 				localIdx := int(pos - rgStart)
-				if localIdx >= 0 && localIdx < len(values) && evalInt64Predicate(values[localIdx], pred.Op, predValI) {
+				if localIdx >= 0 && localIdx < len(values) && evalInt64Predicate(values[localIdx], pred.Op, predVal) {
 					predBitmap.Add(pos)
 				}
 			}
@@ -1389,8 +1395,14 @@ func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*
 func evalConstPredicate(cc *ConstColumnEntry, pred Predicate) bool {
 	switch column.EncodingType(cc.EncodingType) {
 	case column.EncodingDelta:
-		predValF, err := strconv.ParseFloat(pred.Value, 64)
-		if err != nil {
+		predVal, mode, ok := coerceIntPredicateValue(pred.Value, pred.Op)
+		if !ok {
+			return false
+		}
+		if mode == intPredicateAlways {
+			return true
+		}
+		if mode == intPredicateNever {
 			return false
 		}
 		val, err := strconv.ParseInt(cc.Value, 10, 64)
@@ -1398,7 +1410,7 @@ func evalConstPredicate(cc *ConstColumnEntry, pred Predicate) bool {
 			return false
 		}
 
-		return evalInt64Predicate(val, pred.Op, int64(predValF))
+		return evalInt64Predicate(val, pred.Op, predVal)
 	case column.EncodingGorilla:
 		predVal, err := strconv.ParseFloat(pred.Value, 64)
 		if err != nil {
@@ -1442,22 +1454,28 @@ func (r *Reader) LoadRangeBSI(rgIdx int, columnName string) (*bsi.BSI, error) {
 	}
 
 	r.rangeMu.Lock()
-	defer r.rangeMu.Unlock()
-
 	if r.perColRangeBSIs != nil {
 		if cached, ok := r.perColRangeBSIs[rgIdx]; ok {
 			if idx, ok := cached[columnName]; ok {
+				r.rangeMu.Unlock()
 				return idx, nil
 			}
 		}
 	}
+	r.rangeMu.Unlock()
 
 	entry, err := index.DecodeRangeSectionEntry(section, columnName)
 	if err != nil {
 		return nil, fmt.Errorf("segment: decode range BSI %q rg%d: %w", columnName, rgIdx, err)
 	}
 
+	r.rangeMu.Lock()
+	defer r.rangeMu.Unlock()
+
 	r.ensureRangeCacheLocked(rgIdx)
+	if cached, ok := r.perColRangeBSIs[rgIdx][columnName]; ok {
+		return cached, nil
+	}
 	if entry == nil {
 		r.perColRangeBSIs[rgIdx][columnName] = nil
 		return nil, nil
@@ -1656,7 +1674,7 @@ func (r *Reader) loadPerColumnBlooms(rgIdx int) (map[string]*index.BloomFilter, 
 	}
 	start := rg.PerColumnBloomOffset
 	end := start + rg.PerColumnBloomLength
-	if start < 0 || end > int64(len(r.data)) {
+	if start < 0 || rg.PerColumnBloomLength < 0 || end < start || end > int64(len(r.data)) {
 		return nil, fmt.Errorf("%w: per-column bloom offset out of range for rg %d", ErrCorruptSegment, rgIdx)
 	}
 

@@ -9,6 +9,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlpcommon"
@@ -90,7 +91,9 @@ func (r *Receiver) Start(ctx context.Context) error {
 	r.listen.Store(ln.Addr().String())
 	go func() {
 		<-ctx.Done()
-		r.server.GracefulStop()
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = r.Stop(stopCtx)
 	}()
 	r.markReady(nil)
 	r.logger.Info("OTLP gRPC receiver started", "addr", r.Addr())

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -73,11 +74,13 @@ func (a *AppendcolsIterator) materialize(ctx context.Context) error {
 }
 
 func (a *AppendcolsIterator) Close() error {
+	var err error
 	if a.output != nil {
-		_ = a.output.Close()
+		err = errors.Join(err, a.output.Close())
 	}
-	_ = a.sub.Close()
-	return a.child.Close()
+	err = errors.Join(err, a.sub.Close())
+	err = errors.Join(err, a.child.Close())
+	return err
 }
 
 func (a *AppendcolsIterator) Schema() []FieldInfo {

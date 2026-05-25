@@ -34,13 +34,17 @@ func extractTarGz(archivePath, destDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("upgrade.extractTarGz: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return "", fmt.Errorf("upgrade.extractTarGz: gzip: %w", err)
 	}
-	defer gz.Close()
+	defer func() {
+		_ = gz.Close()
+	}()
 
 	tr := tar.NewReader(gz)
 	var binaryPath string
@@ -95,7 +99,9 @@ func extractZip(archivePath, destDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("upgrade.extractZip: %w", err)
 	}
-	defer r.Close()
+	defer func() {
+		_ = r.Close()
+	}()
 
 	var binaryPath string
 	var totalSize int64
@@ -127,10 +133,12 @@ func extractZip(archivePath, destDir string) (string, error) {
 
 		destPath := filepath.Join(destDir, base)
 		if err := extractFile(destPath, rc, int64(f.UncompressedSize64), f.Mode()); err != nil {
-			rc.Close()
+			_ = rc.Close()
 			return "", err
 		}
-		rc.Close()
+		if err := rc.Close(); err != nil {
+			return "", fmt.Errorf("upgrade.extractZip: close %s: %w", f.Name, err)
+		}
 		binaryPath = destPath
 	}
 
@@ -164,12 +172,11 @@ func extractFile(destPath string, reader io.Reader, size int64, mode os.FileMode
 	if err != nil {
 		return fmt.Errorf("upgrade: create %s: %w", destPath, err)
 	}
-	defer out.Close()
-
 	// Use LimitReader as an additional safeguard.
 	if _, err := io.Copy(out, io.LimitReader(reader, size+1)); err != nil {
+		_ = out.Close()
 		return fmt.Errorf("upgrade: write %s: %w", destPath, err)
 	}
 
-	return nil
+	return out.Close()
 }

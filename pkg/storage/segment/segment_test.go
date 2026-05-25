@@ -278,6 +278,15 @@ func TestReadChunk_UnknownCompressionIsCapabilityError(t *testing.T) {
 	}
 }
 
+func TestReadChunk_OffsetOverflowReturnsCorrupt(t *testing.T) {
+	r := &Reader{data: make([]byte, 16), footer: &Footer{}}
+	cc := &ColumnChunkMeta{Name: "bad", Offset: math.MaxInt64 - 1, Length: 8}
+
+	if _, err := r.readChunk(cc); !errors.Is(err, ErrCorruptSegment) {
+		t.Fatalf("readChunk err = %v, want ErrCorruptSegment", err)
+	}
+}
+
 func TestSegment_ColumnNotFound(t *testing.T) {
 	events := generateTestEvents(10)
 	var buf bytes.Buffer

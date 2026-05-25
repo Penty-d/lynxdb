@@ -29,6 +29,12 @@ type FilterIterator struct {
 	profileVM bool
 	vmCalls   int64
 	vmTimeNS  int64
+	// Per-batch BSI predicate context cache. The wrapper map is rebuilt once
+	// per batch instead of per row to avoid 1024 throwaway map allocations
+	// when BSI metadata is attached. bsiCtxReady gates whether bsiCtx is
+	// populated for the current batch.
+	bsiCtx      vm.PredicateContext
+	bsiCtxReady bool
 }
 
 // NewFilterIterator creates a filter with a VM-compiled predicate.
@@ -108,13 +114,14 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 		matches := make([]bool, batch.Len)
 		matchCount := 0
 		row := make(map[string]event.Value, len(batch.Columns))
+		f.prepareBSIContext(batch)
 		for i := 0; i < batch.Len; i++ {
 			for k, col := range batch.Columns {
 				if i < len(col) {
 					row[k] = col[i]
 				}
 			}
-			if f.matchesRow(row, batch, i) {
+			if f.matchesRow(row, i) {
 				matches[i] = true
 				matchCount++
 			}
@@ -306,7 +313,7 @@ func (f *FilterIterator) WasVectorized() bool {
 	return f.vecUsed
 }
 
-func (f *FilterIterator) matchesRow(row map[string]event.Value, batch *Batch, rowIndex int) bool {
+func (f *FilterIterator) matchesRow(row map[string]event.Value, rowIndex int) bool {
 	// Text search — searchTerm is already lowered at construction time.
 	if f.searchTerm != "" {
 		raw, ok := row["_raw"]
@@ -318,7 +325,7 @@ func (f *FilterIterator) matchesRow(row map[string]event.Value, batch *Batch, ro
 		}
 	}
 	if f.predicate != nil {
-		predCtx := predicateContextForBatch(batch, rowIndex)
+		predCtx := f.predicateContext(rowIndex)
 		if f.profileVM {
 			start := time.Now()
 			result, err := f.vmInst.ExecuteWithContext(f.predicate, row, predCtx)
@@ -341,23 +348,36 @@ func (f *FilterIterator) matchesRow(row map[string]event.Value, batch *Batch, ro
 	return true
 }
 
-func predicateContextForBatch(batch *Batch, rowIndex int) *vm.PredicateContext {
-	if batch == nil || rowIndex < 0 {
-		return nil
-	}
-	if batch.BSIHandledRows == nil && len(batch.BSIHandledFields) == 0 {
-		return nil
-	}
-	fields := make(map[string]interface{ Contains(uint32) bool }, len(batch.BSIHandledFields))
-	for field, bm := range batch.BSIHandledFields {
-		fields[field] = bm
-	}
+// prepareBSIContext rebuilds the per-batch BSI predicate context wrapper map
+// at the start of each batch. The wrapper conversion (concrete bitmaps -> the
+// vm interface map) is invariant for the whole batch; only RowIndex changes.
+func (f *FilterIterator) prepareBSIContext(batch *Batch) {
+	if batch == nil || (batch.BSIHandledRows == nil && len(batch.BSIHandledFields) == 0) {
+		f.bsiCtxReady = false
+		f.bsiCtx.BSIHandledRows = nil
+		f.bsiCtx.BSIHandledFields = nil
 
-	return &vm.PredicateContext{
-		RowIndex:         uint32(rowIndex),
-		BSIHandledRows:   batch.BSIHandledRows,
-		BSIHandledFields: fields,
+		return
 	}
+	var fields map[string]interface{ Contains(uint32) bool }
+	if n := len(batch.BSIHandledFields); n > 0 {
+		fields = make(map[string]interface{ Contains(uint32) bool }, n)
+		for field, bm := range batch.BSIHandledFields {
+			fields[field] = bm
+		}
+	}
+	f.bsiCtx.BSIHandledRows = batch.BSIHandledRows
+	f.bsiCtx.BSIHandledFields = fields
+	f.bsiCtxReady = true
+}
+
+func (f *FilterIterator) predicateContext(rowIndex int) *vm.PredicateContext {
+	if !f.bsiCtxReady || rowIndex < 0 {
+		return nil
+	}
+	f.bsiCtx.RowIndex = uint32(rowIndex)
+
+	return &f.bsiCtx
 }
 
 func copyBSIMetadataFilter(dst, src *Batch, mask []bool) {
@@ -445,9 +465,10 @@ func NewSearchExprIteratorWithExpr(child Iterator, eval *spl2.SearchEvaluator, e
 		// Resolve "source" alias to physical column name "_source",
 		// matching the SearchEvaluator.evalCompare behavior.
 		field := cmp.Field
-		if field == "source" {
+		switch field {
+		case "source":
 			field = "_source"
-		} else if field == "sourcetype" {
+		case "sourcetype":
 			field = "_sourcetype"
 		}
 		si.vecField = field

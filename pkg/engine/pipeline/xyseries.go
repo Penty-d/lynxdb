@@ -105,6 +105,8 @@ func (x *XYSeriesIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (x *XYSeriesIterator) Close() error {
+	var errs []error
+
 	x.acct.Close()
 	if x.spillMgr != nil {
 		x.spillBytesTotal = sumSpillPathBytes(x.spillPaths)
@@ -114,7 +116,10 @@ func (x *XYSeriesIterator) Close() error {
 	}
 	x.spillPaths = nil
 
-	return x.child.Close()
+	if err := x.child.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // MemoryUsed returns the current tracked memory for this operator.
@@ -240,7 +245,6 @@ func (x *XYSeriesIterator) spillAndMaterialize(ctx context.Context, pivot map[st
 		}
 	}
 	x.acct.Shrink(x.acct.Used())
-	pivot = nil
 
 	writeBatchRows := func(batch *Batch, start int) error {
 		for i := start; i < batch.Len; i++ {

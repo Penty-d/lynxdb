@@ -28,20 +28,20 @@ func OpenSegmentFile(path string) (*MmapSegment, error) {
 
 	fi, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 
 		return nil, fmt.Errorf("segment: stat file: %w", err)
 	}
 
 	if fi.Size() == 0 {
-		f.Close()
+		_ = f.Close()
 
 		return nil, fmt.Errorf("segment: file is empty: %s", path)
 	}
 
 	mapped, err := mmap.Map(f, mmap.RDONLY, 0)
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 
 		return nil, fmt.Errorf("segment: mmap: %w", err)
 	}
@@ -49,7 +49,7 @@ func OpenSegmentFile(path string) (*MmapSegment, error) {
 	reader, err := OpenSegment([]byte(mapped))
 	if err != nil {
 		_ = mapped.Unmap()
-		f.Close()
+		_ = f.Close()
 
 		return nil, fmt.Errorf("segment: open mmap segment: %w", err)
 	}

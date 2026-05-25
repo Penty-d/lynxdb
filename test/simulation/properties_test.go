@@ -37,6 +37,7 @@ func TestProperty_RebalancePreservesPartitionCoverage(t *testing.T) {
 			a := state.ShardMap.Assignments[key]
 			if a == nil {
 				t.Fatalf("partition %d has no assignment after rebalance", p)
+				return
 			}
 			if a.Primary == "" {
 				t.Fatalf("partition %d has empty primary", p)
@@ -67,6 +68,10 @@ func TestProperty_NodeJoinMovesAtMostOneNthPartitions(t *testing.T) {
 		state := cluster.State()
 		before := make(map[string]sharding.NodeID)
 		for key, a := range state.ShardMap.Assignments {
+			if a == nil {
+				t.Fatalf("partition %s has no assignment before rebalance", key)
+				return
+			}
 			before[key] = a.Primary
 		}
 

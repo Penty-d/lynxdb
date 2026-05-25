@@ -126,6 +126,29 @@ func TestHandler_AckRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHandler_AckDisabled_ReturnsFalseAcks(t *testing.T) {
+	h := NewHandler(Config{Auth: AuthConfig{Enabled: true}}, func(context.Context, []*event.Event) error { return nil })
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/services/collector/ack", strings.NewReader(`{"acks":[1,2]}`))
+	req.Header.Set("Authorization", "Splunk token")
+	req.Header.Set("X-Splunk-Request-Channel", "channel-a")
+
+	h.HandleAck(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ack status = %d, want 200", rr.Code)
+	}
+	var body struct {
+		Acks map[string]bool `json:"acks"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode ack response: %v", err)
+	}
+	if body.Acks["1"] || body.Acks["2"] {
+		t.Fatalf("acks = %#v, want disabled acks false", body.Acks)
+	}
+}
+
 func TestHandler_AckFlushError_UsesConfiguredResponder(t *testing.T) {
 	flushErr := errors.New("flush failed")
 	h := NewHandler(Config{

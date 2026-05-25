@@ -122,15 +122,16 @@ func (ht *FrameHashTable) ForEach(fn func(hash uint64, key []byte, valRef bufmgr
 
 func (ht *FrameHashTable) appendEntry(hash uint64, key, value []byte) (bufmgr.FrameRef, error) {
 	totalLen := entryHeaderSize + len(key) + len(value)
+	frameSize := ht.allocator.mgr.FrameSize()
+	if totalLen > frameSize {
+		return bufmgr.FrameRef{}, fmt.Errorf(
+			"bufmgr.FrameHashTable: entry size %d exceeds frame size %d",
+			totalLen, frameSize)
+	}
 
 	if ht.curFrame == nil || ht.curOffset+totalLen > ht.curFrame.Size() {
 		if err := ht.allocEntryFrame(); err != nil {
 			return bufmgr.FrameRef{}, err
-		}
-		if totalLen > ht.curFrame.Size() {
-			return bufmgr.FrameRef{}, fmt.Errorf(
-				"bufmgr.FrameHashTable: entry size %d exceeds frame size %d",
-				totalLen, ht.curFrame.Size())
 		}
 	}
 

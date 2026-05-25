@@ -74,6 +74,56 @@ func TestPlan_TimeBounds(t *testing.T) {
 	if plan.ExternalTimeBounds.Earliest.IsZero() {
 		t.Error("expected non-zero Earliest")
 	}
+	if !plan.SkipResultCache {
+		t.Error("expected SkipResultCache for relative external time bounds")
+	}
+}
+
+func TestPlan_AbsoluteTimeBoundsAreCacheable(t *testing.T) {
+	p := New()
+	plan, err := p.Plan(PlanRequest{
+		Query: "search error",
+		From:  "2026-01-01T00:00:00Z",
+		To:    "2026-01-02T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if plan.SkipResultCache {
+		t.Error("did not expect SkipResultCache for absolute external time bounds")
+	}
+}
+
+func TestPlan_DynamicQueryTimeSyntaxSkipsResultCache(t *testing.T) {
+	p := New()
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "inline relative source time",
+			query: "FROM main[-1h] | stats count",
+		},
+		{
+			name:  "relative time predicate",
+			query: "FROM main | where _time >= -1h | stats count",
+		},
+		{
+			name:  "now time predicate",
+			query: "FROM main | where _time <= now() | stats count",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan, err := p.Plan(PlanRequest{Query: tt.query})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !plan.SkipResultCache {
+				t.Fatal("expected SkipResultCache")
+			}
+		})
+	}
 }
 
 func TestPlan_NoTimeBounds(t *testing.T) {
@@ -84,6 +134,17 @@ func TestPlan_NoTimeBounds(t *testing.T) {
 	}
 	if plan.ExternalTimeBounds != nil {
 		t.Error("expected nil ExternalTimeBounds when From/To are empty")
+	}
+}
+
+func TestPlan_InvalidTimeBounds(t *testing.T) {
+	p := New()
+	_, err := p.Plan(PlanRequest{
+		Query: "search error",
+		From:  "not-a-time",
+	})
+	if !errors.Is(err, server.ErrInvalidTimeBounds) {
+		t.Fatalf("error = %v, want ErrInvalidTimeBounds", err)
 	}
 }
 

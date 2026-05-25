@@ -134,7 +134,9 @@ func (sw *SpillWriter) WriteRow(row map[string]event.Value) error {
 	// Track estimated bytes written for SpillManager quota enforcement.
 	// A fixed estimate is used rather than Seek-based position tracking to
 	// avoid overhead on hot paths and interaction with encoder buffering.
-	sw.mgr.TrackBytes(estimatedSpillRowBytes)
+	if sw.mgr != nil {
+		sw.mgr.TrackBytes(estimatedSpillRowBytes)
+	}
 
 	return nil
 }
@@ -184,13 +186,15 @@ func compareSpillValues(a, b event.Value) int {
 // use CloseFile() instead of Close() — it always preserves the file.
 func (sw *SpillWriter) Close() error {
 	name := sw.file.Name()
-	sw.file.Close()
+	closeErr := sw.file.Close()
 
 	if sw.mgr == nil {
-		return os.Remove(name)
+		if rmErr := os.Remove(name); rmErr != nil && closeErr == nil {
+			return rmErr
+		}
 	}
 
-	return nil
+	return closeErr
 }
 
 // CloseFile closes the underlying file handle without removing it.
@@ -367,7 +371,15 @@ func newSpillMergerWithMgr(paths []string, sortFields []SortField, mgr *SpillMan
 	for i, r := range readers {
 		row, err := r.ReadRow()
 		if err != nil {
-			continue // exhausted or error — skip this reader
+			if errors.Is(err, io.EOF) {
+				continue
+			}
+
+			closeErr := closeSpillReaders(readers)
+			return nil, errors.Join(
+				fmt.Errorf("spill: prime reader %d: %w", i, err),
+				closeErr,
+			)
 		}
 		h.entries = append(h.entries, mergeEntry{row: row, index: i})
 	}
@@ -455,9 +467,8 @@ func (sm *SpillMerger) Next() (map[string]event.Value, error) {
 	result := entry.row
 
 	// Read the next row from the same reader and push it back.
-	nextRow, err := sm.readers[entry.index].ReadRow()
-	if err == nil {
-		heap.Push(sm.h, mergeEntry{row: nextRow, index: entry.index})
+	if err := sm.refill(entry.index); err != nil {
+		return nil, err
 	}
 
 	return result, nil
@@ -479,9 +490,8 @@ func (sm *SpillMerger) NextBatch(batchSize int) (*Batch, error) {
 		batch.AddRow(entry.row)
 
 		// Refill from the same reader.
-		nextRow, err := sm.readers[entry.index].ReadRow()
-		if err == nil {
-			heap.Push(sm.h, mergeEntry{row: nextRow, index: entry.index})
+		if err := sm.refill(entry.index); err != nil {
+			return nil, err
 		}
 	}
 
@@ -492,11 +502,35 @@ func (sm *SpillMerger) NextBatch(batchSize int) (*Batch, error) {
 	return batch, nil
 }
 
-// Close closes all spill readers.
-func (sm *SpillMerger) Close() error {
-	for _, r := range sm.readers {
-		r.Close()
+func (sm *SpillMerger) refill(index int) error {
+	nextRow, err := sm.readers[index].ReadRow()
+	if err == nil {
+		heap.Push(sm.h, mergeEntry{row: nextRow, index: index})
+
+		return nil
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("spill: refill reader %d: %w", index, err)
+}
+
+// Close closes all spill readers.
+func (sm *SpillMerger) Close() error {
+	return closeSpillReaders(sm.readers)
+}
+
+func closeSpillReaders(readers []*SpillReader) error {
+	var errs []error
+	for _, r := range readers {
+		if r == nil {
+			continue
+		}
+		if err := r.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }

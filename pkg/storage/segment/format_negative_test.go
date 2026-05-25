@@ -292,6 +292,16 @@ func TestV1BloomRegionHeaderValidation(t *testing.T) {
 	}
 }
 
+func TestDecodeFooter_HugeRowGroupCount_ReturnsCorrupt(t *testing.T) {
+	data := encodeFooterV2(&Footer{})
+	binary.LittleEndian.PutUint32(data[32:36], ^uint32(0))
+	rewriteFooterCRC(data)
+
+	if _, err := DecodeFooter(data); !errors.Is(err, ErrCorruptSegment) {
+		t.Fatalf("DecodeFooter err = %v, want ErrCorruptSegment", err)
+	}
+}
+
 func rewriteFooterCRC(data []byte) {
 	binary.LittleEndian.PutUint32(data[len(data)-4:], crc32.ChecksumIEEE(data[:len(data)-4]))
 }

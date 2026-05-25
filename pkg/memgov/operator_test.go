@@ -1,6 +1,7 @@
 package memgov
 
 import (
+	"errors"
 	"sync"
 	"testing"
 )
@@ -208,6 +209,19 @@ func TestUnit_OperatorMemory_Close_Idempotent(t *testing.T) {
 
 	if got := gov.TotalUsage().Allocated; got != 0 {
 		t.Errorf("Governor.Allocated = %d after double Close, want 0", got)
+	}
+}
+
+func TestUnit_OperatorMemory_ReserveAfterClose_ReturnsClosed(t *testing.T) {
+	gov := NewGovernor(GovernorConfig{TotalLimit: 100000})
+	om := NewOperatorMemory(gov, "test-op")
+	om.Close()
+
+	if err := om.Reserve(1); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Reserve after Close err = %v, want ErrClosed", err)
+	}
+	if lease, err := om.TryGrow(1); !errors.Is(err, ErrClosed) || lease != nil {
+		t.Fatalf("TryGrow after Close = (%v, %v), want nil,ErrClosed", lease, err)
 	}
 }
 

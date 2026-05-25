@@ -159,6 +159,8 @@ func (s *SortIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (s *SortIterator) Close() error {
+	var errs []error
+
 	// Transition to complete phase — memory can be reclaimed by coordinator.
 	if pn, ok := s.acct.(PhaseNotifier); ok {
 		pn.SetPhase(PhaseComplete)
@@ -166,7 +168,9 @@ func (s *SortIterator) Close() error {
 
 	// Close the merger first (closes all SpillReaders).
 	if s.merger != nil {
-		s.merger.Close()
+		if err := s.merger.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("sort: close spill merger: %w", err))
+		}
 		s.merger = nil
 	}
 
@@ -179,8 +183,11 @@ func (s *SortIterator) Close() error {
 	s.spillFiles = nil
 
 	s.acct.Close()
+	if err := s.child.Close(); err != nil {
+		errs = append(errs, err)
+	}
 
-	return s.child.Close()
+	return errors.Join(errs...)
 }
 
 // MemoryUsed returns the current tracked memory for this operator.

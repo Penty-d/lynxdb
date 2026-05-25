@@ -35,8 +35,8 @@ func DownloadWithProgress(ctx context.Context, artifact *Artifact, progress Prog
 	}
 	defer func() {
 		if err != nil {
-			tmpFile.Close()
-			os.Remove(tmpFile.Name())
+			_ = tmpFile.Close()
+			_ = os.Remove(tmpFile.Name())
 		}
 	}()
 
@@ -51,7 +51,9 @@ func DownloadWithProgress(ctx context.Context, artifact *Artifact, progress Prog
 	if err != nil {
 		return "", fmt.Errorf("upgrade.Download: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("upgrade.Download: HTTP %d", resp.StatusCode)
@@ -87,7 +89,7 @@ func DownloadWithProgress(ctx context.Context, artifact *Artifact, progress Prog
 	// Verify checksum.
 	actualHash := hex.EncodeToString(hasher.Sum(nil))
 	if !strings.EqualFold(actualHash, artifact.SHA256) {
-		os.Remove(tmpFile.Name())
+		_ = os.Remove(tmpFile.Name())
 		return "", fmt.Errorf(
 			"%w: expected %s, got %s",
 			ErrChecksumMismatch, artifact.SHA256, actualHash,

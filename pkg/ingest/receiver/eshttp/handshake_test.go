@@ -85,7 +85,9 @@ func TestHandshake_HEAD_NoBody_StatusOK(t *testing.T) {
 	h.ServeHTTP(rr, req)
 
 	resp := rr.Result()
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}

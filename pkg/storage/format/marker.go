@@ -131,6 +131,8 @@ func writeMarkerFile(root string, value uint16) error {
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func() {
+		_ = dir.Close()
+	}()
 	return dir.Sync()
 }

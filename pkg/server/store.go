@@ -227,7 +227,9 @@ func (s *StreamingServerStore) AggregatedStats() *enginepipeline.SegmentStreamSt
 // that require full event materialization.
 func (s *StreamingServerStore) MaterializeEvents(ctx context.Context, index string) ([]*event.Event, error) {
 	iter := s.GetEventIterator(index)
-	defer iter.Close()
+	defer func() {
+		_ = iter.Close()
+	}()
 
 	if err := iter.Init(ctx); err != nil {
 		return nil, err
@@ -1465,7 +1467,9 @@ func (e *Engine) runTransformAndAgg(
 
 		return nil
 	}
-	defer iter.Close()
+	defer func() {
+		_ = iter.Close()
+	}()
 
 	if initErr := iter.Init(ctx); initErr != nil {
 		e.logger.Warn("transform mini-pipeline init error", "error", initErr)

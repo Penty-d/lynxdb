@@ -1300,23 +1300,25 @@ func (p *Parser) parseRollup() (*RollupCommand, error) {
 	p.advance() // consume "rollup"
 	cmd := &RollupCommand{}
 
+rollupSpans:
 	for {
 		tok := p.peek()
-		if tok.Type == TokenDuration {
+		switch tok.Type {
+		case TokenDuration:
 			p.advance()
 			cmd.Spans = append(cmd.Spans, tok.Literal)
-		} else if tok.Type == TokenIdent {
+		case TokenIdent:
 			p.advance()
 			cmd.Spans = append(cmd.Spans, tok.Literal)
-		} else if tok.Type == TokenNumber {
+		case TokenNumber:
 			p.advance()
 			span := tok.Literal
 			if p.peek().Type == TokenIdent {
 				span += p.advance().Literal
 			}
 			cmd.Spans = append(cmd.Spans, span)
-		} else {
-			break
+		default:
+			break rollupSpans
 		}
 		if p.peek().Type != TokenComma {
 			break
@@ -2230,13 +2232,6 @@ func (p *Parser) parseUntable() (*UntableCommand, error) {
 	return &UntableCommand{XField: x.Literal, YNameField: yName.Literal, YDataField: yData.Literal}, nil
 }
 
-// parseTop parses: top [N] <field> [by <field>].
-func (p *Parser) parseTop() (*TopCommand, error) {
-	p.advance() // consume "top"
-
-	return p.parseTopRareBody(10)
-}
-
 // parseRare parses: rare [N] <field> [by <field>].
 func (p *Parser) parseRare() (*RareCommand, error) {
 	p.advance() // consume "rare"
@@ -2782,13 +2777,14 @@ func (p *Parser) parseUnpack(format string) (*UnpackCommand, error) {
 		case "prefix":
 			p.advance() // consume "prefix"
 			prefixTok := p.peek()
-			if prefixTok.Type == TokenString {
+			switch prefixTok.Type {
+			case TokenString:
 				p.advance()
 				cmd.Prefix = prefixTok.Literal
-			} else if prefixTok.Type == TokenIdent {
+			case TokenIdent:
 				p.advance()
 				cmd.Prefix = prefixTok.Literal
-			} else {
+			default:
 				return nil, fmt.Errorf("spl2: unpack_%s: expected prefix value, got %s", format, prefixTok.Type)
 			}
 
@@ -4609,9 +4605,11 @@ func (p *Parser) parseLynxParseBody() (Command, error) {
 	}
 
 	// Parse modifiers in any order: "as <ns>", "extract (<f1>, <f2>)", "if_missing".
+parsePackModifiers:
 	for {
 		tok := p.peek()
-		if tok.Type == TokenAs {
+		switch tok.Type {
+		case TokenAs:
 			// as <namespace> → prefix = namespace + "."
 			p.advance()
 			ns, err := p.expectIdent()
@@ -4619,7 +4617,7 @@ func (p *Parser) parseLynxParseBody() (Command, error) {
 				return nil, fmt.Errorf("spl2: parse: expected namespace after 'as'")
 			}
 			cmd.Prefix = ns.Literal + "."
-		} else if tok.Type == TokenExtract {
+		case TokenExtract:
 			// extract (<f1>, <f2>, ...)
 			p.advance()
 			if _, err := p.expect(TokenLParen); err != nil {
@@ -4640,11 +4638,11 @@ func (p *Parser) parseLynxParseBody() (Command, error) {
 				return nil, fmt.Errorf("spl2: parse: expected ')' after extract fields")
 			}
 			cmd.Fields = fieldList
-		} else if tok.Type == TokenIfMissing {
+		case TokenIfMissing:
 			p.advance()
 			cmd.KeepOriginal = true
-		} else {
-			break
+		default:
+			break parsePackModifiers
 		}
 	}
 
@@ -5477,7 +5475,7 @@ func (p *Parser) parseBaselineCmd() ([]Command, error) {
 	if err != nil {
 		return nil, fmt.Errorf("spl2: baseline requires a field name")
 	}
-	if p.peek().Type != TokenWindow && !(p.peek().Type == TokenIdent && strings.EqualFold(p.peek().Literal, "window")) {
+	if p.peek().Type != TokenWindow && (p.peek().Type != TokenIdent || !strings.EqualFold(p.peek().Literal, "window")) {
 		return nil, fmt.Errorf("spl2: baseline: expected 'window' at position %d", p.peek().Pos)
 	}
 	p.advance()

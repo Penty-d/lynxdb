@@ -159,7 +159,9 @@ func (r *BatcherReplicator) ReplicateBatch(
 		ch := make(chan result, len(peers))
 		for _, peer := range peers {
 			peer := peer
-			r.asyncSem <- struct{}{}
+			if err := r.acquireAsyncSlot(ctx); err != nil {
+				return fmt.Errorf("ingest.BatcherReplicator.ReplicateBatch: acquire async slot: %w", err)
+			}
 			go func() {
 				defer func() { <-r.asyncSem }()
 				err := r.sendToReplica(ctx, peer, peerAddrs[peer], shardID, entry)
@@ -169,7 +171,12 @@ func (r *BatcherReplicator) ReplicateBatch(
 
 		var firstErr error
 		for range peers {
-			res := <-ch
+			var res result
+			select {
+			case res = <-ch:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			if res.err != nil && firstErr == nil {
 				firstErr = res.err
 				r.logger.Warn("ISR replication failed",
@@ -183,6 +190,15 @@ func (r *BatcherReplicator) ReplicateBatch(
 
 	default:
 		return nil
+	}
+}
+
+func (r *BatcherReplicator) acquireAsyncSlot(ctx context.Context) error {
+	select {
+	case r.asyncSem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

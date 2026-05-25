@@ -538,13 +538,6 @@ func hashValue(h hash.Hash64, v event.Value, buf []byte) {
 	}
 }
 
-// findOrCreatePartialGroup looks up or creates a partial agg group by hash.
-func findOrCreatePartialGroup(groups map[uint64][]*PartialAggGroup, h uint64, ev *event.Event, spec *PartialAggSpec) *PartialAggGroup {
-	group, _ := findOrCreatePartialGroupWithBudget(groups, h, ev, spec, memgov.NopAccount())
-
-	return group
-}
-
 func findOrCreatePartialGroupWithBudget(
 	groups map[uint64][]*PartialAggGroup,
 	h uint64,

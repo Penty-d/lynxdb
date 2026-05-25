@@ -72,9 +72,7 @@ func uncommentYAMLTemplate(in []byte) []byte {
 			// Drop the leading `# ` but preserve the indent that followed it.
 			// e.g. "#   compression: lz4" -> "  compression: lz4"
 			indent := m[1]
-			if strings.HasPrefix(indent, " ") {
-				indent = indent[1:] // consume the single space immediately after `#`
-			}
+			indent = strings.TrimPrefix(indent, " ") // consume the single space immediately after `#`
 			b.WriteString(indent)
 			b.WriteString(m[2])
 			b.WriteByte('\n')

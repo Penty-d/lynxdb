@@ -3,6 +3,7 @@ package rest
 import (
 	"net/http"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/usecases"
@@ -26,6 +27,8 @@ func (s *Server) handleFieldValues(w http.ResponseWriter, r *http.Request) {
 	result, err := s.queryService.FieldValues(r.Context(), usecases.FieldValuesRequest{
 		FieldName: fieldName,
 		Limit:     limit,
+		From:      firstNonEmpty(r.URL.Query().Get("from"), r.URL.Query().Get("since")),
+		To:        r.URL.Query().Get("to"),
 	})
 	if err != nil {
 		respondInternalError(w, err.Error())
@@ -93,4 +96,14 @@ func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
 // Supports * (any sequence) and ? (any single char).
 func sourceGlobMatch(pattern, name string) (bool, error) {
 	return path.Match(pattern, name)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+
+	return ""
 }

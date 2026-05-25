@@ -63,8 +63,11 @@ func (sc *SegmentCacheConsumer) GetWithSize(key SegmentCacheKey) ([]*bufmgr.Fram
 	pinned := make([]*bufmgr.Frame, 0, len(entry.frames))
 	for _, f := range entry.frames {
 		pf, owned := sc.mgr.PinFrameIfOwned(f.ID, key.SegmentID)
-		if !owned {
+		if !owned || pf.Meta() != key {
 			// Frame was evicted — unpin any frames we already pinned.
+			if owned {
+				pf.Unpin()
+			}
 			for _, p := range pinned {
 				p.Unpin()
 			}
@@ -112,6 +115,7 @@ func (sc *SegmentCacheConsumer) Put(key SegmentCacheKey, data []byte) error {
 			return fmt.Errorf("bufmgr.SegmentCacheConsumer.Put: write frame: %w", err)
 		}
 
+		f.SetMeta(key)
 		f.Unpin()
 		frames = append(frames, f)
 		offset = end

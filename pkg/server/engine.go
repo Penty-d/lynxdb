@@ -526,7 +526,7 @@ func (e *Engine) Shutdown(timeout time.Duration) error {
 	// Close all mmaps (idempotent — drainAndClose may have already closed them).
 	for _, sh := range retired {
 		if sh.mmap != nil {
-			sh.mmap.Close()
+			_ = sh.mmap.Close()
 		}
 	}
 

@@ -283,8 +283,8 @@ func (e *Editor) Cursor(offsetX, offsetY int) *tea.Cursor {
 	}
 
 	blockStyle := e.inputBlockStyle()
-	c.Position.X += offsetX + blockStyle.GetBorderLeftSize() + blockStyle.GetPaddingLeft()
-	c.Position.Y += offsetY + blockStyle.GetBorderTopSize() + blockStyle.GetPaddingTop()
+	c.X += offsetX + blockStyle.GetBorderLeftSize() + blockStyle.GetPaddingLeft()
+	c.Y += offsetY + blockStyle.GetBorderTopSize() + blockStyle.GetPaddingTop()
 
 	return c
 }

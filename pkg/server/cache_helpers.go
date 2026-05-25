@@ -23,10 +23,6 @@ func pipelineRowsToResultRows(rows []map[string]event.Value) []spl2.ResultRow {
 	return result
 }
 
-func ensureDefaultEventMetadataFields(rows []spl2.ResultRow) {
-	canonicalizeEventMetadataFields(rows, true)
-}
-
 func canonicalizeEventMetadataFields(rows []spl2.ResultRow, addDefaults bool) {
 	for i := range rows {
 		fields := rows[i].Fields

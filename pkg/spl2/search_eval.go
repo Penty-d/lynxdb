@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
@@ -14,7 +15,6 @@ import (
 // It is used by both the pipeline engine and the old executor.
 type SearchEvaluator struct {
 	expr       SearchExpr
-	globCache  map[string]*regexp.Regexp
 	planCache  map[string]matchPlan
 	lowerCache map[string]string // cached lowered strings to avoid per-row allocation
 	// jsonCache caches the parsed JSON from _raw so that multiple field
@@ -29,10 +29,44 @@ type SearchEvaluator struct {
 func NewSearchEvaluator(expr SearchExpr) *SearchEvaluator {
 	return &SearchEvaluator{
 		expr:       expr,
-		globCache:  make(map[string]*regexp.Regexp),
 		planCache:  make(map[string]matchPlan),
 		lowerCache: make(map[string]string),
 	}
+}
+
+// globRegexCache is a process-wide cache of compiled glob regexes. Each query
+// creates a fresh SearchEvaluator, so a per-instance cache would recompile
+// identical user patterns across queries. The cache is soft-capped to avoid
+// unbounded growth from pathological inputs; once full, additional patterns
+// compile every call but are not stored.
+var globRegexCache = struct {
+	mu  sync.RWMutex
+	m   map[string]*regexp.Regexp
+	max int
+}{m: make(map[string]*regexp.Regexp), max: 4096}
+
+func compileGlobCached(key string, compile func() *regexp.Regexp) *regexp.Regexp {
+	globRegexCache.mu.RLock()
+	if re, ok := globRegexCache.m[key]; ok {
+		globRegexCache.mu.RUnlock()
+
+		return re
+	}
+	globRegexCache.mu.RUnlock()
+
+	re := compile()
+	globRegexCache.mu.Lock()
+	if existing, ok := globRegexCache.m[key]; ok {
+		globRegexCache.mu.Unlock()
+
+		return existing
+	}
+	if len(globRegexCache.m) < globRegexCache.max {
+		globRegexCache.m[key] = re
+	}
+	globRegexCache.mu.Unlock()
+
+	return re
 }
 
 // resolveField attempts to find a field value in the row. If the field is not
@@ -249,9 +283,10 @@ func (e *SearchEvaluator) evalCompare(cmp *SearchCompareExpr, row map[string]eve
 	// Resolve "source" alias: pipeline rows store the value under "_source"
 	// (the physical column name), but search expressions use "source".
 	field := cmp.Field
-	if field == "source" {
+	switch field {
+	case "source":
 		field = "_source"
-	} else if field == "sourcetype" {
+	case "sourcetype":
 		field = "_sourcetype"
 	}
 
@@ -294,9 +329,10 @@ func (e *SearchEvaluator) evalCompare(cmp *SearchCompareExpr, row map[string]eve
 func (e *SearchEvaluator) evalIn(in *SearchInExpr, row map[string]event.Value) bool {
 	// Resolve "source" alias: pipeline rows use "_source" as the physical column name.
 	field := in.Field
-	if field == "source" {
+	switch field {
+	case "source":
 		field = "_source"
-	} else if field == "sourcetype" {
+	case "sourcetype":
 		field = "_sourcetype"
 	}
 
@@ -379,11 +415,10 @@ func (e *SearchEvaluator) matchGlob(text, pattern string, caseInsensitive bool) 
 		key = "i:" + pattern
 	}
 
-	compiled, ok := e.globCache[key]
-	if !ok {
-		compiled = GlobToRegex(pattern, caseInsensitive)
-		e.globCache[key] = compiled
-	}
+	ci := caseInsensitive
+	compiled := compileGlobCached(key, func() *regexp.Regexp {
+		return GlobToRegex(pattern, ci)
+	})
 
 	return compiled.MatchString(text)
 }
@@ -396,11 +431,10 @@ func (e *SearchEvaluator) matchGlobContains(text, pattern string, caseInsensitiv
 		key = "ci:" + pattern
 	}
 
-	compiled, ok := e.globCache[key]
-	if !ok {
-		compiled = globToContainsRegex(pattern, caseInsensitive)
-		e.globCache[key] = compiled
-	}
+	ci := caseInsensitive
+	compiled := compileGlobCached(key, func() *regexp.Regexp {
+		return globToContainsRegex(pattern, ci)
+	})
 
 	return compiled.MatchString(text)
 }
@@ -497,10 +531,11 @@ func appendGlobClass(buf *strings.Builder, pattern string, start int) (int, bool
 
 	var class strings.Builder
 	class.WriteByte('[')
-	if pattern[i] == '!' {
+	switch pattern[i] {
+	case '!':
 		class.WriteByte('^')
 		i++
-	} else if pattern[i] == '^' {
+	case '^':
 		class.WriteByte('\\')
 		class.WriteByte('^')
 		i++

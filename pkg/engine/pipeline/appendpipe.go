@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
@@ -55,10 +56,12 @@ func (a *AppendpipeIterator) materialize(ctx context.Context) error {
 }
 
 func (a *AppendpipeIterator) Close() error {
+	var err error
 	if a.output != nil {
-		_ = a.output.Close()
+		err = errors.Join(err, a.output.Close())
 	}
-	return a.child.Close()
+	err = errors.Join(err, a.child.Close())
+	return err
 }
 
 func (a *AppendpipeIterator) Schema() []FieldInfo {

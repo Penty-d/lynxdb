@@ -74,7 +74,7 @@ func (e *Engine) buildStreamingPipelineWithGovernor(ctx context.Context, prog *s
 	iter := buildResult.Iterator
 
 	if err := iter.Init(ctx); err != nil {
-		iter.Close()
+		_ = iter.Close()
 		if buildResult.GovBudget != nil {
 			buildResult.GovBudget.Close()
 		}

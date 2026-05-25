@@ -23,6 +23,7 @@ type Plan struct {
 	Hints              *spl2.QueryHints
 	OptimizerStats     map[string]int
 	ExternalTimeBounds *spl2.TimeBounds
+	SkipResultCache    bool
 
 	// Profiling: populated by the planner for timing and optimizer rule details.
 	ParseDuration    time.Duration

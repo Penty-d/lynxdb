@@ -178,13 +178,9 @@ func ParseCommandForFormat(format DetectedFormat) string {
 		return "parse syslog(_raw)"
 	case FormatDocker:
 		return "parse docker(_raw)"
-	case FormatCSV:
-		return "parse csv(_raw)"
-	case FormatTSV:
-		return "parse tsv(_raw)"
 	default:
 		// JSON and logfmt are already handled by the default ingest pipeline.
-		// No explicit parse command needed.
+		// CSV and TSV can be detected, but they do not have parse unpackers yet.
 		return ""
 	}
 }

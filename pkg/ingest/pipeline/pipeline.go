@@ -83,49 +83,98 @@ func (p *KeyValueParser) Process(events []*event.Event) ([]*event.Event, error) 
 	for _, e := range events {
 		pairs := parseKeyValuePairs(e.Raw)
 		for k, v := range pairs {
-			// Set built-in fields directly on the struct so
-			// GetField returns them correctly.
-			switch k {
-			case "host":
-				if e.Host == "" {
-					e.Host = v
-				}
-			case "source":
-				if e.Source == "" {
-					e.Source = v
-				}
-			case "sourcetype":
-				if e.SourceType == "" {
-					e.SourceType = v
-				}
-			case "index":
-				if e.Index == "" {
-					e.Index = v
-				}
-			default:
-				e.SetField(k, event.StringValue(v))
+			if setBuiltinTagField(e, k, v) {
+				continue
 			}
+			e.SetField(k, event.StringValue(v))
 		}
 	}
 
 	return events, nil
 }
 
-var kvPattern = regexp.MustCompile(`(\w+)=("(?:[^"\\]|\\.)*"|[^\s,]+)`)
+// setBuiltinTagField writes v to the event's built-in tag slot (host, source,
+// sourcetype, index) when k names one of them AND the slot is currently empty.
+// Returns true if k matched a built-in tag — regardless of whether the slot
+// was updated — so callers can skip the fallback SetField path.
+func setBuiltinTagField(e *event.Event, k, v string) bool {
+	switch k {
+	case "host":
+		if e.Host == "" {
+			e.Host = v
+		}
+	case "source":
+		if e.Source == "" {
+			e.Source = v
+		}
+	case "sourcetype":
+		if e.SourceType == "" {
+			e.SourceType = v
+		}
+	case "index":
+		if e.Index == "" {
+			e.Index = v
+		}
+	default:
+		return false
+	}
+
+	return true
+}
 
 func parseKeyValuePairs(s string) map[string]string {
-	result := make(map[string]string)
-	matches := kvPattern.FindAllStringSubmatch(s, -1)
-	for _, m := range matches {
-		key := m[1]
-		value := m[2]
-		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
-			value = value[1 : len(value)-1]
+	result := make(map[string]string, 4)
+	for i := 0; i < len(s); {
+		for i < len(s) && !isKVKeyByte(s[i]) {
+			i++
+		}
+		keyStart := i
+		for i < len(s) && isKVKeyByte(s[i]) {
+			i++
+		}
+		if keyStart == i || i >= len(s) || s[i] != '=' {
+			continue
+		}
+		key := s[keyStart:i]
+		i++
+
+		valueStart := i
+		var value string
+		if i < len(s) && s[i] == '"' {
+			i++
+			valueStart = i
+			escaped := false
+			for i < len(s) {
+				if s[i] == '"' && !escaped {
+					break
+				}
+				escaped = s[i] == '\\' && !escaped
+				if s[i] != '\\' {
+					escaped = false
+				}
+				i++
+			}
+			value = s[valueStart:i]
+			if i < len(s) && s[i] == '"' {
+				i++
+			}
+		} else {
+			for i < len(s) && s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r' && s[i] != ',' {
+				i++
+			}
+			value = s[valueStart:i]
 		}
 		result[key] = value
 	}
 
 	return result
+}
+
+func isKVKeyByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9') ||
+		b == '_'
 }
 
 // Sentinel errors for tryParseTime — avoid fmt.Errorf allocations on hot path.
@@ -163,6 +212,10 @@ func DefaultTimestampNormalizer() *TimestampNormalizer {
 }
 
 func (t *TimestampNormalizer) Process(events []*event.Event) ([]*event.Event, error) {
+	// Snapshot the current year once per batch — year-zero timestamps
+	// (e.g. syslog "Jan 02 15:04:05") would otherwise call time.Now() per event.
+	now := time.Now()
+	currentYear := now.Year()
 	for _, e := range events {
 		if !e.Time.IsZero() {
 			continue
@@ -171,7 +224,7 @@ func (t *TimestampNormalizer) Process(events []*event.Event) ([]*event.Event, er
 		if v := t.hint.Load(); v != nil {
 			h := v.(timestampHint)
 			if h.fmtIdx >= 0 && h.fmtIdx < len(t.Formats) {
-				if ts, ok := tryParseExact(e.Raw, h.pos, h.length, t.Formats[h.fmtIdx]); ok {
+				if ts, ok := tryParseExact(e.Raw, h.pos, h.length, t.Formats[h.fmtIdx], currentYear); ok {
 					e.Time = ts
 					continue
 				}
@@ -179,14 +232,14 @@ func (t *TimestampNormalizer) Process(events []*event.Event) ([]*event.Event, er
 		}
 		// Slow path: scan all formats and positions.
 		for fi, format := range t.Formats {
-			if ts, pos, length, err := tryParseTime(e.Raw, format); err == nil {
+			if ts, pos, length, err := tryParseTime(e.Raw, format, currentYear); err == nil {
 				e.Time = ts
 				t.hint.Store(timestampHint{fmtIdx: fi, pos: pos, length: length})
 				break
 			}
 		}
 		if e.Time.IsZero() {
-			e.Time = time.Now()
+			e.Time = now
 		}
 	}
 
@@ -194,7 +247,7 @@ func (t *TimestampNormalizer) Process(events []*event.Event) ([]*event.Event, er
 }
 
 // tryParseExact tries a single time.Parse at an exact (position, length) — the cached hint path.
-func tryParseExact(raw string, pos, length int, format string) (time.Time, bool) {
+func tryParseExact(raw string, pos, length int, format string, currentYear int) (time.Time, bool) {
 	end := pos + length
 	if pos < 0 || end > len(raw) {
 		return time.Time{}, false
@@ -204,7 +257,7 @@ func tryParseExact(raw string, pos, length int, format string) (time.Time, bool)
 		return time.Time{}, false
 	}
 	if t.Year() == 0 {
-		t = t.AddDate(time.Now().Year(), 0, 0)
+		t = t.AddDate(currentYear, 0, 0)
 	}
 	return t, true
 }
@@ -225,14 +278,14 @@ func looksLikeTimestamp(raw string, start int, format string) bool {
 	return true
 }
 
-func tryParseTime(raw, format string) (time.Time, int, int, error) {
+func tryParseTime(raw, format string, currentYear int) (time.Time, int, int, error) {
 	fmtLen := len(format)
 	if len(raw) < fmtLen {
 		return time.Time{}, 0, 0, errTSTooShort
 	}
 	// Try at position 0 first (fast path).
 	if looksLikeTimestamp(raw, 0, format) {
-		if t, length, ok := tryParseAt(raw, 0, format, fmtLen); ok {
+		if t, length, ok := tryParseAt(raw, 0, format, fmtLen, currentYear); ok {
 			return t, 0, length, nil
 		}
 	}
@@ -245,7 +298,7 @@ func tryParseTime(raw, format string) (time.Time, int, int, error) {
 		if raw[i] == ' ' || raw[i] == '"' {
 			pos := i + 1
 			if looksLikeTimestamp(raw, pos, format) {
-				if t, length, ok := tryParseAt(raw, pos, format, fmtLen); ok {
+				if t, length, ok := tryParseAt(raw, pos, format, fmtLen, currentYear); ok {
 					return t, pos, length, nil
 				}
 			}
@@ -255,7 +308,7 @@ func tryParseTime(raw, format string) (time.Time, int, int, error) {
 	return time.Time{}, 0, 0, errTSNoMatch
 }
 
-func tryParseAt(raw string, start int, format string, fmtLen int) (time.Time, int, bool) {
+func tryParseAt(raw string, start int, format string, fmtLen, currentYear int) (time.Time, int, bool) {
 	maxEnd := start + fmtLen + 10
 	if maxEnd > len(raw) {
 		maxEnd = len(raw)
@@ -265,7 +318,7 @@ func tryParseAt(raw string, start int, format string, fmtLen int) (time.Time, in
 		t, err := time.Parse(format, raw[start:end])
 		if err == nil {
 			if t.Year() == 0 {
-				t = t.AddDate(time.Now().Year(), 0, 0)
+				t = t.AddDate(currentYear, 0, 0)
 			}
 			return t, end - start, true
 		}
@@ -391,37 +444,18 @@ func (p *MetadataOnlyParser) Process(events []*event.Event) ([]*event.Event, err
 				switch nv := v.(type) {
 				case float64:
 					strVal = fmt.Sprintf("%g", nv)
-					ok = true
 				case bool:
 					strVal = fmt.Sprintf("%t", nv)
-					ok = true
 				default:
 					continue
 				}
 			}
-			switch k {
-			case "host":
-				if e.Host == "" {
-					e.Host = strVal
-				}
-			case "source":
-				if e.Source == "" {
-					e.Source = strVal
-				}
-			case "sourcetype":
-				if e.SourceType == "" {
-					e.SourceType = strVal
-				}
-			case "index":
-				if e.Index == "" {
-					e.Index = strVal
-				}
-			case "level":
-				e.SetField("level", event.StringValue(strVal))
-			default:
-				// Timestamp fields — set as string field for TimestampNormalizer to pick up.
-				e.SetField(k, event.StringValue(strVal))
+			if setBuiltinTagField(e, k, strVal) {
+				continue
 			}
+			// level + timestamp fields fall through to SetField — TimestampNormalizer
+			// picks up the timestamp candidates from there.
+			e.SetField(k, event.StringValue(strVal))
 		}
 	}
 	return events, nil
@@ -609,18 +643,33 @@ func SelectivePipeline(requiredFields map[string]bool) *Pipeline {
 
 // SplitRawLines splits raw text into individual events by newline.
 func SplitRawLines(raw, source, sourceType string) []*event.Event {
-	lines := strings.Split(raw, "\n")
-	var events []*event.Event
-	for _, line := range lines {
+	events := make([]*event.Event, 0, strings.Count(raw, "\n")+1)
+	start := 0
+	for start <= len(raw) {
+		end := strings.IndexByte(raw[start:], '\n')
+		if end < 0 {
+			end = len(raw)
+		} else {
+			end += start
+		}
+		line := raw[start:end]
 		// Trim trailing \r (Windows line endings) but avoid full TrimSpace scan.
-		line = strings.TrimRight(line, "\r")
+		line = strings.TrimSuffix(line, "\r")
 		if isBlankLine(line) {
+			if end == len(raw) {
+				break
+			}
+			start = end + 1
 			continue
 		}
 		e := event.NewEvent(time.Time{}, line)
 		e.Source = source
 		e.SourceType = sourceType
 		events = append(events, e)
+		if end == len(raw) {
+			break
+		}
+		start = end + 1
 	}
 
 	return events

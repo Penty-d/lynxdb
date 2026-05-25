@@ -1,6 +1,7 @@
 package memgov
 
 import (
+	"errors"
 	"sync"
 	"testing"
 )
@@ -356,6 +357,43 @@ func TestConcurrent_QueryBudget_BorrowAndClose_NoRace(t *testing.T) {
 
 	wg.Wait()
 	qb.Close()
+}
+
+func TestConcurrent_LeaseReleaseAndQueryBudgetClose_Idempotent(t *testing.T) {
+	gov := NewGovernor(GovernorConfig{TotalLimit: 100000})
+	qb := NewQueryBudget(gov, "test-query")
+	lease, err := qb.Borrow(ClassSpillable, 1024)
+	if err != nil {
+		t.Fatalf("Borrow: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lease.Release()
+			qb.Close()
+		}()
+	}
+	wg.Wait()
+
+	if got := gov.TotalUsage().Allocated; got != 0 {
+		t.Fatalf("allocated = %d, want 0", got)
+	}
+}
+
+func TestUnit_QueryBudget_BorrowAfterClose_ReturnsClosed(t *testing.T) {
+	gov := NewGovernor(GovernorConfig{TotalLimit: 100000})
+	qb := NewQueryBudget(gov, "test-query")
+	qb.Close()
+
+	if _, err := qb.Borrow(ClassSpillable, 1); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Borrow after Close err = %v, want ErrClosed", err)
+	}
+	if lease, ok := qb.TryBorrow(ClassSpillable, 1); ok || lease != nil {
+		t.Fatalf("TryBorrow after Close = (%v, %v), want nil,false", lease, ok)
+	}
 }
 
 func TestUnit_QueryBudget_LeaseReleasedIndependently_StillCleanedOnClose(t *testing.T) {

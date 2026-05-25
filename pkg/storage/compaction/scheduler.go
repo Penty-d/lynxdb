@@ -326,8 +326,7 @@ func (s *Scheduler) worker(ctx context.Context, id int) {
 		}
 
 		// Find the first job whose (index, partition) is not already being compacted.
-		var job *Job
-		job = s.popAvailableJob()
+		job := s.popAvailableJob()
 		if job == nil {
 			// All queued jobs are for (index, partition) pairs currently being compacted.
 			// Wait for a signal (job completion or new submission).

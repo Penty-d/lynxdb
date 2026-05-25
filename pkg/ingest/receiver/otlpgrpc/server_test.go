@@ -109,11 +109,9 @@ func startTestReceiver(t *testing.T, submit SubmitFunc) *Receiver {
 
 func dialReceiver(t *testing.T, r *Receiver) *grpc.ClientConn {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, err := grpc.DialContext(ctx, r.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	conn, err := grpc.NewClient("passthrough:///"+r.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		t.Fatalf("DialContext: %v", err)
+		t.Fatalf("NewClient: %v", err)
 	}
 	return conn
 }

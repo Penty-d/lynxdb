@@ -204,9 +204,9 @@ lynxdb query 'level=FATAL' --fail-on-empty || echo "No fatal errors found"
 lynxdb query 'level=error | stats count by source' --copy
 ```
 
-**Console output -- server mode, TTY (interactive TUI):**
+**Console output -- server mode, TTY:**
 
-When stdout is a terminal and format is `auto`, the query runs in TUI mode with a live progress spinner:
+When stdout is a terminal and format is `auto`, the query prints formatted results with stats:
 
 ```
   . Scanning segments...  1.23s
@@ -1797,27 +1797,11 @@ LYNXDB_LISTEN=0.0.0.0:4000 LYNXDB_LOG_LEVEL=debug lynxdb server
 
 ---
 
-## TUI Mode
+## Server Mode Output
 
-When `lynxdb query` runs against a server (not file/stdin) and stdout is a terminal with `--format auto`, it launches an interactive TUI.
+When `lynxdb query` runs against a server (not file/stdin) and stdout is a terminal with `--format auto`, it renders formatted results and a stats footer.
 
-**Features:**
-
-- Animated spinner during query execution
-- Live progress reporting (phase, segment scan progress, rows read, skip stats)
-- Colorized JSON output with syntax highlighting
-- Numbered results (`#1`, `#2`, ...)
-- Detailed stats footer (results, scanned events, filter ratio, parts, buffered events, timing)
-- `Ctrl+C` to cancel
-
-**Query execution flow in TUI mode:**
-
-1. Job submitted to server in async mode (`wait: 0`)
-2. TUI polls `/api/v1/query/jobs/{id}` every 80ms for progress updates
-3. Progress is displayed in real-time (phase, segments scanned/skipped, rows read)
-4. On completion, results and stats are rendered
-
-**To disable TUI** (force plain output even in terminal):
+**To force machine-readable output in a terminal:**
 
 ```bash
 lynxdb query 'FROM main | stats count' --format json

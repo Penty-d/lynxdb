@@ -87,7 +87,7 @@ func (j *JsonCmdIterator) Next(ctx context.Context) (*Batch, error) {
 		// Fast path: use the flattening parser for dot-only paths (or all paths
 		// when no bracket paths are present and no specific paths are requested).
 		if j.paths != nil || j.bracketPaths == nil {
-			j.parser.Parse(srcStr, func(key string, val event.Value) bool {
+			_ = j.parser.Parse(srcStr, func(key string, val event.Value) bool {
 				outName := key
 				if j.paths != nil {
 					alias, ok := j.paths[key]

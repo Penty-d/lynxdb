@@ -269,8 +269,8 @@ func TestModelViewPlacesRealEditorCursor(t *testing.T) {
 	if view.Cursor == nil {
 		t.Fatal("editor view should expose a real cursor")
 	}
-	if view.Cursor.Position.Y != 1+model.mainHeight()+1 {
-		t.Fatalf("cursor y = %d, want %d", view.Cursor.Position.Y, 1+model.mainHeight()+1)
+	if view.Cursor.Y != 1+model.mainHeight()+1 {
+		t.Fatalf("cursor y = %d, want %d", view.Cursor.Y, 1+model.mainHeight()+1)
 	}
 }
 

@@ -42,7 +42,7 @@ func TestAssignShard_TimeBucketing(t *testing.T) {
 	ts3 := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
 	s3 := AssignShard("nginx", "web-01", "main", ts3, cfg)
 
-	if s1.TimeBucket == s3.TimeBucket {
+	if s1.TimeBucket.Equal(s3.TimeBucket) {
 		t.Errorf("different-day timestamps got same bucket: %v", s1.TimeBucket)
 	}
 }

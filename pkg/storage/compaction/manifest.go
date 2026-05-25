@@ -102,22 +102,33 @@ func (ms *ManifestStore) Complete(m *Manifest) error {
 		return fmt.Errorf("compaction.ManifestStore.Complete: marshal: %w", err)
 	}
 
-	// Atomic write to history directory.
+	// Atomic write to history directory. Use a unique temp file so concurrent
+	// completions cannot race on a shared "<id>.json.tmp" path.
 	histPath := filepath.Join(ms.historyDir, m.ID+".json")
-	tmpPath := histPath + ".tmp"
+	tmp, err := os.CreateTemp(ms.historyDir, m.ID+".json.*.tmp")
+	if err != nil {
+		return fmt.Errorf("compaction.ManifestStore.Complete: create history tmp: %w", err)
+	}
+	tmpPath := tmp.Name()
 
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("compaction.ManifestStore.Complete: write history: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("compaction.ManifestStore.Complete: close history: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, histPath); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 
 		return fmt.Errorf("compaction.ManifestStore.Complete: rename history: %w", err)
 	}
 
 	// Remove from pending.
-	ms.Remove(m.ID)
+	_ = ms.Remove(m.ID)
 
 	// Enforce history retention limit.
 	ms.trimHistory()
@@ -213,6 +224,10 @@ func (ms *ManifestStore) trimHistory() {
 	if len(entries) <= maxHistoryEntries {
 		return
 	}
+	entries = compactManifestHistoryEntries(entries)
+	if len(entries) <= maxHistoryEntries {
+		return
+	}
 
 	// Sort entries by name (which includes timestamp, so oldest first).
 	sort.Slice(entries, func(i, j int) bool {
@@ -229,6 +244,18 @@ func (ms *ManifestStore) trimHistory() {
 	}
 }
 
+func compactManifestHistoryEntries(entries []os.DirEntry) []os.DirEntry {
+	n := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		entries[n] = entry
+		n++
+	}
+	return entries[:n]
+}
+
 // CleanupInterrupted handles recovery for interrupted compactions.
 // For each pending manifest, it removes the manifest file. The actual segment
 // cleanup is handled by the filesystem scan (which ignores tmp_ files) and the
@@ -238,7 +265,7 @@ func (ms *ManifestStore) CleanupInterrupted(manifests []*Manifest, existsFn func
 	var cleaned []string
 
 	for _, m := range manifests {
-		ms.Remove(m.ID)
+		_ = ms.Remove(m.ID)
 		cleaned = append(cleaned, m.ID)
 	}
 

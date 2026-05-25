@@ -615,7 +615,7 @@ func sendESBulkImportBatch(lines []string) error {
 		return fmt.Errorf("send batch: %w", err)
 	}
 	if result.Errors {
-		return fmt.Errorf("Elasticsearch bulk response reported item errors")
+		return fmt.Errorf("elasticsearch bulk response reported item errors")
 	}
 
 	return nil

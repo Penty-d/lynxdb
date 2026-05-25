@@ -59,7 +59,9 @@ func TestCacheHitReturnsCorrectResults(t *testing.T) {
 			},
 		},
 	}
-	cs.Put(ctx, key, result)
+	if err := cs.Put(ctx, key, result); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := cs.Get(ctx, key)
 	if err != nil {
@@ -83,7 +85,9 @@ func TestCacheInvalidationOnSegmentCRCChange(t *testing.T) {
 	key1 := Key{IndexName: "idx", SegmentID: "seg1", SegmentCRC32: 0xAABBCCDD, QueryHash: 42}
 	key2 := Key{IndexName: "idx", SegmentID: "seg1", SegmentCRC32: 0x11223344, QueryHash: 42} // different CRC
 
-	cs.Put(ctx, key1, &CachedResult{Batches: []CachedBatch{{Len: 1}}})
+	if err := cs.Put(ctx, key1, &CachedResult{Batches: []CachedBatch{{Len: 1}}}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Different CRC → different key → miss
 	got, _ := cs.Get(ctx, key2)
@@ -97,7 +101,9 @@ func TestCacheTTLExpiration(t *testing.T) {
 	ctx := context.Background()
 
 	key := Key{IndexName: "idx", SegmentID: "seg1", QueryHash: 42}
-	cs.Put(ctx, key, &CachedResult{Batches: []CachedBatch{{Len: 1}}})
+	if err := cs.Put(ctx, key, &CachedResult{Batches: []CachedBatch{{Len: 1}}}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Should hit immediately
 	got, _ := cs.Get(ctx, key)
@@ -144,7 +150,9 @@ func TestCacheCLOCKEviction(t *testing.T) {
 
 	// Now items 1,2,3 have refBit=0 (cleared during scan), item 4 has refBit=1.
 	// Access item 2 to give it a second chance (refBit=1).
-	cs.Get(ctx, Key{IndexName: "idx", SegmentID: "seg1", QueryHash: 2})
+	if _, err := cs.Get(ctx, Key{IndexName: "idx", SegmentID: "seg1", QueryHash: 2}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Insert item 5: forces second eviction.
 	// Clock hand at position after item 0's slot. Items 1(ref=0), 2(ref=1), 3(ref=0), 4(ref=1).
@@ -303,19 +311,23 @@ func TestCachePersistenceAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
 
 	ctx := context.Background()
 	key := Key{IndexName: "idx", SegmentID: "seg1", QueryHash: 42}
 
 	// Write to cache with persistence
 	cs1 := NewStore(dir, 1<<20, time.Hour)
-	cs1.Put(ctx, key, &CachedResult{
+	if err := cs1.Put(ctx, key, &CachedResult{
 		Batches: []CachedBatch{{
 			Columns: map[string][]CachedValue{"x": {{Type: 2, Num: 99}}},
 			Len:     1,
 		}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	cs1.Close() // drain async disk writes before simulating restart
 
 	// Create new cache store (simulates restart)
@@ -343,7 +355,9 @@ func TestCacheConcurrentAccess(t *testing.T) {
 				cs.Put(ctx, key, &CachedResult{
 					Batches: []CachedBatch{{Len: 1}},
 				})
-				cs.Get(ctx, key)
+				if _, err := cs.Get(ctx, key); err != nil {
+					t.Error(err)
+				}
 			}
 		}(i)
 	}
@@ -360,7 +374,9 @@ func TestCacheClearCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
 
 	cs := NewStore(dir, 1<<20, time.Hour)
 	ctx := context.Background()

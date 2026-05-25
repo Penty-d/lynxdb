@@ -146,17 +146,19 @@ func TestServer_OTLPGRPCReceiver_Protobuf(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, err := grpc.DialContext(
-		ctx,
-		srv.OTLPGRPCAddr(),
+	conn, err := grpc.NewClient(
+		"passthrough:///"+srv.OTLPGRPCAddr(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUserAgent("opentelemetry-collector-contrib/0.105.0"),
-		grpc.WithBlock(),
 	)
 	if err != nil {
-		t.Fatalf("DialContext: %v", err)
+		t.Fatalf("NewClient: %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("close grpc client: %v", err)
+		}
+	}()
 
 	_, err = logscollector.NewLogsServiceClient(conn).Export(ctx, &logscollector.ExportLogsServiceRequest{
 		ResourceLogs: []*logspb.ResourceLogs{{
@@ -185,11 +187,15 @@ func TestServer_OTLPGRPCReceiver_GzipProtobuf(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, err := grpc.DialContext(ctx, srv.OTLPGRPCAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	conn, err := grpc.NewClient("passthrough:///"+srv.OTLPGRPCAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		t.Fatalf("DialContext: %v", err)
+		t.Fatalf("NewClient: %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("close grpc client: %v", err)
+		}
+	}()
 
 	_, err = logscollector.NewLogsServiceClient(conn).Export(ctx, &logscollector.ExportLogsServiceRequest{
 		ResourceLogs: []*logspb.ResourceLogs{{

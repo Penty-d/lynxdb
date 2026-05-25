@@ -29,7 +29,7 @@ func newExplainErrorCmd() *cobra.Command {
 func runExplainError(code string) error {
 	info, ok := errorExplanations[code]
 	if !ok {
-		ui.Stderr.RenderError(fmt.Errorf("unknown error code %q. Run 'lynxdb explain-error LF-E101' for an example.", code))
+		ui.Stderr.RenderError(fmt.Errorf("unknown error code %q. Run 'lynxdb explain-error LF-E101' for an example", code))
 
 		return nil
 	}

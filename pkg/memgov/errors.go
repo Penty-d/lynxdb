@@ -5,6 +5,9 @@ import (
 	"fmt"
 )
 
+// ErrClosed is returned when a memory account is used after Close.
+var ErrClosed = errors.New("memgov: memory account closed")
+
 // BudgetExceededError carries context for diagnostics when an operator
 // exceeds the per-query memory budget.
 type BudgetExceededError struct {

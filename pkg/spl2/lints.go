@@ -912,7 +912,8 @@ func lintReservedFieldList(tokens []Token, start int, allowDirections bool) []Qu
 		if !isIdentLike(tok.Type) && tok.Type != TokenGlob {
 			return lints
 		}
-		if peekTokenType(tokens, i+1) != TokenComma && !(allowDirections && isSortDirection(peekTokenType(tokens, i+1))) {
+		nextType := peekTokenType(tokens, i+1)
+		if nextType != TokenComma && (!allowDirections || !isSortDirection(nextType)) {
 			return lints
 		}
 	}

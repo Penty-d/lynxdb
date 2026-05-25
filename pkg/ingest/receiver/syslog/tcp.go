@@ -52,7 +52,7 @@ func (r *Receiver) handleTCPConn(conn net.Conn) {
 	}
 
 	batch := make([]*event.Event, 0, cfg.BatchSize)
-	timer := time.NewTimer(cfg.BatchTimeout.Duration())
+	timer := newStoppedTimer()
 	defer timer.Stop()
 
 	flush := func() bool {
@@ -67,12 +67,15 @@ func (r *Receiver) handleTCPConn(conn net.Conn) {
 				_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 				time.Sleep(time.Second)
 				batch = batch[:0]
+				stopTimer(timer)
 				return true
 			}
 			batch = batch[:0]
+			stopTimer(timer)
 			return false
 		}
 		batch = batch[:0]
+		stopTimer(timer)
 		return true
 	}
 
@@ -119,6 +122,9 @@ func (r *Receiver) handleTCPConn(conn net.Conn) {
 		if e.ParseError {
 			r.metrics.IncParseError(dialect)
 		}
+		if len(batch) == 0 {
+			resetTimer(timer, cfg.BatchTimeout.Duration())
+		}
 		batch = append(batch, e)
 		if len(batch) >= cfg.BatchSize && !flush() {
 			return
@@ -129,7 +135,6 @@ func (r *Receiver) handleTCPConn(conn net.Conn) {
 			if !flush() {
 				return
 			}
-			timer.Reset(cfg.BatchTimeout.Duration())
 		default:
 		}
 	}
@@ -138,4 +143,26 @@ func (r *Receiver) handleTCPConn(conn net.Conn) {
 func isTimeout(err error) bool {
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
+}
+
+func newStoppedTimer() *time.Timer {
+	timer := time.NewTimer(time.Hour)
+	stopTimer(timer)
+	return timer
+}
+
+func resetTimer(timer *time.Timer, d time.Duration) {
+	stopTimer(timer)
+	if d > 0 {
+		timer.Reset(d)
+	}
+}
+
+func stopTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
 }

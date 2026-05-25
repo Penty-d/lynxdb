@@ -118,21 +118,23 @@ func (c BatcherConfig) withDefaults() BatcherConfig {
 //
 // AsyncBatcher is safe for concurrent use from multiple goroutines.
 type AsyncBatcher struct {
-	mu       sync.Mutex
-	flushMu  sync.Mutex
-	shards   map[batchKey]*batchShard // (index, partition) -> shard
-	writer   *Writer
-	registry *Registry
-	cfg      BatcherConfig
-	logger   *slog.Logger
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	flushCh  chan flushTarget
-	flushWG  sync.WaitGroup
-	closeCh  sync.Once
+	mu        sync.Mutex
+	flushMu   sync.Mutex
+	flushChMu sync.RWMutex
+	shards    map[batchKey]*batchShard // (index, partition) -> shard
+	writer    *Writer
+	registry  *Registry
+	cfg       BatcherConfig
+	logger    *slog.Logger
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	flushCh   chan flushTarget
+	flushWG   sync.WaitGroup
+	closeCh   sync.Once
+	closed    bool
 
 	pendingMu      sync.Mutex
-	pendingCond    *sync.Cond
+	pendingDone    chan struct{}
 	pendingFlushes int
 	pendingByKey   map[batchKey]int
 	asyncFlushErr  error
@@ -175,8 +177,6 @@ func NewAsyncBatcher(writer *Writer, registry *Registry, cfg BatcherConfig, logg
 		logger:       logger,
 		pendingByKey: make(map[batchKey]int),
 	}
-	b.pendingCond = sync.NewCond(&b.pendingMu)
-
 	return b
 }
 
@@ -231,6 +231,10 @@ func (b *AsyncBatcher) AddContext(ctx context.Context, events []*event.Event) er
 
 	// Group events by index under lock, check thresholds.
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return fmt.Errorf("part.AsyncBatcher.Add: closed")
+	}
 
 	var toFlush []flushTarget
 
@@ -294,7 +298,21 @@ func (b *AsyncBatcher) enqueueThresholdFlush(ctx context.Context, ft flushTarget
 		return b.flushEvents(b.writeContext(), ft.key, ft.events)
 	}
 
+	b.flushChMu.RLock()
+
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		b.flushChMu.RUnlock()
+		return b.flushEvents(ctx, ft.key, ft.events)
+	}
+	b.mu.Unlock()
+	defer b.flushChMu.RUnlock()
+
 	b.pendingMu.Lock()
+	if b.pendingFlushes == 0 {
+		b.pendingDone = make(chan struct{})
+	}
 	b.pendingFlushes++
 	b.pendingByKey[ft.key]++
 	b.pendingMu.Unlock()
@@ -312,7 +330,7 @@ func (b *AsyncBatcher) enqueueThresholdFlush(ctx context.Context, ft flushTarget
 func (b *AsyncBatcher) thresholdFlushLoop() {
 	defer b.flushWG.Done()
 	for ft := range b.flushCh {
-		err := b.flushEvents(context.Background(), ft.key, ft.events)
+		err := b.flushEvents(b.writeContext(), ft.key, ft.events)
 		if err != nil {
 			b.logger.Error("threshold flush failed", "index", ft.key.index,
 				"partition", ft.key.partition,
@@ -330,12 +348,15 @@ func (b *AsyncBatcher) finishThresholdFlush(key batchKey, err error) {
 		b.asyncFlushErr = err
 	}
 	b.pendingFlushes--
+	if b.pendingFlushes == 0 && b.pendingDone != nil {
+		close(b.pendingDone)
+		b.pendingDone = nil
+	}
 	if n := b.pendingByKey[key]; n <= 1 {
 		delete(b.pendingByKey, key)
 	} else {
 		b.pendingByKey[key] = n - 1
 	}
-	b.pendingCond.Broadcast()
 }
 
 // checkBackpressure applies ClickHouse-style backpressure based on active flush
@@ -490,7 +511,7 @@ func (b *AsyncBatcher) FlushContext(ctx context.Context) error {
 		}
 	}
 
-	if err := b.waitThresholdFlushes(); err != nil && firstErr == nil {
+	if err := b.waitThresholdFlushes(ctx); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("part.AsyncBatcher.Flush: threshold flush: %w", err)
 	}
 
@@ -504,30 +525,74 @@ func (b *AsyncBatcher) Close() error {
 
 // CloseContext flushes remaining events and stops the background goroutine.
 func (b *AsyncBatcher) CloseContext(ctx context.Context) error {
-	// Stop the idle flush loop.
+	b.mu.Lock()
+	b.closed = true
+	b.mu.Unlock()
+
+	// Final flush before canceling the run context so queued threshold flushes
+	// can drain cleanly during normal shutdown.
+	err := b.FlushContext(ctx)
+
 	if b.cancel != nil {
 		b.cancel()
 	}
-	b.wg.Wait()
+	if waitErr := waitGroupContext(ctx, &b.wg); err == nil && waitErr != nil {
+		err = waitErr
+	}
 
-	// Final flush.
-	err := b.FlushContext(ctx)
 	if b.flushCh != nil {
+		var waitErr error
 		b.closeCh.Do(func() {
+			b.flushChMu.Lock()
 			close(b.flushCh)
-			b.flushWG.Wait()
+			b.flushChMu.Unlock()
+			done := make(chan struct{})
+			go func() {
+				b.flushWG.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				waitErr = ctx.Err()
+			}
 		})
+		if err == nil && waitErr != nil {
+			err = waitErr
+		}
 	}
 
 	return err
 }
 
-func (b *AsyncBatcher) waitThresholdFlushes() error {
+func waitGroupContext(ctx context.Context, wg *sync.WaitGroup) error {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (b *AsyncBatcher) waitThresholdFlushes(ctx context.Context) error {
 	b.pendingMu.Lock()
 	defer b.pendingMu.Unlock()
 
 	for b.pendingFlushes > 0 {
-		b.pendingCond.Wait()
+		done := b.pendingDone
+		b.pendingMu.Unlock()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			b.pendingMu.Lock()
+			return ctx.Err()
+		}
+		b.pendingMu.Lock()
 	}
 	err := b.asyncFlushErr
 	b.asyncFlushErr = nil

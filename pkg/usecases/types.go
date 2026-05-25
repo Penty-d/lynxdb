@@ -19,19 +19,20 @@ const (
 
 // SubmitRequest is the domain input for query submission.
 type SubmitRequest struct {
-	Query         string
-	From          string
-	To            string
-	Limit         int
-	Offset        int
-	Mode          QueryMode
-	Wait          time.Duration       // used in hybrid mode
-	Profile       string              // "basic", "full", "trace" — passed to engine for profiling
-	NoLint        bool                // disables advisory query lints
-	NoSuggestions bool                // disables advisory query suggestions
-	LintLimit     int                 // max lints to return; default 5
-	LintFull      bool                // true returns all advisory lints
-	Rewrites      []spl2.QueryRewrite // visible query normalizer rewrites
+	Query           string
+	From            string
+	To              string
+	Limit           int
+	Offset          int
+	Mode            QueryMode
+	Wait            time.Duration       // used in hybrid mode
+	Profile         string              // "basic", "full", "trace" — passed to engine for profiling
+	NoLint          bool                // disables advisory query lints
+	NoSuggestions   bool                // disables advisory query suggestions
+	LintLimit       int                 // max lints to return; default 5
+	LintFull        bool                // true returns all advisory lints
+	Rewrites        []spl2.QueryRewrite // visible query normalizer rewrites
+	SkipResultCache bool                // true when request syntax depends on now
 }
 
 // SubmitResult is the domain output for query submission.

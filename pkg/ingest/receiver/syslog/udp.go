@@ -11,7 +11,7 @@ import (
 func (r *Receiver) serveUDP(conn net.PacketConn) error {
 	buf := make([]byte, r.currentConfig().MaxMessageBytes+1)
 	batch := make([]*event.Event, 0, r.currentConfig().BatchSize)
-	timer := time.NewTimer(r.currentConfig().BatchTimeout.Duration())
+	timer := newStoppedTimer()
 	defer timer.Stop()
 
 	flush := func() {
@@ -23,6 +23,7 @@ func (r *Receiver) serveUDP(conn net.PacketConn) error {
 			r.logger.Warn("syslog UDP ingest failed", "error", err, "batch_size", len(batch))
 		}
 		batch = batch[:0]
+		stopTimer(timer)
 	}
 
 	for {
@@ -39,7 +40,11 @@ func (r *Receiver) serveUDP(conn net.PacketConn) error {
 		if err != nil {
 			var ne net.Error
 			if errors.As(err, &ne) && ne.Timeout() {
-				flush()
+				select {
+				case <-timer.C:
+					flush()
+				default:
+				}
 				select {
 				case <-r.stop:
 					return nil
@@ -63,6 +68,9 @@ func (r *Receiver) serveUDP(conn net.PacketConn) error {
 		if e.ParseError {
 			r.metrics.IncParseError(dialect)
 		}
+		if len(batch) == 0 {
+			resetTimer(timer, cfg.BatchTimeout.Duration())
+		}
 		batch = append(batch, e)
 		if len(batch) >= cfg.BatchSize {
 			flush()
@@ -71,7 +79,6 @@ func (r *Receiver) serveUDP(conn net.PacketConn) error {
 		select {
 		case <-timer.C:
 			flush()
-			timer.Reset(cfg.BatchTimeout.Duration())
 		default:
 		}
 	}

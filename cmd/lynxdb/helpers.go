@@ -418,33 +418,6 @@ func suggestFieldName(name string, knownFields []fieldEntry) string {
 	return fmt.Sprintf("%s (%s, %.0f%% coverage)", best.name, best.typ, best.coverage)
 }
 
-// suggestMVHint returns a performance hint suggesting a materialized view
-// when a query is slow (>5s), scans many events (>10M), and contains
-// an aggregation with a group-by clause (MV-compatible pattern).
-// Returns empty string if no suggestion is warranted.
-func suggestMVHint(query string, elapsed time.Duration, rowsScanned int64) string {
-	const minElapsed = 5 * time.Second
-	const minRows = 10_000_000
-
-	if elapsed < minElapsed || rowsScanned < minRows {
-		return ""
-	}
-
-	// Check if the query contains stats/timechart with a group-by (MV-compatible).
-	upper := strings.ToUpper(query)
-	hasStat := strings.Contains(upper, "STATS ") || strings.Contains(upper, "TIMECHART ")
-	hasByClause := strings.Contains(upper, " BY ")
-
-	if !hasStat || !hasByClause {
-		return ""
-	}
-
-	return fmt.Sprintf("This query scanned %s events in %s.\n"+
-		"     A materialized view could make it ~100-400x faster:\n"+
-		"     lynxdb mv create mv_<name> '%s'",
-		formatCountHuman(rowsScanned), formatElapsed(elapsed), truncateStr(query, 80))
-}
-
 // suggestWiderTimeRange suggests a wider time range based on the current one.
 func suggestWiderTimeRange(since string) string {
 	switch since {

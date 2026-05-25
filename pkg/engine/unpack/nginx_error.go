@@ -158,9 +158,7 @@ func parseNginxKVPairs(s string, emit func(key string, val event.Value) bool) {
 	// Split on ", " and parse key: value
 	for len(s) > 0 {
 		// Skip leading ", "
-		if strings.HasPrefix(s, ", ") {
-			s = s[2:]
-		}
+		s = strings.TrimPrefix(s, ", ")
 
 		// Find "key: value" — colon separates key and value
 		colonIdx := strings.Index(s, ": ")

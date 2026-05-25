@@ -498,6 +498,7 @@ func (m topModel) renderMemoryPanel(id int) []string {
 		kv("governor", memorySummary(used, limit)+" "+sparkline(m.histories["memory"], 14)),
 		kv("spill", fmt.Sprintf("%s / %d files", formatBytes(s.Memory.SpillBytes), s.Memory.SpillFiles)),
 	}
+	body = append(body, governorMemoryClassRows(s.Memory.Governor)...)
 	if bm := s.Memory.BufferManager; bm != nil {
 		usedFrames := bm.TotalFrames - bm.FreeFrames
 		body = append(body,
@@ -509,6 +510,26 @@ func (m topModel) renderMemoryPanel(id int) []string {
 		body = append(body, kv("frames", "n/a"))
 	}
 	return m.panel(id, "Memory", body)
+}
+
+func governorMemoryClassRows(gov *client.TopGovernorStats) []string {
+	if gov == nil {
+		return nil
+	}
+	labels := []string{"non-revocable", "revocable", "spillable", "page-cache", "metadata", "temp-io"}
+	rows := make([]string, 0, len(gov.ByClass))
+	for i, class := range gov.ByClass {
+		if class.Allocated == 0 {
+			continue
+		}
+		label := fmt.Sprintf("class-%d", i)
+		if i < len(labels) {
+			label = labels[i]
+		}
+		rows = append(rows, kv(label, formatBytes(class.Allocated)))
+	}
+
+	return rows
 }
 
 func (m topModel) renderStoragePanel(id int) []string {

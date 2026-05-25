@@ -156,6 +156,6 @@ func (p *DeletionPacer) Pending() int {
 func deleteFileAndDir(path string) {
 	if err := os.Remove(path); err == nil {
 		// Try to clean up empty partition directory.
-		os.Remove(filepath.Dir(path))
+		_ = os.Remove(filepath.Dir(path))
 	}
 }

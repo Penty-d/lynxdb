@@ -177,9 +177,9 @@ lynxdb query --queries-file rules.spl2 --since 24h --format ndjson
 
 ## Console Output
 
-### Server mode, TTY (interactive TUI)
+### Server mode, TTY
 
-When stdout is a terminal and format is `auto`, the query runs in TUI mode with a live progress spinner:
+When stdout is a terminal and format is `auto`, the query prints formatted results with stats:
 
 ```
   . Scanning segments...  1.23s
@@ -216,14 +216,7 @@ When stdout is not a terminal (pipe), output is newline-delimited JSON:
 
 Stats and metadata are written to stderr so they do not interfere with piped data.
 
-## TUI Query Execution Flow
-
-1. Job submitted to server in async mode (`wait: 0`)
-2. TUI polls `/api/v1/query/jobs/{id}` every 80ms for progress updates
-3. Progress is displayed in real-time (phase, segments scanned/skipped, rows read)
-4. On completion, results and stats are rendered
-
-To disable TUI (force plain output in a terminal):
+To force machine-readable output in a terminal:
 
 ```bash
 lynxdb query 'FROM main | stats count' --format json

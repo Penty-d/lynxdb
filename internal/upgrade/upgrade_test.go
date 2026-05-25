@@ -166,7 +166,9 @@ func TestFetchManifest(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(manifest)
+		if err := json.NewEncoder(w).Encode(manifest); err != nil {
+			t.Errorf("encode manifest: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -198,7 +200,9 @@ func TestFetchManifestFallback(t *testing.T) {
 	defer primaryFail.Close()
 
 	fallbackOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(manifest)
+		if err := json.NewEncoder(w).Encode(manifest); err != nil {
+			t.Errorf("encode manifest: %v", err)
+		}
 	}))
 	defer fallbackOK.Close()
 
@@ -232,9 +236,13 @@ func TestFetchChannelManifest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/manifest.json":
-			json.NewEncoder(w).Encode(stableManifest)
+			if err := json.NewEncoder(w).Encode(stableManifest); err != nil {
+				t.Errorf("encode stable manifest: %v", err)
+			}
 		case "/nightly/manifest.json":
-			json.NewEncoder(w).Encode(nightlyManifest)
+			if err := json.NewEncoder(w).Encode(nightlyManifest); err != nil {
+				t.Errorf("encode nightly manifest: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -375,16 +383,26 @@ func TestChecksumVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := tmpFile.Write(content); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		t.Fatal(err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Correct checksum should pass.
 	h := sha256.New()
-	f, _ := os.Open(tmpFile.Name())
-	io.Copy(h, f)
-	f.Close()
+	f, err := os.Open(tmpFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(h, f); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	actual := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(actual, hexHash) {
 		t.Errorf("checksum mismatch: got %s, want %s", actual, hexHash)
@@ -468,7 +486,9 @@ func TestExtractTarGz_PathTraversal(t *testing.T) {
 	createTarGz(t, archivePath, "../../../etc/passwd", []byte("root:x:0:0"))
 
 	extractDir := filepath.Join(dir, "extract")
-	os.MkdirAll(extractDir, 0o755)
+	if err := os.MkdirAll(extractDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := extractTarGz(archivePath, extractDir)
 	if err == nil {
@@ -486,7 +506,9 @@ func TestExtractArchiveDispatch(t *testing.T) {
 	tgzPath := filepath.Join(dir, "test.tar.gz")
 	createTarGz(t, tgzPath, "lynxdb", []byte("binary"))
 	extractDir1 := filepath.Join(dir, "ext1")
-	os.MkdirAll(extractDir1, 0o755)
+	if err := os.MkdirAll(extractDir1, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := extractArchive(tgzPath, extractDir1); err != nil {
 		t.Errorf("extractArchive(.tar.gz) failed: %v", err)
 	}
@@ -495,14 +517,18 @@ func TestExtractArchiveDispatch(t *testing.T) {
 	zipPath := filepath.Join(dir, "test.zip")
 	createZip(t, zipPath, "lynxdb.exe", []byte("binary"))
 	extractDir2 := filepath.Join(dir, "ext2")
-	os.MkdirAll(extractDir2, 0o755)
+	if err := os.MkdirAll(extractDir2, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := extractArchive(zipPath, extractDir2); err != nil {
 		t.Errorf("extractArchive(.zip) failed: %v", err)
 	}
 
 	// Unknown extension should fail
 	unknownPath := filepath.Join(dir, "test.rar")
-	os.WriteFile(unknownPath, []byte("data"), 0o644)
+	if err := os.WriteFile(unknownPath, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := extractArchive(unknownPath, dir); err == nil {
 		t.Error("extractArchive(.rar) should have failed")
 	}
@@ -569,7 +595,9 @@ func TestDownloadWithProgress(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(content)))
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -609,7 +637,9 @@ func TestDownloadChecksumMismatch(t *testing.T) {
 	content := []byte("some content")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -638,13 +668,25 @@ func createTarGz(t *testing.T, archivePath, entryName string, content []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Fatalf("close archive file: %v", err)
+		}
+	}()
 
 	gw := gzip.NewWriter(f)
-	defer gw.Close()
+	defer func() {
+		if err := gw.Close(); err != nil {
+			t.Fatalf("close gzip writer: %v", err)
+		}
+	}()
 
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() {
+		if err := tw.Close(); err != nil {
+			t.Fatalf("close tar writer: %v", err)
+		}
+	}()
 
 	if err := tw.WriteHeader(&tar.Header{
 		Name: entryName,
@@ -666,10 +708,18 @@ func createZip(t *testing.T, archivePath, entryName string, content []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Fatalf("close archive file: %v", err)
+		}
+	}()
 
 	zw := zip.NewWriter(f)
-	defer zw.Close()
+	defer func() {
+		if err := zw.Close(); err != nil {
+			t.Fatalf("close zip writer: %v", err)
+		}
+	}()
 
 	w, err := zw.Create(entryName)
 	if err != nil {

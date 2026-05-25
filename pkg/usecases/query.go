@@ -185,7 +185,7 @@ func explainRangePredicates(preds []spl2.RangePredicate) []ExplainRangePredicate
 
 // commandName returns a human-readable name for a pipeline command.
 func commandName(cmd spl2.Command) string {
-	switch cmd.(type) {
+	switch cmd := cmd.(type) {
 	case *spl2.SearchCommand:
 		return "search"
 	case *spl2.WhereCommand:
@@ -271,7 +271,7 @@ func commandName(cmd spl2.Command) string {
 	case *spl2.NomvCommand:
 		return "nomv"
 	case *spl2.CapabilityCommand:
-		return cmd.(*spl2.CapabilityCommand).Name
+		return cmd.Name
 	case *spl2.SelectCommand:
 		return "select"
 	case *spl2.PackJsonCommand:
@@ -747,7 +747,7 @@ func annotatePipelineFields(query *spl2.Query, _ []string) []PipelineStage {
 			stage.Description = truncateDesc(c.String(), 80)
 
 		default:
-			stage.Description = truncateDesc(fmt.Sprintf("%s", cmd), 80)
+			stage.Description = truncateDesc(cmd.String(), 80)
 		}
 
 		stage.FieldsAdded = added
@@ -911,6 +911,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		Program:            plan.Program,
 		Hints:              plan.Hints,
 		ExternalTimeBounds: plan.ExternalTimeBounds,
+		SkipResultCache:    plan.SkipResultCache || req.SkipResultCache,
 		ResultType:         plan.ResultType,
 		ProfileLevel:       req.Profile,
 		ParseDuration:      plan.ParseDuration,

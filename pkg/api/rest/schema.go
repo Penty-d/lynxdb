@@ -3,6 +3,7 @@ package rest
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/model"
@@ -25,6 +26,15 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListFields(w http.ResponseWriter, r *http.Request) {
 	fields := s.engine.ListFields()
+	if prefix := strings.TrimSpace(r.URL.Query().Get("prefix")); prefix != "" {
+		filtered := fields[:0]
+		for _, field := range fields {
+			if strings.HasPrefix(field.Name, prefix) {
+				filtered = append(filtered, field)
+			}
+		}
+		fields = filtered
+	}
 	respondData(w, http.StatusOK, map[string]interface{}{
 		"fields": fields,
 	})

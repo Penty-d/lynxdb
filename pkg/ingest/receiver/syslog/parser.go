@@ -127,9 +127,7 @@ func (p *parser) parseRFC5424(line, source string, receivedAt time.Time) (*event
 		return nil, err
 	}
 	parseStructuredData(e, sd)
-	if strings.HasPrefix(msg, "\xef\xbb\xbf") {
-		msg = strings.TrimPrefix(msg, "\xef\xbb\xbf")
-	}
+	msg = strings.TrimPrefix(msg, "\xef\xbb\xbf")
 	e.SetField("message", event.StringValue(msg))
 
 	return e, nil
