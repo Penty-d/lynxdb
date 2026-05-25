@@ -303,12 +303,14 @@ kubectl -n lynxdb rollout status statefulset/lynxdb
 
 ### Data Format Compatibility
 
-LynxDB maintains backward compatibility for the `.lsg` segment format. Newer versions can read segments written by older versions. In rare cases, a major version upgrade may require a one-time migration:
+LynxDB maintains backward compatibility for the `.lsg` segment format. Newer versions can read segments written by older versions. In rare cases, a major version upgrade may require ratcheting the on-disk format marker forward:
 
 ```bash
-# If needed (check release notes), run the migration
-lynxdb migrate
+# Stop the server first, then ratchet the data directory marker.
+lynxdb admin format-upgrade --data-dir /var/lib/lynxdb --to 2 --confirm
 ```
+
+Always run this with the server stopped. The release notes specify the target format version when an upgrade requires it.
 
 ### Config Compatibility
 
