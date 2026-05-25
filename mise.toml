@@ -13,7 +13,7 @@ rust   = "1.85.0"
 bun    = "1.2.8"
 
 # Release and distribution tooling.
-"aqua:goreleaser/goreleaser"  = "2.16.0"
+"aqua:goreleaser/goreleaser"  = "2.15.2"
 "aqua:golangci/golangci-lint" = "2.12.2"
 "aqua:rclone/rclone"          = "1.69.3"
 "aqua:cli/cli"                = "2.92.0"
