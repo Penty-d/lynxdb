@@ -224,6 +224,10 @@ func (ms *ManifestStore) trimHistory() {
 	if len(entries) <= maxHistoryEntries {
 		return
 	}
+	entries = compactManifestHistoryEntries(entries)
+	if len(entries) <= maxHistoryEntries {
+		return
+	}
 
 	// Sort entries by name (which includes timestamp, so oldest first).
 	sort.Slice(entries, func(i, j int) bool {
@@ -238,6 +242,18 @@ func (ms *ManifestStore) trimHistory() {
 				"file", entries[i].Name(), "error", err)
 		}
 	}
+}
+
+func compactManifestHistoryEntries(entries []os.DirEntry) []os.DirEntry {
+	n := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		entries[n] = entry
+		n++
+	}
+	return entries[:n]
 }
 
 // CleanupInterrupted handles recovery for interrupted compactions.

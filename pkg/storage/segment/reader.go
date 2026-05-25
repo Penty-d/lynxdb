@@ -392,7 +392,7 @@ func (r *Reader) StatsByName(name string) *ColumnStats {
 func (r *Reader) readChunk(cc *ColumnChunkMeta) ([]byte, error) {
 	start := cc.Offset
 	end := cc.Offset + cc.Length
-	if start < 0 || end > int64(len(r.data)) {
+	if start < 0 || cc.Length < 0 || end < start || end > int64(len(r.data)) {
 		return nil, fmt.Errorf("%w: column %q offset out of range", ErrCorruptSegment, cc.Name)
 	}
 	chunkData := r.data[start:end]
@@ -1454,22 +1454,28 @@ func (r *Reader) LoadRangeBSI(rgIdx int, columnName string) (*bsi.BSI, error) {
 	}
 
 	r.rangeMu.Lock()
-	defer r.rangeMu.Unlock()
-
 	if r.perColRangeBSIs != nil {
 		if cached, ok := r.perColRangeBSIs[rgIdx]; ok {
 			if idx, ok := cached[columnName]; ok {
+				r.rangeMu.Unlock()
 				return idx, nil
 			}
 		}
 	}
+	r.rangeMu.Unlock()
 
 	entry, err := index.DecodeRangeSectionEntry(section, columnName)
 	if err != nil {
 		return nil, fmt.Errorf("segment: decode range BSI %q rg%d: %w", columnName, rgIdx, err)
 	}
 
+	r.rangeMu.Lock()
+	defer r.rangeMu.Unlock()
+
 	r.ensureRangeCacheLocked(rgIdx)
+	if cached, ok := r.perColRangeBSIs[rgIdx][columnName]; ok {
+		return cached, nil
+	}
 	if entry == nil {
 		r.perColRangeBSIs[rgIdx][columnName] = nil
 		return nil, nil
@@ -1668,7 +1674,7 @@ func (r *Reader) loadPerColumnBlooms(rgIdx int) (map[string]*index.BloomFilter, 
 	}
 	start := rg.PerColumnBloomOffset
 	end := start + rg.PerColumnBloomLength
-	if start < 0 || end > int64(len(r.data)) {
+	if start < 0 || rg.PerColumnBloomLength < 0 || end < start || end > int64(len(r.data)) {
 		return nil, fmt.Errorf("%w: per-column bloom offset out of range for rg %d", ErrCorruptSegment, rgIdx)
 	}
 
