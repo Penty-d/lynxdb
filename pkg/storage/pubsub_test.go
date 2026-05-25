@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -156,4 +157,31 @@ func TestEventBusMaxSubscribers(t *testing.T) {
 	}
 
 	bus.Unsubscribe(id2)
+}
+
+func TestEventBusConcurrentPublishUnsubscribe(t *testing.T) {
+	bus := NewEventBus(0)
+	ev := event.NewEvent(time.Now(), `{"msg":"test"}`)
+
+	const subscribers = 64
+	var wg sync.WaitGroup
+	for i := 0; i < subscribers; i++ {
+		id, _, err := bus.Subscribe()
+		if err != nil {
+			t.Fatalf("Subscribe[%d]: %v", i, err)
+		}
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				bus.Publish([]*event.Event{ev})
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			bus.Unsubscribe(id)
+		}()
+	}
+	wg.Wait()
 }
