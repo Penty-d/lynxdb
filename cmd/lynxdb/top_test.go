@@ -110,6 +110,18 @@ func TestTopProfileCommandQuotesQuery(t *testing.T) {
 	}
 }
 
+func TestTopMemoryPanelShowsGovernorClasses(t *testing.T) {
+	resetAllFlags(t)
+	zone.NewGlobal()
+	defer zone.Close()
+
+	m := sampleTopModel(120, 32)
+	view := m.View().Content
+	if !strings.Contains(view, "page-cache") {
+		t.Fatalf("render missing page-cache memory class in %q", view)
+	}
+}
+
 func sampleTopModel(width, height int) topModel {
 	now := time.Date(2026, 5, 22, 10, 0, 0, 0, time.UTC)
 	m := topModel{
@@ -195,7 +207,16 @@ func sampleTopModel(width, height int) topModel {
 				},
 			},
 			Memory: client.TopMemorySnapshot{
-				Governor:   &client.TopGovernorStats{Allocated: 32 << 20, Limit: 128 << 20},
+				Governor: &client.TopGovernorStats{
+					Allocated: 32 << 20,
+					Limit:     128 << 20,
+					ByClass: []client.TopClassStats{
+						{},
+						{},
+						{},
+						{Allocated: 4 << 20},
+					},
+				},
 				SpillFiles: 2,
 				SpillBytes: 16 << 20,
 			},
