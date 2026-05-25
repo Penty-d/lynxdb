@@ -192,15 +192,15 @@ Returns true when the current event matches a search expression (the same syntax
 |----------|-------------|
 | `round(n [, d])` | Round to `d` decimal places. Default `d = 0`. |
 | `abs(n)` | Absolute value |
-| `ceil(n)` / `ceiling(n)` | Smallest integer >= `n` |
-| `floor(n)` | Largest integer <= `n` |
+| `ceil(n)` / `ceiling(n)` | Smallest integer not less than `n` |
+| `floor(n)` | Largest integer not greater than `n` |
 | `sqrt(n)` | Square root |
 | `ln(n)` | Natural logarithm |
 | `log(n [, base])` | Logarithm. Default base 10. |
 | `exp(n)` | `e^n` |
 | `pow(x, y)` | `x^y` |
-| `max(a, b, ...)` | Largest of >= 2 arguments |
-| `min(a, b, ...)` | Smallest of >= 2 arguments |
+| `max(a, b, ...)` | Largest of two or more arguments |
+| `min(a, b, ...)` | Smallest of two or more arguments |
 | `pi()` | Constant pi |
 | `random()` | Pseudo-random float in `[0, 1)` |
 
