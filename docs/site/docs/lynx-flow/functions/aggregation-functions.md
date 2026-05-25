@@ -50,6 +50,22 @@ Sum of squared numeric values.
 | stats sumsq(duration_ms) AS duration_squares by endpoint
 ```
 
+## range
+
+Difference between the largest and smallest values.
+
+```spl
+| stats range(duration_ms) AS latency_spread by endpoint
+```
+
+## list
+
+Values collected in the order they were seen, with duplicates kept. Returned as a multivalue field. Capped at the engine's per-group multivalue limit.
+
+```spl
+| stats list(status) AS status_sequence by trace_id
+```
+
 ## dc (Distinct Count)
 
 Count of unique values.
@@ -119,7 +135,9 @@ Compute percentile values with the fixed percentile aggregations: `perc25`, `per
   by endpoint
 ```
 
-`perc50` is the median. Generic forms such as `perc(duration_ms, 95)` and `percentile(duration_ms, 95)` normalize to the fixed percentile aggregations when the percentile is one of the supported values. Arbitrary variable-percentile syntax such as `percentile(duration_ms, 99.9)` is not currently supported.
+`perc50` is the median. The short aliases `p25`, `p50`, `p75`, `p90`, `p95`, `p99` and the prefix forms `percentile25..99`, `exactperc25..99`, `upperperc25..99` all normalize to the matching `percNN` aggregation. `mean` is an alias of `avg`, and `median` is an alias of `perc50`.
+
+Generic forms such as `perc(duration_ms, 95)` and `percentile(duration_ms, 95)` normalize to the fixed percentile aggregations when the percentile is one of the supported values. Arbitrary variable-percentile syntax such as `percentile(duration_ms, 99.9)` is not currently supported.
 
 ## earliest / latest
 
@@ -150,8 +168,10 @@ Use `eval()` inside `count` or other functions for conditional aggregation:
 | `avg(f)` | Average | `avg(duration_ms)` |
 | `min(f)` | Minimum | `min(duration_ms)` |
 | `max(f)` | Maximum | `max(duration_ms)` |
-| `dc(f)` | Distinct count | `dc(user_id)` |
-| `values(f)` | Distinct values list | `values(level)` |
+| `range(f)` | max - min | `range(duration_ms)` |
+| `dc(f)` / `estdc(f)` / `distinct_count(f)` | Distinct count | `dc(user_id)` |
+| `values(f)` | Distinct values list (sorted) | `values(level)` |
+| `list(f)` | Values in insertion order, with duplicates | `list(status)` |
 | `stdev(f)` | Standard deviation | `stdev(duration_ms)` |
 | `perc25(f)` | 25th percentile | `perc25(duration_ms)` |
 | `perc50(f)` | Median (50th pct) | `perc50(duration_ms)` |
