@@ -40,6 +40,7 @@ type ColumnarSpillWriter struct {
 	rows    []map[string]event.Value // buffered rows (up to columnarBatchSize)
 	written int                      // total rows written (across all batches)
 	bytes   int64                    // total bytes written to file
+	closed  bool
 }
 
 // NewColumnarSpillWriter creates a new columnar spill writer. The file is
@@ -100,17 +101,23 @@ func (w *ColumnarSpillWriter) Flush() error {
 // CloseFile flushes remaining rows and closes the file handle without
 // removing the file. Use this when the spill file will be read back later.
 func (w *ColumnarSpillWriter) CloseFile() error {
+	if w.closed {
+		return nil
+	}
 	if err := w.Flush(); err != nil {
-		w.file.Close()
+		_ = w.file.Close()
+		w.closed = true
 
 		return err
 	}
 	if err := w.buf.Flush(); err != nil {
-		w.file.Close()
+		_ = w.file.Close()
+		w.closed = true
 
 		return fmt.Errorf("columnar_spill: flush bufio: %w", err)
 	}
 
+	w.closed = true
 	return w.file.Close()
 }
 
