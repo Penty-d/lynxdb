@@ -145,7 +145,7 @@ func TestLayout_ListParts(t *testing.T) {
 
 	partDir := l.PartitionDir("main", ts)
 	for i := 0; i < 3; i++ {
-		f, err := os.Create(filepath.Join(partDir, Filename("main", 0, ts.Add(time.Duration(i)*time.Second))))
+		f, err := os.Create(filepath.Join(partDir, Filename(ID("main", 0, ts.Add(time.Duration(i)*time.Second)))))
 		if err != nil {
 			t.Fatalf("create: %v", err)
 		}
@@ -170,7 +170,7 @@ func TestLayout_ListParts(t *testing.T) {
 
 func TestFilename(t *testing.T) {
 	ts := time.Date(2026, 3, 2, 14, 30, 0, 0, time.UTC)
-	name := Filename("main", 0, ts)
+	name := Filename(ID("main", 0, ts))
 
 	if filepath.Ext(name) != ".lsg" {
 		t.Errorf("expected .lsg extension, got %q", name)
@@ -183,11 +183,17 @@ func TestFilename(t *testing.T) {
 func TestID(t *testing.T) {
 	ts := time.Date(2026, 3, 2, 14, 30, 0, 0, time.UTC)
 	id := ID("main", 0, ts)
-	name := Filename("main", 0, ts)
+	name := Filename(id)
 
-	// ID should be filename without .lsg.
+	// Filename should be the ID plus the .lsg extension.
 	if id+".lsg" != name {
 		t.Errorf("ID/Filename mismatch: id=%q, name=%q", id, name)
+	}
+
+	// IDs generated with identical inputs must differ (random suffix), so
+	// concurrent writers in the same nanosecond cannot collide.
+	if other := ID("main", 0, ts); other == id {
+		t.Errorf("expected unique IDs, got duplicate %q", id)
 	}
 }
 

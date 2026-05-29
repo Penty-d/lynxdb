@@ -146,8 +146,8 @@ func (w *Writer) Write(ctx context.Context, index string, events []*event.Event,
 	partitionKey := w.layout.PartitionKey(minTime)
 
 	// Generate filenames.
-	finalName := Filename(index, level, now)
 	partID := ID(index, level, now)
+	finalName := Filename(partID)
 	finalPath := filepath.Join(partDir, finalName)
 
 	// Create temp file in the same directory (atomic rename requires same filesystem).

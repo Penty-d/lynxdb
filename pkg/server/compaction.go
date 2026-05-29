@@ -494,8 +494,7 @@ func (e *Engine) executeTrivialMove(_ context.Context, idx, partition string, pl
 	renamedMeta.Level = plan.OutputLevel
 	renamedMeta.CreatedAt = time.Now()
 	renamedMeta.ID = part.ID(oldMeta.Index, plan.OutputLevel, renamedMeta.CreatedAt)
-	renamedMeta.Path = filepath.Join(filepath.Dir(oldMeta.Path),
-		part.Filename(oldMeta.Index, plan.OutputLevel, renamedMeta.CreatedAt))
+	renamedMeta.Path = filepath.Join(filepath.Dir(oldMeta.Path), part.Filename(renamedMeta.ID))
 
 	if err := os.Rename(oldMeta.Path, renamedMeta.Path); err != nil {
 		e.logger.Error("trivial move rename failed",

@@ -1,6 +1,8 @@
 package part
 
 import (
+	crypto_rand "crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -194,15 +196,22 @@ func (l *Layout) ListParts(index, partition string) ([]string, error) {
 	return parts, nil
 }
 
-// Filename generates a part filename.
-// Format: part-<index>-L<level>-<tsNano>.lsg.
-func Filename(index string, level int, ts time.Time) string {
-	return fmt.Sprintf("part-%s-L%d-%d.lsg", index, level, ts.UnixNano())
+// ID generates a unique part identifier.
+// Format: part-<index>-L<level>-<tsNano>-<rand>. The random suffix prevents
+// collisions between parts created within the same nanosecond by concurrent
+// writers (e.g. parallel compaction workers), which would otherwise produce
+// identical names and let one rename silently overwrite another's output.
+func ID(index string, level int, ts time.Time) string {
+	var b [4]byte
+	// crypto/rand.Read does not return an error on supported platforms.
+	_, _ = crypto_rand.Read(b[:])
+
+	return fmt.Sprintf("part-%s-L%d-%d-%s", index, level, ts.UnixNano(), hex.EncodeToString(b[:]))
 }
 
-// ID returns the ID for a part (filename without .lsg extension).
-func ID(index string, level int, ts time.Time) string {
-	return fmt.Sprintf("part-%s-L%d-%d", index, level, ts.UnixNano())
+// Filename returns the .lsg filename for a part ID.
+func Filename(id string) string {
+	return id + ".lsg"
 }
 
 // ShardPartDir returns the directory path for a shard's partition data.

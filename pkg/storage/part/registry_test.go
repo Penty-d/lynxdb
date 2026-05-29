@@ -80,7 +80,7 @@ func TestRegistry_All(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		r.Add(&Meta{
-			ID:    Filename("main", 0, time.Now().Add(time.Duration(i)*time.Second)),
+			ID:    ID("main", 0, time.Now().Add(time.Duration(i)*time.Second)),
 			Index: "main",
 			Level: 0,
 		})

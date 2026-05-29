@@ -254,8 +254,8 @@ func (psw *PartStreamWriter) Finalize(ctx context.Context) (*Meta, error) {
 
 	// Atomic rename.
 	now := psw.startNow
-	finalName := Filename(psw.index, psw.level, now)
 	partID := ID(psw.index, psw.level, now)
+	finalName := Filename(partID)
 	finalPath := filepath.Join(psw.partDir, finalName)
 
 	if err := os.Rename(psw.tmpPath, finalPath); err != nil {
