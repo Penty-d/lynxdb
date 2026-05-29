@@ -80,6 +80,12 @@ func (ms *MmapSegment) Fd() uintptr {
 	return ms.file.Fd()
 }
 
+// Closed reports whether the segment has been unmapped via Close. Used by tests
+// to assert mmap lifecycle without touching (potentially unmapped) memory.
+func (ms *MmapSegment) Closed() bool {
+	return ms.closed.Load()
+}
+
 // Close unmaps the file and closes the file handle. Safe to call multiple times.
 func (ms *MmapSegment) Close() error {
 	if !ms.closed.CompareAndSwap(false, true) {

@@ -478,8 +478,15 @@ func (e *Engine) Shutdown(timeout time.Duration) error {
 		e.jobsWG.Wait()
 		close(jobsDone)
 	}()
+	// queriesDrained is true only when every executeQuery goroutine has returned
+	// (e.jobsWG fully drained). It gates the segment mmap force-close below: we
+	// must never Munmap a segment while a query goroutine can still read its
+	// memory. jobsWG covers queries pinned to any epoch — more robust than
+	// old.done, which reflects only the final epoch.
+	queriesDrained := false
 	select {
 	case <-jobsDone:
+		queriesDrained = true
 	case <-time.After(timeout):
 		e.logger.Warn("shutdown: query drain timeout",
 			"active_jobs", e.activeJobs.Load())
@@ -522,12 +529,23 @@ func (e *Engine) Shutdown(timeout time.Duration) error {
 	case <-time.After(timeout):
 		e.logger.Warn("shutdown: epoch drain timeout",
 			"remaining_readers", old.readers.Load())
+		queriesDrained = false
 	}
-	// Close all mmaps (idempotent — drainAndClose may have already closed them).
-	for _, sh := range retired {
-		if sh.mmap != nil {
-			_ = sh.mmap.Close()
+	// Only unmap when no query goroutine can still touch segment memory. decRef
+	// (via drainAndClose, once old.done fired) already closes mmaps at refs==0;
+	// this loop is a redundant, idempotent safety net that guarantees mappings are
+	// closed before Shutdown returns, so a caller may immediately reuse the data
+	// dir. If queries did NOT drain, we must NOT unmap — reads touch mmap'd memory
+	// without a per-read ref, so Munmap here is a use-after-unmap SIGSEGV. Leave
+	// the mappings; the OS reclaims them at process exit.
+	if queriesDrained {
+		for _, sh := range retired {
+			if sh.mmap != nil {
+				_ = sh.mmap.Close() // idempotent (atomic CAS in MmapSegment.Close)
+			}
 		}
+	} else {
+		e.logger.Warn("shutdown: leaving segment mmaps mapped — queries still in flight; OS reclaims at process exit")
 	}
 
 	// Stop deletion pacer (flushes remaining deletions synchronously).
