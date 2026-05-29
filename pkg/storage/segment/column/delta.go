@@ -56,6 +56,15 @@ func (d *DeltaEncoder) DecodeInt64s(data []byte) ([]int64, error) {
 	}
 
 	count := binary.LittleEndian.Uint32(data[1:5])
+	if count == 0 {
+		return []int64{}, nil
+	}
+	// Every value after the first is encoded as at least one varint byte, so a
+	// count that cannot fit in the remaining data is corrupt. Reject before
+	// allocating to avoid a huge make() from a malformed header.
+	if uint64(count-1) > uint64(len(data)-13) {
+		return nil, fmt.Errorf("%w: count %d implausible for %d bytes", ErrCorruptData, count, len(data))
+	}
 	first := int64(binary.LittleEndian.Uint64(data[5:13]))
 
 	result := make([]int64, count)
