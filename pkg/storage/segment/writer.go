@@ -1075,6 +1075,12 @@ func compressLZ4Block(data []byte) []byte {
 // lz4DecompPool reuses decompression scratch buffers across queries.
 // Column decoders retain the decompressed bytes long-term, so we copy out
 // the result before returning the buffer to the pool.
+// maxDecompressedBlockBytes caps the decompressed size of a single column block.
+// A row-group column never approaches this; the bound rejects (LZ4) or limits the
+// pre-allocation (ZSTD) for a malformed header claiming an implausible size,
+// before the post-decompress size check can run.
+const maxDecompressedBlockBytes = 1 << 30 // 1 GiB
+
 var lz4DecompPool = sync.Pool{
 	New: func() interface{} {
 		buf := make([]byte, 0, 256*1024) // 256KB initial capacity
@@ -1092,6 +1098,9 @@ func decompressLZ4Block(data []byte) ([]byte, error) {
 	compSize := binary.LittleEndian.Uint32(data[4:8])
 	if 8+int(compSize) > len(data) {
 		return nil, fmt.Errorf("segment: lz4 block truncated")
+	}
+	if uint64(uncompSize) > maxDecompressedBlockBytes {
+		return nil, fmt.Errorf("segment: lz4 uncompressed size %d exceeds limit", uncompSize)
 	}
 
 	// Use pooled scratch buffer for decompression, then copy out.
@@ -1156,7 +1165,14 @@ func decompressZSTDBlock(data []byte) ([]byte, error) {
 	}
 	defer putZSTDDecoder(dec)
 
-	out, err := dec.DecodeAll(data[4:], make([]byte, 0, uncompSize))
+	// Cap the pre-allocation hint: a malformed header may claim an implausible
+	// size. zstd grows the buffer as needed for legitimate data, and the size
+	// check below rejects any mismatch.
+	capHint := int(uncompSize)
+	if capHint > maxDecompressedBlockBytes {
+		capHint = maxDecompressedBlockBytes
+	}
+	out, err := dec.DecodeAll(data[4:], make([]byte, 0, capHint))
 	if err != nil {
 		return nil, fmt.Errorf("segment: zstd decompress: %w", err)
 	}
