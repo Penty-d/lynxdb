@@ -132,6 +132,65 @@ func TestExtractQueryHints_WherePredicate(t *testing.T) {
 	}
 }
 
+func TestExtractQueryHints_PrewherePlan(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		wantFields []string
+	}{
+		{
+			name:       "physical where",
+			query:      `FROM main | where level = "ERROR"`,
+			wantFields: []string{"level"},
+		},
+		{
+			name:       "rex generated field excluded",
+			query:      `FROM main | rex field=message "(?P<level>[A-Z]+)" | where level = "ERROR"`,
+			wantFields: nil,
+		},
+		{
+			name:       "case insensitive search excluded",
+			query:      `FROM main | search level=error`,
+			wantFields: nil,
+		},
+		{
+			name:       "and only safe branches",
+			query:      `FROM main | where message="expensive" and level = "ERROR" and status >= 500`,
+			wantFields: []string{"level", "status", "message"},
+		},
+		{
+			name:       "or excluded",
+			query:      `FROM main | where level = "ERROR" or status >= 500`,
+			wantFields: nil,
+		},
+		{
+			name:       "in predicate",
+			query:      `FROM main | where level IN ("ERROR", "FATAL")`,
+			wantFields: []string{"level"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prog, err := ParseProgram(tt.query)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+
+			hints := ExtractQueryHints(prog)
+			var got []string
+			if hints.PrewherePlan != nil {
+				for _, step := range hints.PrewherePlan.Steps {
+					got = append(got, step.Field)
+				}
+			}
+			if !reflect.DeepEqual(got, tt.wantFields) {
+				t.Fatalf("Prewhere fields: got %v, want %v; plan=%+v", got, tt.wantFields, hints.PrewherePlan)
+			}
+		})
+	}
+}
+
 func TestExtractQueryHints_WhereTimeBounds(t *testing.T) {
 	prog, err := ParseProgram(`FROM main | where _time >= 1704067200 | where _time <= 1704153600`)
 	if err != nil {
