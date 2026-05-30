@@ -110,6 +110,21 @@ func (av *activeView) reinsertEvents(events []*event.Event) {
 	av.mu.Unlock()
 }
 
+// viewDirLocks serializes mutations of a view's segment directory across the
+// flush, merge, and retention paths, which each ReadDir/Remove/write there and
+// would otherwise race (e.g. merge deleting a segment flush is still writing).
+var viewDirLocks sync.Map // view name -> *sync.Mutex
+
+// lockViewDir locks the named view's segment directory and returns the unlock
+// function, intended for use with defer.
+func lockViewDir(name string) func() {
+	mu, _ := viewDirLocks.LoadOrStore(name, &sync.Mutex{})
+	m := mu.(*sync.Mutex)
+	m.Lock()
+
+	return m.Unlock
+}
+
 // flushIfExpired flushes the batch if it has exceeded the max delay.
 func (av *activeView) flushIfExpired() {
 	av.mu.Lock()
@@ -521,6 +536,9 @@ func (d *Dispatcher) FlushView(name string) error {
 	if !ok {
 		return ErrViewNotFound
 	}
+
+	// Serialize against merge/retention which mutate the same segment directory.
+	defer lockViewDir(name)()
 
 	// Atomic swap: flush pending into events, snapshot and clear — all under
 	// a single lock acquisition.

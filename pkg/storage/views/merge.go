@@ -26,6 +26,8 @@ const (
 // It picks up to mergeMinSegments oldest segments, merges them into one,
 // and removes the originals.
 func MergeView(def ViewDefinition, layout *storage.Layout, logger *slog.Logger) error {
+	defer lockViewDir(def.Name)()
+
 	segDir := layout.ViewSegmentDir(def.Name)
 	entries, err := os.ReadDir(segDir)
 	if err != nil {
