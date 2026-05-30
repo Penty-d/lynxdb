@@ -144,6 +144,15 @@ func MergeView(def ViewDefinition, layout *storage.Layout, logger *slog.Logger) 
 		return fmt.Errorf("views merge: sync dir: %w", err)
 	}
 
+	// Verify the merged segment is readable and complete before deleting the
+	// inputs. If it is corrupt, remove it and keep the inputs as the source of
+	// truth rather than losing data.
+	if err := verifyMergedSegment(outPath, len(allEvents)); err != nil {
+		os.Remove(outPath)
+
+		return fmt.Errorf("views merge: verify segment: %w", err)
+	}
+
 	// Remove old segments.
 	for _, path := range batch {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -157,6 +166,27 @@ func MergeView(def ViewDefinition, layout *storage.Layout, logger *slog.Logger) 
 		"events_in", len(allEvents),
 		"output", outPath,
 	)
+
+	return nil
+}
+
+// verifyMergedSegment opens a freshly written merge output and confirms it is
+// readable and holds the expected number of events, so a corrupt output is
+// caught before the input segments are deleted.
+func verifyMergedSegment(path string, wantEvents int) error {
+	ms, err := segment.OpenSegmentFile(path)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer ms.Close()
+
+	events, err := ms.Reader().ReadEvents()
+	if err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+	if len(events) != wantEvents {
+		return fmt.Errorf("event count mismatch: got %d, want %d", len(events), wantEvents)
+	}
 
 	return nil
 }

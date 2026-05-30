@@ -304,3 +304,23 @@ func makeMinMaxEvent(source string, minVal, maxVal float64) *event.Event {
 
 	return e
 }
+
+func TestVerifyMergedSegment(t *testing.T) {
+	dir := t.TempDir()
+	events := []*event.Event{
+		makeTestEvent("nginx", "/a", "200"),
+		makeTestEvent("nginx", "/b", "500"),
+		makeTestEvent("nginx", "/c", "404"),
+	}
+	path := writeTestSegment(t, dir, events)
+
+	if err := verifyMergedSegment(path, len(events)); err != nil {
+		t.Errorf("valid segment should verify: %v", err)
+	}
+	if err := verifyMergedSegment(path, len(events)+1); err == nil {
+		t.Error("count mismatch should fail verification")
+	}
+	if err := verifyMergedSegment(filepath.Join(dir, "missing.lsg"), 0); err == nil {
+		t.Error("missing segment should fail verification")
+	}
+}
