@@ -215,12 +215,40 @@ func (s *StreamingServerStore) AggregatedStats() *enginepipeline.SegmentStreamSt
 		agg.RGRangeBSIChecks += st.RGRangeBSIChecks
 		agg.RGRangeBSISkips += st.RGRangeBSISkips
 		agg.RGRangeBSIMaskBytes += st.RGRangeBSIMaskBytes
+		if st.PrewhereUsed {
+			agg.PrewhereUsed = true
+		}
+		if st.PrewhereSteps > agg.PrewhereSteps {
+			agg.PrewhereSteps = st.PrewhereSteps
+		}
+		agg.PrewhereRowsIn += st.PrewhereRowsIn
+		agg.PrewhereRowsOut += st.PrewhereRowsOut
+		agg.PrewhereRowGroupsSkipped += st.PrewhereRowGroupsSkipped
+		agg.PrewhereBytesRead += st.PrewhereBytesRead
+		agg.PrewhereBytesAvoided += st.PrewhereBytesAvoided
+		agg.PrewhereColumns = appendUniqueStrings(agg.PrewhereColumns, st.PrewhereColumns)
 		if st.PeakMemoryBytes > agg.PeakMemoryBytes {
 			agg.PeakMemoryBytes = st.PeakMemoryBytes
 		}
 	}
 
 	return &agg
+}
+
+func appendUniqueStrings(dst []string, src []string) []string {
+	seen := make(map[string]struct{}, len(dst)+len(src))
+	for _, s := range dst {
+		seen[s] = struct{}{}
+	}
+	for _, s := range src {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		dst = append(dst, s)
+		seen[s] = struct{}{}
+	}
+
+	return dst
 }
 
 // MaterializeEvents implements enginepipeline.IndexStore for fallback paths
@@ -528,6 +556,7 @@ func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, on
 
 				events = filterEventsByTime(events, job.timeBounds)
 				e.metrics.SegmentReads.Add(1)
+				rs.rowsAfterFilter = int64(len(events))
 				resultCh <- segResult{events: events, index: idx, readStats: rs}
 			}
 		}()
@@ -601,6 +630,7 @@ func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, on
 	for res := range resultCh {
 		store[res.index] = append(store[res.index], res.events...)
 		totalEvents += len(res.events)
+		ss.RowsScanned += res.readStats.rowsAfterFilter
 		// Accumulate per-segment read feature flags.
 		if res.readStats.usedInvertedIndex {
 			ss.InvertedIndexHits++
@@ -1026,6 +1056,15 @@ func readSegmentEvents(
 		rs.columnsProjected = len(requiredCols)
 	}
 
+	rexPreFilters := segmentLiteralPreFilters(hints.RexPreFilters)
+	if len(rexPreFilters) > 0 && len(hints.FieldPredicates) == 0 {
+		events, err := reader.ReadEventsWithLiteralPreFilters(rexPreFilters, searchBitmap, requiredCols)
+		rs.readDurationNS = time.Since(readStart).Nanoseconds()
+		rs.rowsAfterFilter = int64(len(events))
+
+		return events, rs, err
+	}
+
 	if len(hints.FieldPredicates) > 0 {
 		segPreds := make([]segment.Predicate, len(hints.FieldPredicates))
 		for i, fp := range hints.FieldPredicates {
@@ -1093,6 +1132,24 @@ func readSegmentEvents(
 	return events, rs, err
 }
 
+func segmentLiteralPreFilters(filters []spl2.RexPreFilter) []segment.LiteralPreFilter {
+	if len(filters) == 0 {
+		return nil
+	}
+	out := make([]segment.LiteralPreFilter, 0, len(filters))
+	for _, filter := range filters {
+		if filter.Field == "" || len(filter.Literals) == 0 {
+			continue
+		}
+		out = append(out, segment.LiteralPreFilter{
+			Field:    filter.Field,
+			Literals: append([]string(nil), filter.Literals...),
+		})
+	}
+
+	return out
+}
+
 // hasDictFilterEligiblePredicate returns true if any predicate uses equality operators
 // that can benefit from the DictFilter fast path on dict-encoded columns.
 func hasDictFilterEligiblePredicate(preds []segment.Predicate) bool {
@@ -1147,6 +1204,7 @@ func (e *Engine) buildPartialAggStore(
 	type segPartialResult struct {
 		partials  []*enginepipeline.PartialAggGroup
 		bytesRead int64
+		rowsRead  int64
 	}
 
 	workers := runtime.GOMAXPROCS(0)
@@ -1202,7 +1260,7 @@ func (e *Engine) buildPartialAggStore(
 
 				// Compute partial aggregates instead of sending raw events.
 				partial := enginepipeline.ComputePartialAgg(events, spec)
-				resultCh <- segPartialResult{partials: partial, bytesRead: rs.bytesRead}
+				resultCh <- segPartialResult{partials: partial, bytesRead: rs.bytesRead, rowsRead: int64(len(events))}
 			}
 		}()
 	}
@@ -1247,6 +1305,7 @@ func (e *Engine) buildPartialAggStore(
 	for res := range resultCh {
 		allPartials = append(allPartials, res.partials)
 		ss.TotalBytesRead += res.bytesRead
+		ss.RowsScanned += res.rowsRead
 		scannedSoFar++
 		if onProgress != nil {
 			onProgress(&SearchProgress{
@@ -1315,6 +1374,7 @@ func (e *Engine) buildTransformPartialAggStore(
 	type segPartialResult struct {
 		partials  []*enginepipeline.PartialAggGroup
 		bytesRead int64
+		rowsRead  int64
 	}
 
 	workers := runtime.GOMAXPROCS(0)
@@ -1368,7 +1428,7 @@ func (e *Engine) buildTransformPartialAggStore(
 				e.metrics.SegmentReads.Add(1)
 
 				partial := e.runTransformAndAgg(ctx, events, tSpec)
-				resultCh <- segPartialResult{partials: partial, bytesRead: rs.bytesRead}
+				resultCh <- segPartialResult{partials: partial, bytesRead: rs.bytesRead, rowsRead: int64(len(events))}
 			}
 		}()
 	}
@@ -1413,6 +1473,7 @@ func (e *Engine) buildTransformPartialAggStore(
 	for res := range resultCh {
 		allPartials = append(allPartials, res.partials)
 		ss.TotalBytesRead += res.bytesRead
+		ss.RowsScanned += res.rowsRead
 		scannedSoFar++
 		if onProgress != nil {
 			onProgress(&SearchProgress{

@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// defaultMaxConcurrent is the default ceiling on concurrent queries. It is a
+// protective limit, not a target — most queries are short and I/O-bound, so a
+// generous ceiling avoids spurious 429s under normal interactive/dashboard load
+// while still bounding worst-case resource use. Kept a fixed value so
+// DefaultConfig() stays deterministic and mirrors defaults.yaml.
+const defaultMaxConcurrent = 32
+
 // Config holds all LynxDB configuration values.
 type Config struct {
 	Listen    string   `yaml:"listen"    json:"listen"`
@@ -450,7 +457,7 @@ func DefaultConfig() *Config {
 			MaxQueryRuntime:            5 * time.Minute,
 			JobTTL:                     5 * time.Minute,
 			JobGCInterval:              30 * time.Second,
-			MaxConcurrent:              10,
+			MaxConcurrent:              defaultMaxConcurrent,
 			DefaultResultLimit:         1000,
 			MaxResultLimit:             50000,
 			MaxQueryMemory:             1 << 30, // 1 GB

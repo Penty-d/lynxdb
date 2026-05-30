@@ -864,6 +864,14 @@ func extractPhysicalPlan(prog *spl2.Program) *PhysicalPlan {
 		pp.PartialAgg = true
 		hasAnnotation = true
 	}
+	if _, ok := q.GetAnnotation("transformPartialAgg"); ok {
+		pp.PartialAgg = true
+		hasAnnotation = true
+	}
+	if queryHasRexLiteralPreFilter(q) {
+		pp.RexLiteralPreFilter = true
+		hasAnnotation = true
+	}
 	if ann, ok := q.GetAnnotation("topKAgg"); ok {
 		pp.TopKAgg = true
 		hasAnnotation = true
@@ -883,6 +891,20 @@ func extractPhysicalPlan(prog *spl2.Program) *PhysicalPlan {
 	}
 
 	return pp
+}
+
+func queryHasRexLiteralPreFilter(q *spl2.Query) bool {
+	if q == nil {
+		return false
+	}
+	for _, cmd := range q.Commands {
+		rex, ok := cmd.(*spl2.RexCommand)
+		if ok && len(rex.PreFilterLiterals) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Submit plans and executes a query with sync/hybrid/async dispatch.
@@ -956,6 +978,35 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 	}
 	job.SetAdvisoryMetadata(warnings, lints, suggestions, req.Rewrites)
 
+	// buildSync builds an inline result from the (completed) job, attaching the
+	// advisory metadata consistently across every synchronous return path.
+	buildSync := func() *SubmitResult {
+		r := buildSyncResult(job, limit, req.Offset)
+		r.Warnings = warnings
+		r.Lints = lints
+		r.Suggestions = suggestions
+		r.Rewrites = req.Rewrites
+
+		return r
+	}
+
+	// promoteToAsync hands back a job handle after the wait budget expires. It
+	// first re-checks job.Done() without blocking: select picks randomly among
+	// ready cases, so a job that completed at the same instant the timer fired
+	// would otherwise return a 202 and force the client to poll for a result
+	// that is already available.
+	promoteToAsync := func() *SubmitResult {
+		select {
+		case <-job.Done():
+			return buildSync()
+		default:
+		}
+		// Detach from the HTTP context so the job survives client disconnect.
+		job.Detach()
+
+		return buildJobHandle(job)
+	}
+
 	switch req.Mode {
 	case QueryModeSync:
 		syncTimeout := queryCfg.SyncTimeout
@@ -966,17 +1017,9 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		defer timer.Stop()
 		select {
 		case <-job.Done():
-			r := buildSyncResult(job, limit, req.Offset)
-			r.Warnings = warnings
-			r.Lints = lints
-			r.Suggestions = suggestions
-			r.Rewrites = req.Rewrites
-			return r, nil
+			return buildSync(), nil
 		case <-timer.C:
-			// Promoted to async — detach from HTTP context so job survives disconnect.
-			job.Detach()
-
-			return buildJobHandle(job), nil
+			return promoteToAsync(), nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -986,17 +1029,9 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		defer timer.Stop()
 		select {
 		case <-job.Done():
-			r := buildSyncResult(job, limit, req.Offset)
-			r.Warnings = warnings
-			r.Lints = lints
-			r.Suggestions = suggestions
-			r.Rewrites = req.Rewrites
-			return r, nil
+			return buildSync(), nil
 		case <-timer.C:
-			// Promoted to async — detach from HTTP context so job survives disconnect.
-			job.Detach()
-
-			return buildJobHandle(job), nil
+			return promoteToAsync(), nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}

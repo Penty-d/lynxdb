@@ -10,6 +10,13 @@
 
 import type { QueryResult, QueryStats } from "./client";
 import { authHeaders, handleAuthError, useAuthStore } from "./auth";
+import {
+  HYBRID_WAIT_SECONDS,
+  JOB_SSE_MAX_RECONNECTS,
+  JOB_SSE_BACKOFF_BASE_MS,
+  JOB_SSE_BACKOFF_MAX_MS,
+  JOB_SSE_OVERALL_DEADLINE_MS,
+} from "./config";
 
 // Types
 
@@ -51,7 +58,9 @@ export interface ProgressData {
 // submitHybridQuery
 
 /**
- * Submit a query with hybrid execution (wait up to 200ms for sync result).
+ * Submit a query with hybrid execution (wait up to `wait` seconds for a sync
+ * result). Defaults to HYBRID_WAIT_SECONDS so most interactive queries return
+ * inline (HTTP 200) and only genuinely long scans degrade to an async job.
  *
  * - On 200: returns `{ status: "sync", syncResult }`.
  * - On 202: returns `{ status: "async", jobId }`.
@@ -63,8 +72,9 @@ export async function submitHybridQuery(
   limit?: number,
   offset?: number,
   signal?: AbortSignal,
+  wait: number = HYBRID_WAIT_SECONDS,
 ): Promise<HybridResult> {
-  const body: Record<string, unknown> = { q, wait: 0.2 };
+  const body: Record<string, unknown> = { q, wait };
   if (from) body.from = from;
   if (to) body.to = to;
   if (limit) body.limit = limit;
@@ -220,15 +230,59 @@ export function processLine(
   }
 }
 
+// fetchJobOnce
+
+/**
+ * Fetch a job's current state once via GET /api/v1/query/jobs/{id}.
+ *
+ * Used as the terminal fallback when the progress SSE drops: the job has very
+ * likely finished during the gap, so a single GET recovers the result instead
+ * of reconnecting forever.
+ */
+export async function fetchJobOnce(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<{ status: string; data?: unknown; meta?: unknown; error?: string }> {
+  const resp = await fetch(
+    `/api/v1/query/jobs/${encodeURIComponent(jobId)}`,
+    { headers: authHeaders(), signal },
+  );
+  handleAuthError(resp);
+
+  const json = await resp.json().catch(() => null);
+  const data = (json?.data ?? {}) as {
+    status?: string;
+    results?: unknown;
+    error?: { message?: string };
+  };
+
+  return {
+    status: data.status ?? (resp.ok ? "unknown" : "error"),
+    data: data.results,
+    meta: json?.meta,
+    error: data.error?.message,
+  };
+}
+
 // subscribeJobProgress
 
 /**
- * Subscribe to job progress via SSE.
+ * Subscribe to job progress via SSE with BOUNDED reconnection.
  *
- * Follows the same SSE pattern as `api/sse.ts`: uses `new EventSource` with
- * `_token` query param for auth.
+ * A raw `EventSource` auto-reconnects forever on any transient drop, and each
+ * reconnect opens a fresh server-side SSE goroutine — the source of the
+ * "infinite retries" / duplicated-connection problem. This wrapper instead:
+ *  - closes the source on every terminal event (complete/failed/canceled);
+ *  - on error, retries at most JOB_SSE_MAX_RECONNECTS times with exponential
+ *    backoff, closing the source first so the browser's native auto-reconnect
+ *    never races us;
+ *  - bounds total lifetime with JOB_SSE_OVERALL_DEADLINE_MS;
+ *  - on give-up, performs ONE final GET to recover an already-finished result.
  *
- * @returns Cleanup function that closes the EventSource.
+ * Auth uses the same `_token` query param as `api/sse.ts`.
+ *
+ * @returns Cleanup function that cancels pending reconnects and closes the
+ *   EventSource. Safe to call multiple times (idempotent).
  */
 export function subscribeJobProgress(
   jobId: string,
@@ -237,56 +291,137 @@ export function subscribeJobProgress(
   onFailed: (message: string) => void,
   onCanceled: () => void,
 ): () => void {
-  const params = new URLSearchParams();
   const tokenValue = useAuthStore.getState().token;
-  if (tokenValue) {
-    params.set("_token", tokenValue);
-  }
+  const qs = tokenValue
+    ? `?${new URLSearchParams({ _token: tokenValue }).toString()}`
+    : "";
+  const url = `/api/v1/query/jobs/${encodeURIComponent(jobId)}/stream${qs}`;
 
-  const qs = params.toString();
-  const url = `/api/v1/query/jobs/${encodeURIComponent(jobId)}/stream${qs ? `?${qs}` : ""}`;
-  const source = new EventSource(url);
+  let source: EventSource | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let attempts = 0;
+  let settled = false;
+  const startedAt = Date.now();
+  const fallbackController = new AbortController();
 
-  source.addEventListener("progress", (e: MessageEvent) => {
-    try {
-      onProgress(JSON.parse(e.data) as ProgressData);
-    } catch {
-      /* skip malformed progress data */
+  const cleanup = () => {
+    if (reconnectTimer !== undefined) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
     }
-  });
-
-  source.addEventListener("complete", (e: MessageEvent) => {
-    try {
-      onComplete(JSON.parse(e.data));
-    } catch {
-      /* skip */
+    if (source) {
+      source.close();
+      source = null;
     }
-    source.close();
-  });
-
-  source.addEventListener("failed", (e: MessageEvent) => {
-    try {
-      const data = JSON.parse(e.data);
-      onFailed(data.message ?? data.code ?? "Query failed");
-    } catch {
-      onFailed("Query failed");
-    }
-    source.close();
-  });
-
-  source.addEventListener("canceled", () => {
-    onCanceled();
-    source.close();
-  });
-
-  source.onerror = () => {
-    if (source.readyState === EventSource.CLOSED) {
-      onFailed("Progress connection closed");
-    }
-    // EventSource auto-reconnects on transient errors -- no action needed.
   };
 
-  return () => source.close();
+  const settle = (fn: () => void) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    fn();
+  };
+
+  // Terminal fallback: the SSE gave up, so ask the job endpoint directly. The
+  // job most likely finished during the connection gap.
+  const recoverViaFetch = () => {
+    if (settled) return;
+    fetchJobOnce(jobId, fallbackController.signal)
+      .then((res) => {
+        switch (res.status) {
+          case "done":
+          case "complete":
+            settle(() => onComplete({ data: res.data, meta: res.meta }));
+            break;
+          case "error":
+          case "failed":
+            settle(() => onFailed(res.error ?? "Query failed"));
+            break;
+          case "canceled":
+            settle(onCanceled);
+            break;
+          default:
+            settle(() => onFailed("Progress connection lost"));
+        }
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        settle(() => onFailed("Progress connection lost"));
+      });
+  };
+
+  const connect = () => {
+    if (settled) return;
+    source = new EventSource(url);
+
+    source.onopen = () => {
+      attempts = 0; // a clean connection resets the backoff budget
+    };
+
+    source.addEventListener("progress", (e: MessageEvent) => {
+      try {
+        onProgress(JSON.parse(e.data) as ProgressData);
+      } catch {
+        /* skip malformed progress data */
+      }
+    });
+
+    source.addEventListener("complete", (e: MessageEvent) => {
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(e.data);
+      } catch {
+        /* keep null */
+      }
+      settle(() => onComplete(payload));
+    });
+
+    source.addEventListener("failed", (e: MessageEvent) => {
+      let message = "Query failed";
+      try {
+        const data = JSON.parse(e.data);
+        message = data.message ?? data.code ?? message;
+      } catch {
+        /* keep default */
+      }
+      settle(() => onFailed(message));
+    });
+
+    source.addEventListener("canceled", () => {
+      settle(onCanceled);
+    });
+
+    source.onerror = () => {
+      if (settled) {
+        cleanup();
+        return;
+      }
+      const closed = source?.readyState === EventSource.CLOSED;
+      const exhausted = attempts >= JOB_SSE_MAX_RECONNECTS;
+      const expired = Date.now() - startedAt > JOB_SSE_OVERALL_DEADLINE_MS;
+      if (closed || exhausted || expired) {
+        cleanup(); // stop the browser's native auto-reconnect
+        recoverViaFetch();
+        return;
+      }
+      // Transient: seize control from native reconnect, then retry with backoff.
+      cleanup();
+      attempts += 1;
+      const delay = Math.min(
+        JOB_SSE_BACKOFF_BASE_MS * 2 ** (attempts - 1),
+        JOB_SSE_BACKOFF_MAX_MS,
+      );
+      reconnectTimer = setTimeout(connect, delay);
+    };
+  };
+
+  connect();
+
+  return () => {
+    settled = true;
+    fallbackController.abort();
+    cleanup();
+  };
 }
 
 // cancelJob

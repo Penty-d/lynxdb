@@ -22,8 +22,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Storage.RowGroupSize != 65536 {
 		t.Errorf("expected 65536, got %d", cfg.Storage.RowGroupSize)
 	}
-	if cfg.Query.MaxConcurrent != 10 {
-		t.Errorf("expected 10, got %d", cfg.Query.MaxConcurrent)
+	if cfg.Query.MaxConcurrent != defaultMaxConcurrent {
+		t.Errorf("expected %d, got %d", defaultMaxConcurrent, cfg.Query.MaxConcurrent)
 	}
 	if cfg.Ingest.MaxBatchSize != 1000 {
 		t.Errorf("expected 1000, got %d", cfg.Ingest.MaxBatchSize)

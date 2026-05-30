@@ -425,6 +425,14 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		RangeBSIChecks:       qr.ss.RangeBSIChecks,
 		RangeBSISkips:        qr.ss.RangeBSISkips,
 		RangeBSIMaskBytes:    qr.ss.RangeBSIMaskBytes,
+		PrewhereUsed:         qr.ss.PrewhereUsed,
+		PrewhereSteps:        qr.ss.PrewhereSteps,
+		PrewhereColumns:      append([]string(nil), qr.ss.PrewhereColumns...),
+		PrewhereRowsIn:       qr.ss.PrewhereRowsIn,
+		PrewhereRowsOut:      qr.ss.PrewhereRowsOut,
+		PrewhereRGSkipped:    qr.ss.PrewhereRGSkipped,
+		PrewhereBytesRead:    qr.ss.PrewhereBytesRead,
+		PrewhereBytesAvoided: qr.ss.PrewhereBytesAvoided,
 		RangePredicates:      append([]spl2.RangePredicate(nil), qr.rangePredicates...),
 		PrefetchUsed:         qr.ss.PrefetchUsed,
 		PartialAggUsed:       aggSpec != nil || hasTransformPartialAgg(prog),
@@ -788,6 +796,7 @@ func (e *Engine) runPartialAggPipeline(
 	qr := &queryPipelineResult{}
 	partials, pss := e.buildPartialAggStore(ctx, hints, aggSpec, onProgress)
 	qr.ss = pss
+	qr.rowsScanned = pss.RowsScanned
 
 	// Check for topKAgg annotation for heap-based merge.
 	var mergedRows []map[string]event.Value
@@ -855,6 +864,7 @@ func (e *Engine) runTransformPartialAggPipeline(
 	qr := &queryPipelineResult{}
 	partials, pss := e.buildTransformPartialAggStore(ctx, hints, tSpec, onProgress)
 	qr.ss = pss
+	qr.rowsScanned = pss.RowsScanned
 
 	aggSpec := tSpec.AggSpec
 
@@ -1171,6 +1181,14 @@ func (e *Engine) runStreamingPipeline(
 		ss.RangeBSIChecks += aggSt.RGRangeBSIChecks
 		ss.RangeBSISkips += aggSt.RGRangeBSISkips
 		ss.RangeBSIMaskBytes += aggSt.RGRangeBSIMaskBytes
+		ss.PrewhereUsed = aggSt.PrewhereUsed
+		ss.PrewhereSteps = aggSt.PrewhereSteps
+		ss.PrewhereColumns = append([]string(nil), aggSt.PrewhereColumns...)
+		ss.PrewhereRowsIn = aggSt.PrewhereRowsIn
+		ss.PrewhereRowsOut = aggSt.PrewhereRowsOut
+		ss.PrewhereRGSkipped = aggSt.PrewhereRowGroupsSkipped
+		ss.PrewhereBytesRead = aggSt.PrewhereBytesRead
+		ss.PrewhereBytesAvoided = aggSt.PrewhereBytesAvoided
 		qr.rowsScanned = aggSt.EventsScanned + int64(len(memEvents))
 	}
 

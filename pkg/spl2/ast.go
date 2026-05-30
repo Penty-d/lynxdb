@@ -241,8 +241,9 @@ func (c *ChartCommand) String() string {
 
 // RexCommand represents: rex field=<field> "<regex>".
 type RexCommand struct {
-	Field   string // field to extract from (default: _raw)
-	Pattern string // regex pattern with named groups
+	Field             string   // field to extract from (default: _raw)
+	Pattern           string   // regex pattern with named groups
+	PreFilterLiterals []string // optimizer hint: skip regex unless source contains one literal
 }
 
 func (*RexCommand) commandNode() {}

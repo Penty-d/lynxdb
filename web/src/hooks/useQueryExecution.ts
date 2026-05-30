@@ -14,7 +14,6 @@ import {
   fetchHistogram,
   fetchHistogramGrouped,
   fetchExplain,
-  fetchFields,
 } from "../api/client";
 import {
   submitHybridQuery,
@@ -22,7 +21,7 @@ import {
   cancelJob,
 } from "../api/streaming";
 import { pushHistory } from "../stores/queryHistory";
-import { useSearchStore } from "../stores/search";
+import { useSearchStore, ensureFieldsLoaded } from "../stores/search";
 import { writeQueryToHash } from "../stores/queryUrl";
 // Diagnostics module is loaded lazily to avoid pulling @codemirror/lint
 // into the entry chunk's static import graph (codemirror is a dynamic chunk).
@@ -71,6 +70,9 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
   // copyTooltip replaced by sonner toast – no timer ref needed
   /** Tracks the async job ID for server-side cancel (BUG-05) */
   const activeJobIdRef = useRef<string | null>(null);
+  /** Last query text an explain was fetched for; lets us skip refetching the
+   *  pipeline structure when only pagination/time changed. */
+  const lastExplainQueryRef = useRef<string | null>(null);
 
   /** Per-mount getter for the current EditorView */
   const getEditorView = useCallback(() => {
@@ -106,7 +108,9 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
 
   // --- Post-query side effects ---
 
-  const runPostQueryEffects = useCallback(
+  // Cheap, local state transitions that must apply immediately on both the sync
+  // and async result paths (debouncing these would flash the empty state).
+  const applyImmediateQueryEffects = useCallback(
     (
       q: string,
       fromVal: string,
@@ -115,15 +119,27 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
       sz: number,
     ): void => {
       ss.setState({ hasQueried: true });
-
       pushHistory(q);
       writeQueryToHash(q, fromVal, toVal, pg, sz);
 
       const view = getEditorView();
       if (view) getDiagnostics().then((d) => d.clearEditorDiagnostics(view));
+    },
+    [getEditorView],
+  );
+
+  // Network-backed effects (histogram, explain, field catalog). These are the
+  // per-query "amplification" requests, so they are coalesced via a debounce
+  // and guarded against stale generations. Explain is deduped by query text and
+  // the field catalog is served from a TTL cache — paging or brushing the same
+  // query no longer re-fires them.
+  const runDeferredQueryEffects = useCallback(
+    (q: string, fromVal: string, toVal: string | undefined): void => {
+      const gen = queryGenerationRef.current;
 
       fetchHistogramGrouped(fromVal, toVal, 60, "level")
         .then((histResult) => {
+          if (gen !== queryGenerationRef.current) return;
           if (
             histResult.buckets.length > 0 &&
             hasKnownLevels(histResult.buckets)
@@ -135,6 +151,7 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
           } else {
             ss.setState({ groupedBuckets: [] });
             return fetchHistogram(fromVal, toVal, 60).then((h) => {
+              if (gen !== queryGenerationRef.current) return;
               ss.setState({ timelineBuckets: h.buckets });
             });
           }
@@ -142,6 +159,7 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
         .catch(() => {
           fetchHistogram(fromVal, toVal, 60)
             .then((histResult) => {
+              if (gen !== queryGenerationRef.current) return;
               ss.setState({
                 timelineBuckets: histResult.buckets,
                 groupedBuckets: [],
@@ -152,41 +170,31 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
             });
         });
 
-      fetchExplain(q, fromVal, toVal)
-        .then((explain) => {
-          ss.setState({ explainResult: explain });
-        })
-        .catch(() => {
-          /* non-critical */
-        });
+      if (q !== lastExplainQueryRef.current) {
+        lastExplainQueryRef.current = q;
+        fetchExplain(q, fromVal, toVal)
+          .then((explain) => {
+            if (gen !== queryGenerationRef.current) return;
+            ss.setState({ explainResult: explain });
+          })
+          .catch(() => {
+            /* non-critical */
+          });
+      }
 
-      fetchFields()
-        .then((fields) => {
-          const m = new Map<string, string>();
-          for (const f of fields) m.set(f.name, f.type);
-          ss.setState({ catalogFields: fields, fieldTypeMap: m });
-        })
-        .catch(() => {
-          /* non-critical */
-        });
+      ensureFieldsLoaded();
     },
-    [getEditorView],
+    [],
   );
 
-  const runPostQueryEffectsDebounced = useCallback(
-    (
-      q: string,
-      fromVal: string,
-      toVal: string | undefined,
-      pg: number,
-      sz: number,
-    ): void => {
+  const runDeferredQueryEffectsDebounced = useCallback(
+    (q: string, fromVal: string, toVal: string | undefined): void => {
       clearTimeout(postQueryEffectsTimerRef.current);
       postQueryEffectsTimerRef.current = setTimeout(() => {
-        runPostQueryEffects(q, fromVal, toVal, pg, sz);
+        runDeferredQueryEffects(q, fromVal, toVal);
       }, 300);
     },
-    [runPostQueryEffects],
+    [runDeferredQueryEffects],
   );
 
   // --- Core query execution ---
@@ -218,7 +226,11 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
       const controller = new AbortController();
       activeAbortControllerRef.current = controller;
 
-      // Reset state -- do NOT clear result yet (previous results stay during 200ms wait)
+      // Reset state -- do NOT clear result yet (previous results stay during the
+      // hybrid wait). Setting queryActive synchronously here is LOAD-BEARING: it
+      // is what makes the `if (state.queryActive) return` guard above neutralize
+      // a React StrictMode double-invoke (the second call bails). Keep this set
+      // synchronous — never move it after an await.
       ss.setState({
         queryActive: true,
         canceled: false,
@@ -245,7 +257,7 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
           if (gen !== queryGenerationRef.current) return;
 
           if (hybrid.status === "sync") {
-            // FAST PATH: query completed within 200ms -- instant swap
+            // FAST PATH: query completed within the hybrid wait -- instant swap
             ss.setState({
               result: hybrid.syncResult!.result,
               stats: hybrid.syncResult!.stats,
@@ -254,7 +266,8 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
             });
             stopElapsedTimer();
             ss.setState({ elapsedMs: hybrid.syncResult!.stats.took_ms });
-            runPostQueryEffects(q, fromVal, toVal, currentPage, currentSize);
+            applyImmediateQueryEffects(q, fromVal, toVal, currentPage, currentSize);
+            runDeferredQueryEffectsDebounced(q, fromVal, toVal);
             cleanupActiveQuery();
             return;
           }
@@ -355,13 +368,8 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
                 isPreview: false,
               });
               stopElapsedTimer();
-              runPostQueryEffectsDebounced(
-                q,
-                fromVal,
-                toVal,
-                currentPage,
-                currentSize,
-              );
+              applyImmediateQueryEffects(q, fromVal, toVal, currentPage, currentSize);
+              runDeferredQueryEffectsDebounced(q, fromVal, toVal);
               cleanupActiveQuery();
             },
             (message: string) => {
@@ -437,8 +445,8 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
     [
       cleanupActiveQuery,
       getEditorView,
-      runPostQueryEffects,
-      runPostQueryEffectsDebounced,
+      applyImmediateQueryEffects,
+      runDeferredQueryEffectsDebounced,
       startElapsedTimer,
       stopElapsedTimer,
     ],

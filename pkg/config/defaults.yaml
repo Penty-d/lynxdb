@@ -50,7 +50,7 @@
 #   max_query_runtime: 5m            # Max query execution time (0 = unlimited)
 #   job_ttl: 5m                      # Completed job retention time
 #   job_gc_interval: 30s             # Job garbage collection interval
-#   max_concurrent: 10               # Max concurrent async queries
+#   max_concurrent: 32               # Max concurrent queries
 #   default_result_limit: 1000       # Default result row limit
 #   max_result_limit: 50000          # Maximum allowed result row limit
 #   max_query_memory_bytes: 1gb      # Per-query memory budget

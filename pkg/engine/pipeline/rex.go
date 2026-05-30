@@ -10,26 +10,35 @@ import (
 
 // RexIterator performs regex field extraction per batch.
 type RexIterator struct {
-	child         Iterator
-	field         string // source field (default: _raw)
-	pattern       *regexp.Regexp
-	groups        []string // named capture group names
-	literalPrefix string   // literal prefix for fast skip
+	child             Iterator
+	field             string // source field (default: _raw)
+	pattern           *regexp.Regexp
+	groups            []string // named capture group names
+	literalPrefix     string   // literal prefix for fast skip
+	preFilterLiterals []string // optimizer-provided literals for generated-field filters
 }
 
 // NewRexIterator creates a regex extraction operator.
 func NewRexIterator(child Iterator, field, pattern string) (*RexIterator, error) {
+	return NewRexIteratorWithPreFilters(child, field, pattern, nil)
+}
+
+// NewRexIteratorWithPreFilters creates a regex extraction operator with
+// optimizer-provided literal guards. A guard can only skip regex execution; it
+// never filters the row, so downstream WHERE semantics remain authoritative.
+func NewRexIteratorWithPreFilters(child Iterator, field, pattern string, preFilterLiterals []string) (*RexIterator, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, err
 	}
 
 	return &RexIterator{
-		child:         child,
-		field:         field,
-		pattern:       re,
-		groups:        re.SubexpNames(),
-		literalPrefix: extractLiteralPrefix(pattern),
+		child:             child,
+		field:             field,
+		pattern:           re,
+		groups:            re.SubexpNames(),
+		literalPrefix:     extractLiteralPrefix(pattern),
+		preFilterLiterals: preFilterLiterals,
 	}, nil
 }
 
@@ -112,6 +121,9 @@ func (r *RexIterator) Next(ctx context.Context) (*Batch, error) {
 		if r.literalPrefix != "" && !strings.Contains(s, r.literalPrefix) {
 			continue
 		}
+		if len(r.preFilterLiterals) > 0 && !containsAnyLiteral(s, r.preFilterLiterals) {
+			continue
+		}
 		// Use FindStringSubmatchIndex to avoid allocating a []string per row.
 		// Returns []int indices into the original string — no string copies.
 		indices := r.pattern.FindStringSubmatchIndex(s)
@@ -145,3 +157,13 @@ func (r *RexIterator) Next(ctx context.Context) (*Batch, error) {
 func (r *RexIterator) Close() error { return r.child.Close() }
 
 func (r *RexIterator) Schema() []FieldInfo { return r.child.Schema() }
+
+func containsAnyLiteral(s string, literals []string) bool {
+	for _, lit := range literals {
+		if lit != "" && strings.Contains(s, lit) {
+			return true
+		}
+	}
+
+	return false
+}

@@ -21,11 +21,18 @@ func TestExplainRenderer_FullScanHint(t *testing.T) {
 
 func TestExplainRenderer_TopKPhysicalStrategy(t *testing.T) {
 	out := renderExplainReportString(explainFixture(func(parsed *client.ExplainParsed) {
-		parsed.PhysicalPlan = &client.ExplainPhysicalPlan{TopKAgg: true, TopK: 10}
+		parsed.PhysicalPlan = &client.ExplainPhysicalPlan{
+			TopKAgg:             true,
+			TopK:                10,
+			RexLiteralPreFilter: true,
+		}
 	}), explainTestOptions())
 
 	if !strings.Contains(out, "TopK heap optimization (10)") {
 		t.Fatalf("expected TopK strategy, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Rex literal prefilter") {
+		t.Fatalf("expected rex literal prefilter strategy, got:\n%s", out)
 	}
 }
 

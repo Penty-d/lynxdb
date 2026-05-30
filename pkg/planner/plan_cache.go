@@ -132,6 +132,10 @@ func (p *Plan) Clone() *Plan {
 		h.RangePredicates = append([]spl2.RangePredicate(nil), p.Hints.RangePredicates...)
 		h.InvertedIndexPredicates = append([]spl2.InvertedIndexPredicate(nil), p.Hints.InvertedIndexPredicates...)
 		h.InPredicates = append([]spl2.InPredicate(nil), p.Hints.InPredicates...)
+		h.RexPreFilters = cloneRexPreFilters(p.Hints.RexPreFilters)
+		if p.Hints.PrewherePlan != nil {
+			h.PrewherePlan = clonePrewherePlan(p.Hints.PrewherePlan)
+		}
 		clone.Hints = &h
 	}
 	if p.OptimizerStats != nil {
@@ -152,6 +156,38 @@ func (p *Plan) Clone() *Plan {
 	clone.TotalRules = p.TotalRules
 	if len(p.RuleDetails) > 0 {
 		clone.RuleDetails = append([]optimizer.RuleDetail(nil), p.RuleDetails...)
+	}
+
+	return clone
+}
+
+func cloneRexPreFilters(filters []spl2.RexPreFilter) []spl2.RexPreFilter {
+	if len(filters) == 0 {
+		return nil
+	}
+	clone := make([]spl2.RexPreFilter, len(filters))
+	for i, filter := range filters {
+		clone[i] = filter
+		clone[i].Literals = append([]string(nil), filter.Literals...)
+	}
+
+	return clone
+}
+
+func clonePrewherePlan(plan *spl2.PrewherePlan) *spl2.PrewherePlan {
+	if plan == nil {
+		return nil
+	}
+	clone := &spl2.PrewherePlan{
+		Steps: make([]spl2.PrewhereStep, len(plan.Steps)),
+	}
+	for i, step := range plan.Steps {
+		clone.Steps[i] = step
+		if step.Predicate != nil {
+			pred := *step.Predicate
+			clone.Steps[i].Predicate = &pred
+		}
+		clone.Steps[i].InValues = append([]string(nil), step.InValues...)
 	}
 
 	return clone

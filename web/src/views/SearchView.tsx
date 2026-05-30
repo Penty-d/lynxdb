@@ -7,12 +7,8 @@ import { useQueryExecution } from "../hooks/useQueryExecution";
 import { useLiveTail } from "../hooks/useLiveTail";
 import { useExport } from "../hooks/useExport";
 import { deriveColumns } from "../utils/deriveColumns";
-import {
-  fetchIndexes,
-  fetchViews,
-  fetchFields,
-} from "../api/client";
-import { useSearchStore } from "../stores/search";
+import { fetchIndexes, fetchViews } from "../api/client";
+import { useSearchStore, ensureFieldsLoaded } from "../stores/search";
 import { useOverlayStore, setPaletteQuery } from "../utils/keyboard";
 import { readQueryFromHash } from "../stores/queryUrl";
 import { appendFilter } from "../utils/filterQuery";
@@ -249,23 +245,16 @@ export function SearchView(_props: Props) {
     return unsubscribe;
   }, [runQueryAndRefresh, getEditorView]);
 
-  // Fetch indexes, views, and field catalog on mount for the flow sidebar
+  // Fetch indexes, views, and field catalog on mount for the flow sidebar.
+  // ensureFieldsLoaded seeds the catalog cache so per-query effects can skip
+  // refetching it within the TTL.
   useEffect(() => {
-    Promise.allSettled([fetchIndexes(), fetchViews(), fetchFields()]).then(
-      ([idx, views, fields]) => {
-        if (idx.status === "fulfilled")
-          ss.setState({ sidebarIndexes: idx.value });
-        if (views.status === "fulfilled")
-          ss.setState({ sidebarViews: views.value });
-        if (fields.status === "fulfilled") {
-          const m = new Map<string, string>();
-          for (const f of fields.value) {
-            m.set(f.name, f.type);
-          }
-          ss.setState({ catalogFields: fields.value, fieldTypeMap: m });
-        }
-      },
-    );
+    Promise.allSettled([fetchIndexes(), fetchViews()]).then(([idx, views]) => {
+      if (idx.status === "fulfilled") ss.setState({ sidebarIndexes: idx.value });
+      if (views.status === "fulfilled")
+        ss.setState({ sidebarViews: views.value });
+    });
+    void ensureFieldsLoaded();
   }, []);
 
   // Restore query, time range, and pagination from URL hash on mount

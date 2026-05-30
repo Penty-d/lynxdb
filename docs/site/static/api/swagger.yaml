@@ -198,7 +198,7 @@ paths:
 
         | `wait` value | Behavior | Response |
         |---|---|---|
-        | `null` (default) | **Sync.** Block until complete. | `200` with results |
+        | `null` (default) | **Sync.** Block up to `query.sync_timeout` (30s). | `200` with results, or `202` + job if it exceeds the timeout |
         | `0` | **Async.** Return immediately. | `202` with job handle |
         | `N` (seconds) | **Hybrid.** Wait up to N seconds. | `200` if done in time, `202` + job otherwise |
 
@@ -1126,7 +1126,7 @@ paths:
                     jobs:
                       running: 2
                       queued: 0
-                      max_concurrent: 10
+                      max_concurrent: 32
                   views:
                     total: 3
                     active: 2

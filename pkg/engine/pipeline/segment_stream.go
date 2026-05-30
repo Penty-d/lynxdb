@@ -119,6 +119,15 @@ type SegmentStreamStats struct {
 	SegmentTimeSkips  int // segments skipped by time range
 	ScopeSkips        int // segments skipped by source scope mismatch
 	EmptyBitmapSkips  int // segments skipped by empty inverted index bitmap
+
+	PrewhereUsed             bool
+	PrewhereSteps            int
+	PrewhereColumns          []string
+	PrewhereRowsIn           int64
+	PrewhereRowsOut          int64
+	PrewhereRowGroupsSkipped int
+	PrewhereBytesRead        int64
+	PrewhereBytesAvoided     int64
 }
 
 // SegmentStreamIterator streams events from storage segments and in-memory
@@ -220,6 +229,13 @@ func NewSegmentStreamIterator(
 				Value: rp.Max,
 			})
 		}
+	}
+	for _, ip := range hints.InPreds {
+		segPreds = append(segPreds, segment.Predicate{
+			Field:  ip.Field,
+			Op:     "in",
+			Values: append([]string(nil), ip.Values...),
+		})
 	}
 
 	var needCols map[string]bool
@@ -710,7 +726,7 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 	rowBitmap, bsiFields := s.bitmapForCurrentRowGroup()
 
 	// Read the row group with bitmap and predicate filtering.
-	events, err := reader.ReadRowGroupFiltered(
+	events, readStats, err := reader.ReadRowGroupFilteredWithStats(
 		s.rgIdx,
 		rowBitmap,
 		s.segPreds,
@@ -719,6 +735,7 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 	if err != nil {
 		return fmt.Errorf("segment %s rg %d: %w", seg.Meta.ID, s.rgIdx, err)
 	}
+	s.addPrewhereStats(readStats)
 
 	// Apply time bounds filtering on the event level for partial overlaps.
 	events = filterEventsByTimeBounds(events, s.hints.TimeBounds)
@@ -732,6 +749,38 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 	s.reportRowGroupDone()
 
 	return nil
+}
+
+func (s *SegmentStreamIterator) addPrewhereStats(readStats segment.RowGroupReadStats) {
+	if !readStats.PrewhereUsed {
+		return
+	}
+	s.streamStats.PrewhereUsed = true
+	if readStats.PrewhereSteps > s.streamStats.PrewhereSteps {
+		s.streamStats.PrewhereSteps = readStats.PrewhereSteps
+	}
+	s.streamStats.PrewhereRowsIn += int64(readStats.PrewhereRowsIn)
+	s.streamStats.PrewhereRowsOut += int64(readStats.PrewhereRowsOut)
+	if readStats.PrewhereRowGroupSkipped {
+		s.streamStats.PrewhereRowGroupsSkipped++
+	}
+	s.streamStats.PrewhereBytesRead += readStats.PrewhereBytesRead
+	s.streamStats.PrewhereBytesAvoided += readStats.PrewhereBytesAvoided
+
+	if len(readStats.PrewhereColumns) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(s.streamStats.PrewhereColumns)+len(readStats.PrewhereColumns))
+	for _, col := range s.streamStats.PrewhereColumns {
+		seen[col] = struct{}{}
+	}
+	for _, col := range readStats.PrewhereColumns {
+		if _, ok := seen[col]; ok {
+			continue
+		}
+		s.streamStats.PrewhereColumns = append(s.streamStats.PrewhereColumns, col)
+		seen[col] = struct{}{}
+	}
 }
 
 func (s *SegmentStreamIterator) bitmapForCurrentRowGroup() (*roaring.Bitmap, []string) {

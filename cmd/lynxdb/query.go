@@ -27,6 +27,11 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
+// defaultQueryTimeout bounds a server-backed CLI query when the user passes no
+// --timeout. It matches the client's poll ceiling so an async-promoted query
+// cannot poll indefinitely.
+const defaultQueryTimeout = 6 * time.Minute
+
 // noResultsError is a sentinel error for --fail-on-empty.
 type noResultsError struct{}
 
@@ -386,6 +391,10 @@ func queryRowsFromServer(query, since, from, to, timeout, analyze string, noLint
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, dur)
 		defer cancel()
+	} else {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultQueryTimeout)
+		defer cancel()
 	}
 
 	result, err := apiClient().Query(ctx, client.QueryRequest{
@@ -647,6 +656,10 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 		}
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, dur)
+		defer cancel()
+	} else {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultQueryTimeout)
 		defer cancel()
 	}
 

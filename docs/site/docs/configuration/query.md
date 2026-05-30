@@ -16,15 +16,15 @@ The maximum number of queries that can execute simultaneously.
 | Config Key | `query.max_concurrent` |
 |---|---|
 | **Env Var** | `LYNXDB_QUERY_MAX_CONCURRENT` |
-| **Default** | `10` |
+| **Default** | `32` |
 | **Hot-Reloadable** | Yes |
 
 ```yaml
 query:
-  max_concurrent: 10
+  max_concurrent: 32
 ```
 
-When the limit is reached, new queries are queued. Increase this on machines with more CPU cores and memory. A good starting point is 2x the number of CPU cores.
+When the limit is reached, new queries are rejected with HTTP `429 Too Many Requests` and a `Retry-After: 1` header — clients should back off and retry rather than hammer the endpoint. Increase this on machines with more CPU cores and memory.
 
 ```bash
 # Change at runtime

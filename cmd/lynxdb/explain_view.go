@@ -288,6 +288,9 @@ func (r explainRenderer) renderPhysicalStrategy(parsed *client.ExplainParsed) st
 		if pp.PartialAgg {
 			lines = append(lines, "Partial aggregation: aggregate per segment, then merge")
 		}
+		if pp.RexLiteralPreFilter {
+			lines = append(lines, "Rex literal prefilter: read rex source field first, then skip non-matching rows")
+		}
 		if pp.CountStarOnly {
 			lines = append(lines, "count(*) metadata shortcut: no event scan needed")
 		}

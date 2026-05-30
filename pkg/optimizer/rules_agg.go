@@ -260,6 +260,8 @@ func (r *transformAggPushdownRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 		})
 	}
 
+	attachRexWherePreFilters(q.Commands[:statsIdx])
+
 	ann := &TransformPartialAggAnnotation{
 		TransformCommands: q.Commands[:statsIdx],
 		AggSpec:           spec,
@@ -286,6 +288,263 @@ func isStreamableTransform(cmd spl2.Command) bool {
 	default:
 		return false
 	}
+}
+
+type rexLiteralContext struct {
+	prefix string
+	suffix string
+}
+
+func attachRexWherePreFilters(cmds []spl2.Command) {
+	for i, cmd := range cmds {
+		rex, ok := cmd.(*spl2.RexCommand)
+		if !ok {
+			continue
+		}
+		contexts := rexNamedGroupLiteralContexts(rex.Pattern)
+		if len(contexts) == 0 {
+			continue
+		}
+		var literals []string
+		for field, ctx := range contexts {
+			values := valuesRequiredForField(cmds[i+1:], field)
+			for _, value := range values {
+				lit := ctx.prefix + value + ctx.suffix
+				if lit != "" {
+					literals = append(literals, lit)
+				}
+			}
+		}
+		rex.PreFilterLiterals = appendUniqueStrings(rex.PreFilterLiterals, literals)
+	}
+}
+
+func valuesRequiredForField(cmds []spl2.Command, field string) []string {
+	for _, cmd := range cmds {
+		where, ok := cmd.(*spl2.WhereCommand)
+		if !ok {
+			continue
+		}
+		values, ok := valuesRequiredForFieldExpr(where.Expr, field)
+		if ok {
+			return values
+		}
+	}
+
+	return nil
+}
+
+func valuesRequiredForFieldExpr(expr spl2.Expr, field string) ([]string, bool) {
+	switch e := expr.(type) {
+	case *spl2.CompareExpr:
+		left, ok := e.Left.(*spl2.FieldExpr)
+		if !ok || left.Name != field || (e.Op != "=" && e.Op != "==") {
+			return nil, false
+		}
+		right, ok := e.Right.(*spl2.LiteralExpr)
+		if !ok || strings.ContainsAny(right.Value, "*?") {
+			return nil, false
+		}
+
+		return []string{right.Value}, true
+	case *spl2.InExpr:
+		if e.Negated {
+			return nil, false
+		}
+		left, ok := e.Field.(*spl2.FieldExpr)
+		if !ok || left.Name != field {
+			return nil, false
+		}
+		values := make([]string, 0, len(e.Values))
+		for _, expr := range e.Values {
+			lit, ok := expr.(*spl2.LiteralExpr)
+			if !ok || strings.ContainsAny(lit.Value, "*?") {
+				return nil, false
+			}
+			values = append(values, lit.Value)
+		}
+
+		return values, len(values) > 0
+	case *spl2.BinaryExpr:
+		switch strings.ToLower(e.Op) {
+		case "or":
+			left, leftOK := valuesRequiredForFieldExpr(e.Left, field)
+			right, rightOK := valuesRequiredForFieldExpr(e.Right, field)
+			if !leftOK || !rightOK {
+				return nil, false
+			}
+
+			return appendUniqueStrings(left, right), true
+		case "and":
+			if values, ok := valuesRequiredForFieldExpr(e.Left, field); ok {
+				return values, true
+			}
+			if values, ok := valuesRequiredForFieldExpr(e.Right, field); ok {
+				return values, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+func rexNamedGroupLiteralContexts(pattern string) map[string]rexLiteralContext {
+	contexts := make(map[string]rexLiteralContext)
+	var literal strings.Builder
+	for i := 0; i < len(pattern); {
+		if pattern[i] == '\\' {
+			if i+1 >= len(pattern) {
+				literal.Reset()
+				break
+			}
+			next := pattern[i+1]
+			if isEscapedRegexLiteral(next) {
+				literal.WriteByte(next)
+			} else {
+				literal.Reset()
+			}
+			i += 2
+
+			continue
+		}
+		if pattern[i] == '(' {
+			nameStart, nameEnd, ok := regexNamedGroupName(pattern, i)
+			if ok {
+				groupEnd := regexGroupEnd(pattern, nameEnd+1)
+				if groupEnd < 0 {
+					return contexts
+				}
+				name := pattern[nameStart:nameEnd]
+				contexts[name] = rexLiteralContext{
+					prefix: literal.String(),
+					suffix: regexLiteralPrefix(pattern[groupEnd+1:]),
+				}
+				literal.Reset()
+				i = groupEnd + 1
+
+				continue
+			}
+			literal.Reset()
+			i++
+
+			continue
+		}
+		if isRegexMeta(pattern[i]) {
+			literal.Reset()
+			i++
+
+			continue
+		}
+		literal.WriteByte(pattern[i])
+		i++
+	}
+
+	return contexts
+}
+
+func regexNamedGroupName(pattern string, pos int) (int, int, bool) {
+	if strings.HasPrefix(pattern[pos:], "(?P<") {
+		start := pos + len("(?P<")
+		if end := strings.IndexByte(pattern[start:], '>'); end >= 0 {
+			return start, start + end, true
+		}
+	}
+	if strings.HasPrefix(pattern[pos:], "(?<") && !strings.HasPrefix(pattern[pos:], "(?<=") && !strings.HasPrefix(pattern[pos:], "(?<!") {
+		start := pos + len("(?<")
+		if end := strings.IndexByte(pattern[start:], '>'); end >= 0 {
+			return start, start + end, true
+		}
+	}
+
+	return 0, 0, false
+}
+
+func regexGroupEnd(pattern string, pos int) int {
+	depth := 1
+	inClass := false
+	escaped := false
+	for i := pos; i < len(pattern); i++ {
+		c := pattern[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '[' {
+			inClass = true
+			continue
+		}
+		if c == ']' {
+			inClass = false
+			continue
+		}
+		if inClass {
+			continue
+		}
+		switch c {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+
+	return -1
+}
+
+func regexLiteralPrefix(pattern string) string {
+	var literal strings.Builder
+	for i := 0; i < len(pattern); {
+		if pattern[i] == '\\' {
+			if i+1 >= len(pattern) || !isEscapedRegexLiteral(pattern[i+1]) {
+				break
+			}
+			literal.WriteByte(pattern[i+1])
+			i += 2
+
+			continue
+		}
+		if isRegexMeta(pattern[i]) {
+			break
+		}
+		literal.WriteByte(pattern[i])
+		i++
+	}
+
+	return literal.String()
+}
+
+func isRegexMeta(c byte) bool {
+	return strings.ContainsRune(`.*+?()[]{}|^$`, rune(c))
+}
+
+func isEscapedRegexLiteral(c byte) bool {
+	return strings.ContainsRune(`/.-_\\"': @[]{}()*+?^$|`, rune(c))
+}
+
+func appendUniqueStrings(dst, src []string) []string {
+	seen := make(map[string]struct{}, len(dst))
+	for _, s := range dst {
+		seen[s] = struct{}{}
+	}
+	for _, s := range src {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		dst = append(dst, s)
+		seen[s] = struct{}{}
+	}
+
+	return dst
 }
 
 type partialAggregationRule struct{}

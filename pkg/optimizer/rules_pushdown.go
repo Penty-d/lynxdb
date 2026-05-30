@@ -647,11 +647,9 @@ func extractNamedGroups(pattern string) []string {
 }
 
 // FieldPredInfo holds a simple field op literal predicate for annotation.
-type FieldPredInfo struct {
-	Field string
-	Op    string
-	Value string
-}
+// Keep this as an alias of the runtime hint type so optimizer annotations can
+// be merged by spl2.ExtractQueryHints without importing optimizer.
+type FieldPredInfo = spl2.FieldPredicate
 
 // extractFieldPredicatesFromSearch walks a SearchExpr and extracts field=value
 // and field op value comparisons that can be used for segment column stats pruning.
@@ -663,6 +661,12 @@ func extractFieldPredicatesFromSearch(expr spl2.SearchExpr, preds *[]FieldPredIn
 		extractFieldPredicatesFromSearch(e.Left, preds)
 		extractFieldPredicatesFromSearch(e.Right, preds)
 	case *spl2.SearchCompareExpr:
+		// Search field comparisons are case-insensitive unless wrapped in CASE().
+		// Segment predicates are exact, so pushing `level=error` would drop rows
+		// with `level=ERROR`. Only case-sensitive search comparisons are safe.
+		if !e.CaseSensitive {
+			return
+		}
 		// Skip wildcard values — they cannot be used for min/max pruning.
 		if e.HasWildcard {
 			return

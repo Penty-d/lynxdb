@@ -270,6 +270,174 @@ func TestReadRowGroupFiltered_RangePredicate(t *testing.T) {
 	}
 }
 
+func TestReadRowGroupFilteredWithStats_StagedReadMatchesFullReadFilter(t *testing.T) {
+	events := generateTestEvents(500)
+	r := writeAndOpen(t, events)
+
+	preds := []Predicate{
+		{Field: "level", Op: "=", Value: "ERROR"},
+		{Field: "status", Op: ">=", Value: "400"},
+	}
+	got, stats, err := r.ReadRowGroupFilteredWithStats(0, nil, preds, []string{"_time", "_raw", "level", "status"})
+	if err != nil {
+		t.Fatalf("ReadRowGroupFilteredWithStats: %v", err)
+	}
+	if !stats.PrewhereUsed {
+		t.Fatal("expected prewhere stats")
+	}
+	if stats.PrewhereRowsIn != r.RowGroupRowCount(0) {
+		t.Fatalf("PrewhereRowsIn: got %d, want %d", stats.PrewhereRowsIn, r.RowGroupRowCount(0))
+	}
+
+	all, err := r.ReadRowGroupFiltered(0, nil, nil, []string{"_time", "_raw", "level", "status"})
+	if err != nil {
+		t.Fatalf("ReadRowGroupFiltered full: %v", err)
+	}
+	var want []*event.Event
+	for _, ev := range all {
+		if ev.GetField("level").String() == "ERROR" && ev.GetField("status").AsInt() >= 400 {
+			want = append(want, ev)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("staged filter returned %d events, want %d", len(got), len(want))
+	}
+	for i := range got {
+		if !got[i].Time.Equal(want[i].Time) || got[i].Raw != want[i].Raw {
+			t.Fatalf("event[%d] mismatch: got time=%v raw=%q, want time=%v raw=%q",
+				i, got[i].Time, got[i].Raw, want[i].Time, want[i].Raw)
+		}
+	}
+}
+
+func TestReadRowGroupFilteredWithStats_EmptyPrewhereSkipsProjectedRaw(t *testing.T) {
+	events := generateTestEvents(200)
+	r := writeAndOpen(t, events)
+	cache := &countingColumnCache{
+		stringPuts: make(map[string]int),
+		intPuts:    make(map[string]int),
+		floatPuts:  make(map[string]int),
+	}
+	r.SetColumnCache(cache, "seg")
+
+	got, stats, err := r.ReadRowGroupFilteredWithStats(
+		0,
+		nil,
+		[]Predicate{{Field: "status", Op: "=", Value: "999"}},
+		[]string{"_time", "_raw", "status"},
+	)
+	if err != nil {
+		t.Fatalf("ReadRowGroupFilteredWithStats: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("got %d events, want nil", len(got))
+	}
+	if !stats.PrewhereRowGroupSkipped {
+		t.Fatal("expected prewhere row group skip")
+	}
+	if cache.stringPuts["_raw"] != 0 {
+		t.Fatalf("_raw was read %d times, want 0", cache.stringPuts["_raw"])
+	}
+	if cache.intPuts["status"] == 0 {
+		t.Fatal("status predicate column was not read")
+	}
+}
+
+func TestReadRowGroupFilteredWithStats_InPredicate(t *testing.T) {
+	events := generateTestEvents(500)
+	r := writeAndOpen(t, events)
+
+	preds := []Predicate{{Field: "level", Op: "in", Values: []string{"ERROR", "FATAL"}}}
+	got, stats, err := r.ReadRowGroupFilteredWithStats(0, nil, preds, []string{"_time", "level"})
+	if err != nil {
+		t.Fatalf("ReadRowGroupFilteredWithStats: %v", err)
+	}
+	if !stats.PrewhereUsed {
+		t.Fatal("expected prewhere stats")
+	}
+
+	all, err := r.ReadRowGroupFiltered(0, nil, nil, []string{"_time", "level"})
+	if err != nil {
+		t.Fatalf("ReadRowGroupFiltered full: %v", err)
+	}
+	var want int
+	for _, ev := range all {
+		level := ev.GetField("level").String()
+		if level == "ERROR" || level == "FATAL" {
+			want++
+		}
+	}
+	if len(got) != want {
+		t.Fatalf("IN predicate returned %d events, want %d", len(got), want)
+	}
+}
+
+func TestReadEventsWithLiteralPreFilters(t *testing.T) {
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	events := make([]*event.Event, 0, 120)
+	for i := 0; i < 120; i++ {
+		level := "INFO"
+		if i%40 == 0 {
+			level = "ERROR"
+		}
+		msg := "postgres] " + level + ": query finished"
+		ev := event.NewEvent(base.Add(time.Duration(i)*time.Second), msg)
+		ev.SetField("message", event.StringValue(msg))
+		ev.SetField("level", event.StringValue(level))
+		events = append(events, ev)
+	}
+	r := writeAndOpen(t, events)
+
+	got, err := r.ReadEventsWithLiteralPreFilters(
+		[]LiteralPreFilter{{Field: "message", Literals: []string{"] ERROR:"}}},
+		nil,
+		[]string{"_time", "message", "level"},
+	)
+	if err != nil {
+		t.Fatalf("ReadEventsWithLiteralPreFilters: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d events, want 3", len(got))
+	}
+	for i, ev := range got {
+		if level := ev.GetField("level").String(); level != "ERROR" {
+			t.Fatalf("event[%d] level = %q, want ERROR", i, level)
+		}
+	}
+}
+
+type countingColumnCache struct {
+	stringPuts map[string]int
+	intPuts    map[string]int
+	floatPuts  map[string]int
+}
+
+func (c *countingColumnCache) GetStrings(_ string, _ int, _ string) ([]string, bool) {
+	return nil, false
+}
+
+func (c *countingColumnCache) PutStrings(_ string, _ int, col string, _ []string) {
+	c.stringPuts[col]++
+}
+
+func (c *countingColumnCache) GetInt64s(_ string, _ int, _ string) ([]int64, bool) {
+	return nil, false
+}
+
+func (c *countingColumnCache) PutInt64s(_ string, _ int, col string, _ []int64) {
+	c.intPuts[col]++
+}
+
+func (c *countingColumnCache) GetFloat64s(_ string, _ int, _ string) ([]float64, bool) {
+	return nil, false
+}
+
+func (c *countingColumnCache) PutFloat64s(_ string, _ int, col string, _ []float64) {
+	c.floatPuts[col]++
+}
+
+func (c *countingColumnCache) InvalidateSegment(_ string) {}
+
 // writeAndOpen is a test helper that writes events to a segment and opens a reader.
 func writeAndOpen(t *testing.T, events []*event.Event) *Reader {
 	t.Helper()

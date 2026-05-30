@@ -286,7 +286,7 @@ storage:
 query:
   sync_timeout: "30s"
   max_query_runtime: "5m"
-  max_concurrent: 10
+  max_concurrent: 32
   default_result_limit: 1000
   max_result_limit: 50000
 

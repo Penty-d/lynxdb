@@ -149,11 +149,12 @@ type ExplainRuleDetail struct {
 // This surfaces information that the logical pipeline stages alone do not show,
 // such as partial aggregation pushdown, count(*) metadata shortcut, or topK heap merge.
 type PhysicalPlan struct {
-	CountStarOnly bool   `json:"count_star_only,omitempty"`
-	PartialAgg    bool   `json:"partial_agg,omitempty"`
-	TopKAgg       bool   `json:"topk_agg,omitempty"`
-	TopK          int    `json:"topk,omitempty"`
-	JoinStrategy  string `json:"join_strategy,omitempty"`
+	CountStarOnly       bool   `json:"count_star_only,omitempty"`
+	PartialAgg          bool   `json:"partial_agg,omitempty"`
+	RexLiteralPreFilter bool   `json:"rex_literal_prefilter,omitempty"`
+	TopKAgg             bool   `json:"topk_agg,omitempty"`
+	TopK                int    `json:"topk,omitempty"`
+	JoinStrategy        string `json:"join_strategy,omitempty"`
 }
 
 // PipelineStage describes a single command in the query pipeline, including

@@ -96,7 +96,7 @@ lynxdb server
 |----------|-----------|---------|
 | `LYNXDB_QUERY_SYNC_TIMEOUT` | `query.sync_timeout` | `30s` |
 | `LYNXDB_QUERY_MAX_QUERY_RUNTIME` | `query.max_query_runtime` | `5m` |
-| `LYNXDB_QUERY_MAX_CONCURRENT` | `query.max_concurrent` | `10` |
+| `LYNXDB_QUERY_MAX_CONCURRENT` | `query.max_concurrent` | `32` |
 | `LYNXDB_QUERY_DEFAULT_RESULT_LIMIT` | `query.default_result_limit` | `1000` |
 | `LYNXDB_QUERY_MAX_RESULT_LIMIT` | `query.max_result_limit` | `50000` |
 | `LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES` | `query.max_query_memory_bytes` | `1gb` |

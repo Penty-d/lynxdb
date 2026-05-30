@@ -71,6 +71,73 @@ func TestAnnotationsMergeIntoHints(t *testing.T) {
 	}
 }
 
+func TestAnnotationsMergeSearchFieldPredicateIntoHints(t *testing.T) {
+	prog := &spl2.Program{
+		Main: &spl2.Query{
+			Source: &spl2.SourceClause{Index: "main"},
+			Commands: []spl2.Command{
+				&spl2.SearchCommand{
+					Expression: &spl2.SearchCompareExpr{
+						Field:         "_source",
+						Op:            spl2.OpEq,
+						Value:         "/var/log/app/postgres.log",
+						CaseSensitive: true,
+					},
+				},
+				&spl2.StatsCommand{
+					Aggregations: []spl2.AggExpr{{Func: "count"}},
+				},
+			},
+		},
+	}
+
+	opt := New()
+	prog.Main = opt.Optimize(prog.Main)
+
+	hints := spl2.ExtractQueryHints(prog)
+	found := false
+	for _, pred := range hints.FieldPredicates {
+		if pred.Field == "_source" && pred.Op == "=" && pred.Value == "/var/log/app/postgres.log" {
+			found = true
+
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing _source field predicate in hints: %+v", hints.FieldPredicates)
+	}
+}
+
+func TestTransformAggAddsRexWherePreFilters(t *testing.T) {
+	prog, err := spl2.ParseProgram(`FROM main | rex field=message "\] (?P<level>[A-Z]+):" | where level="ERROR" or level="FATAL" or level="PANIC" | stats count() as errors`)
+	if err != nil {
+		t.Fatalf("ParseProgram: %v", err)
+	}
+
+	opt := New()
+	prog.Main = opt.Optimize(prog.Main)
+
+	rex, ok := prog.Main.Commands[0].(*spl2.RexCommand)
+	if !ok {
+		t.Fatalf("command[0] = %T, want RexCommand", prog.Main.Commands[0])
+	}
+	for _, want := range []string{"] ERROR:", "] FATAL:", "] PANIC:"} {
+		if !stringSliceContains(rex.PreFilterLiterals, want) {
+			t.Fatalf("PreFilterLiterals missing %q: %v", want, rex.PreFilterLiterals)
+		}
+	}
+}
+
+func stringSliceContains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+
+	return false
+}
+
 func TestOptimizer_AllAnnotationsPopulated(t *testing.T) {
 	// Build a query that triggers time, bloom, column stats, column pruning, and rex.
 	q := &spl2.Query{

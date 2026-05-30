@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,26 @@ type QueryHints struct {
 	Columns     []string   // only read these columns (projection)
 	Predicates  []Predicate
 	SearchTerms []string // bloom filter terms for row group pruning
+}
+
+// RowGroupReadStats describes staged predicate-read work performed by
+// ReadRowGroupFilteredWithStats. Byte counters are based on encoded chunk sizes.
+type RowGroupReadStats struct {
+	PrewhereUsed            bool
+	PrewhereSteps           int
+	PrewhereColumns         []string
+	PrewhereRowsIn          int
+	PrewhereRowsOut         int
+	PrewhereRowGroupSkipped bool
+	PrewhereBytesRead       int64
+	PrewhereBytesAvoided    int64
+}
+
+// LiteralPreFilter selects rows where Field contains any of Literals.
+// It is used for safe rex literal guards before materializing projected columns.
+type LiteralPreFilter struct {
+	Field    string
+	Literals []string
 }
 
 // Reader reads .lsg segment files.
@@ -978,6 +999,126 @@ func (r *Reader) readRowGroupEventsProjected(rgIdx int, rg *RowGroupMeta, need m
 	return events, nil
 }
 
+func (r *Reader) readRowGroupEventsSelected(
+	rgIdx int,
+	rg *RowGroupMeta,
+	need map[string]bool,
+	selected *roaring.Bitmap,
+	rgStart uint32,
+) ([]*event.Event, error) {
+	if selected == nil {
+		if len(need) > 0 {
+			return r.readRowGroupEventsProjected(rgIdx, rg, need)
+		}
+
+		return r.readRowGroupEvents(rgIdx, rg)
+	}
+
+	localRows := selectedLocalRows(selected, rgStart, rg.RowCount)
+	if len(localRows) == 0 {
+		return nil, nil
+	}
+	if len(localRows) == rg.RowCount {
+		if len(need) > 0 {
+			return r.readRowGroupEventsProjected(rgIdx, rg, need)
+		}
+
+		return r.readRowGroupEvents(rgIdx, rg)
+	}
+
+	timeChunk := findChunk(rg, "_time")
+	if timeChunk == nil {
+		return nil, fmt.Errorf("segment: row group missing _time column")
+	}
+	timestamps, err := r.cachedReadInt64s(rgIdx, timeChunk)
+	if err != nil {
+		return nil, fmt.Errorf("segment: read _time: %w", err)
+	}
+
+	arena := make([]event.Event, len(localRows))
+	events := make([]*event.Event, len(localRows))
+	for i, localIdx := range localRows {
+		arena[i].Time = time.Unix(0, timestamps[localIdx])
+		events[i] = &arena[i]
+	}
+
+	builtinStrings := []struct {
+		name   string
+		setter func(e *event.Event, v string)
+	}{
+		{"_raw", func(e *event.Event, v string) { e.Raw = v }},
+		{"_source", func(e *event.Event, v string) { e.Source = v }},
+		{"_sourcetype", func(e *event.Event, v string) { e.SourceType = v }},
+		{"host", func(e *event.Event, v string) { e.Host = v }},
+		{"index", func(e *event.Event, v string) { e.Index = v }},
+	}
+	for _, bs := range builtinStrings {
+		if len(need) > 0 && !need[bs.name] {
+			continue
+		}
+		if cc := findConstColumn(rg, bs.name); cc != nil {
+			for _, ev := range events {
+				bs.setter(ev, cc.Value)
+			}
+
+			continue
+		}
+		cc := findChunk(rg, bs.name)
+		if cc == nil {
+			continue
+		}
+		values, err := r.cachedReadStrings(rgIdx, cc)
+		if err != nil {
+			return nil, fmt.Errorf("segment: read %s: %w", bs.name, err)
+		}
+		for i, localIdx := range localRows {
+			bs.setter(events[i], values[localIdx])
+		}
+	}
+
+	builtinCols := map[string]bool{
+		"_time": true, "_raw": true, "_source": true,
+		"_sourcetype": true, "host": true, "index": true,
+	}
+	for ci := range rg.Columns {
+		cc := &rg.Columns[ci]
+		if builtinCols[cc.Name] || (len(need) > 0 && !need[cc.Name]) {
+			continue
+		}
+		if err := r.readFieldColumnSelected(rgIdx, cc, localRows, events); err != nil {
+			return nil, err
+		}
+	}
+	for _, cc := range rg.ConstColumns {
+		if builtinCols[cc.Name] || (len(need) > 0 && !need[cc.Name]) {
+			continue
+		}
+		for _, ev := range events {
+			ev.SetField(cc.Name, event.StringValue(cc.Value))
+		}
+	}
+
+	return events, nil
+}
+
+func selectedLocalRows(selected *roaring.Bitmap, rgStart uint32, rowCount int) []int {
+	if selected == nil || selected.IsEmpty() || rowCount == 0 {
+		return nil
+	}
+	rgEnd := rgStart + uint32(rowCount)
+	rows := make([]int, 0, min(int(selected.GetCardinality()), rowCount))
+	iter := selected.Iterator()
+	for iter.HasNext() {
+		pos := iter.Next()
+		if pos < rgStart || pos >= rgEnd {
+			continue
+		}
+		rows = append(rows, int(pos-rgStart))
+	}
+
+	return rows
+}
+
 // readFieldColumn reads a user-defined field column and populates events.
 // rgIdx is the row group index, used for column cache lookups.
 func (r *Reader) readFieldColumn(rgIdx int, cc *ColumnChunkMeta, events []*event.Event) error {
@@ -1016,6 +1157,47 @@ func (r *Reader) readFieldColumn(rgIdx int, cc *ColumnChunkMeta, events []*event
 	return nil
 }
 
+func (r *Reader) readFieldColumnSelected(
+	rgIdx int,
+	cc *ColumnChunkMeta,
+	localRows []int,
+	events []*event.Event,
+) error {
+	encType := column.EncodingType(cc.EncodingType)
+	switch encType {
+	case column.EncodingDict8, column.EncodingDict16, column.EncodingLZ4:
+		values, err := r.cachedReadStrings(rgIdx, cc)
+		if err != nil {
+			return fmt.Errorf("segment: read field %q: %w", cc.Name, err)
+		}
+		for i, localIdx := range localRows {
+			if values[localIdx] != "" {
+				events[i].SetField(cc.Name, event.StringValue(values[localIdx]))
+			}
+		}
+	case column.EncodingDelta:
+		values, err := r.cachedReadInt64s(rgIdx, cc)
+		if err != nil {
+			return fmt.Errorf("segment: read field %q: %w", cc.Name, err)
+		}
+		for i, localIdx := range localRows {
+			events[i].SetField(cc.Name, event.IntValue(values[localIdx]))
+		}
+	case column.EncodingGorilla:
+		values, err := r.cachedReadFloat64s(rgIdx, cc)
+		if err != nil {
+			return fmt.Errorf("segment: read field %q: %w", cc.Name, err)
+		}
+		for i, localIdx := range localRows {
+			events[i].SetField(cc.Name, event.FloatValue(values[localIdx]))
+		}
+	default:
+		return fmt.Errorf("%w: field %q encoding %d", ErrUnsupportedCapability, cc.Name, cc.EncodingType)
+	}
+
+	return nil
+}
+
 // ReadRowGroupFiltered reads events from a single row group that match
 // the bitmap AND field predicates. This is the per-row-group equivalent
 // of ReadEventsByBitmap — extracted for streaming scan where one row group
@@ -1036,8 +1218,23 @@ func (r *Reader) ReadRowGroupFiltered(
 	preds []Predicate,
 	columns []string,
 ) ([]*event.Event, error) {
+	events, _, err := r.ReadRowGroupFilteredWithStats(rgIdx, bm, preds, columns)
+
+	return events, err
+}
+
+// ReadRowGroupFilteredWithStats reads a row group in two stages: predicate
+// columns first to build a survivor bitmap, then projected columns only when
+// rows survive. The returned stats describe the first stage.
+func (r *Reader) ReadRowGroupFilteredWithStats(
+	rgIdx int,
+	bm *roaring.Bitmap,
+	preds []Predicate,
+	columns []string,
+) ([]*event.Event, RowGroupReadStats, error) {
+	var stats RowGroupReadStats
 	if rgIdx < 0 || rgIdx >= len(r.footer.RowGroups) {
-		return nil, fmt.Errorf("segment: row group index %d out of range [0, %d)", rgIdx, len(r.footer.RowGroups))
+		return nil, stats, fmt.Errorf("segment: row group index %d out of range [0, %d)", rgIdx, len(r.footer.RowGroups))
 	}
 
 	rg := &r.footer.RowGroups[rgIdx]
@@ -1050,10 +1247,14 @@ func (r *Reader) ReadRowGroupFiltered(
 				need[c] = true
 			}
 
-			return r.readRowGroupEventsProjected(rgIdx, rg, need)
+			events, err := r.readRowGroupEventsProjected(rgIdx, rg, need)
+
+			return events, stats, err
 		}
 
-		return r.readRowGroupEvents(rgIdx, rg)
+		events, err := r.readRowGroupEvents(rgIdx, rg)
+
+		return events, stats, err
 	}
 
 	// Compute the absolute row offset of this row group.
@@ -1064,80 +1265,62 @@ func (r *Reader) ReadRowGroupFiltered(
 	rgStart := rowOffset
 	rgEnd := rowOffset + uint32(rg.RowCount)
 
-	// Read the row group (with optional column projection).
 	need := make(map[string]bool, len(columns))
 	for _, c := range columns {
 		need[c] = true
 	}
 
-	var rgEvents []*event.Event
+	// Apply bitmap filter: intersect with the row group's range before any
+	// column reads. An empty bitmap skips projected columns entirely.
+	selected := roaring.New()
+	selected.AddRange(uint64(rgStart), uint64(rgEnd))
+	if bm != nil {
+		selected.And(bm)
+	}
+	if selected.GetCardinality() == 0 {
+		return nil, stats, nil
+	}
+
+	if len(preds) > 0 {
+		stats.PrewhereUsed = true
+		stats.PrewhereSteps = len(preds)
+		stats.PrewhereColumns = predicateColumnsUnique(preds)
+		stats.PrewhereRowsIn = int(selected.GetCardinality())
+		stats.PrewhereBytesRead = r.encodedBytesForColumns(rg, stats.PrewhereColumns)
+	}
+
+	for _, pred := range preds {
+		if selected.GetCardinality() == 0 {
+			break
+		}
+		predBitmap, err := r.predicateBitmapForRowGroup(rgIdx, rg, pred, selected, rgStart)
+		if err != nil {
+			return nil, stats, err
+		}
+		selected.And(predBitmap)
+	}
+	if len(preds) > 0 {
+		stats.PrewhereRowsOut = int(selected.GetCardinality())
+		if stats.PrewhereRowsOut == 0 {
+			stats.PrewhereRowGroupSkipped = true
+			stats.PrewhereBytesAvoided = r.encodedBytesForColumns(rg, projectedColumnsForStats(rg, need))
+
+			return nil, stats, nil
+		}
+	}
+
+	var events []*event.Event
 	var err error
 	if len(need) > 0 {
-		rgEvents, err = r.readRowGroupEventsProjected(rgIdx, rg, need)
+		events, err = r.readRowGroupEventsSelected(rgIdx, rg, need, selected, rgStart)
 	} else {
-		rgEvents, err = r.readRowGroupEvents(rgIdx, rg)
+		events, err = r.readRowGroupEventsSelected(rgIdx, rg, nil, selected, rgStart)
 	}
 	if err != nil {
-		return nil, err
+		return nil, stats, err
 	}
 
-	// Apply bitmap filter: intersect with the row group's range.
-	var localBitmap *roaring.Bitmap
-	if bm != nil {
-		rgRange := roaring.New()
-		rgRange.AddRange(uint64(rgStart), uint64(rgEnd))
-		localBitmap = roaring.And(bm, rgRange)
-		if localBitmap.GetCardinality() == 0 {
-			return nil, nil
-		}
-	}
-
-	// Apply field predicate filter.
-	if len(preds) > 0 {
-		// Build a bitmap of rows passing all predicates.
-		predBitmap := roaring.New()
-		if localBitmap != nil {
-			// Only evaluate predicates on bitmap-selected rows.
-			iter := localBitmap.Iterator()
-			for iter.HasNext() {
-				pos := iter.Next()
-				localIdx := int(pos - rgStart)
-				if localIdx >= 0 && localIdx < len(rgEvents) {
-					if r.evalPredicatesOnEvent(rgEvents[localIdx], preds) {
-						predBitmap.Add(pos)
-					}
-				}
-			}
-		} else {
-			// No bitmap — evaluate all rows.
-			for i, ev := range rgEvents {
-				if r.evalPredicatesOnEvent(ev, preds) {
-					predBitmap.Add(rgStart + uint32(i))
-				}
-			}
-		}
-		localBitmap = predBitmap
-		if localBitmap.GetCardinality() == 0 {
-			return nil, nil
-		}
-	}
-
-	// Extract matching events.
-	if localBitmap == nil {
-		return rgEvents, nil
-	}
-
-	result := make([]*event.Event, 0, localBitmap.GetCardinality())
-	iter := localBitmap.Iterator()
-	for iter.HasNext() {
-		pos := iter.Next()
-		localIdx := int(pos - rgStart)
-		if localIdx >= 0 && localIdx < len(rgEvents) {
-			result = append(result, rgEvents[localIdx])
-		}
-	}
-
-	return result, nil
+	return events, stats, nil
 }
 
 // evalPredicatesOnEvent checks if an event passes all given predicates.
@@ -1149,6 +1332,14 @@ func (r *Reader) evalPredicatesOnEvent(ev *event.Event, preds []Predicate) bool 
 		}
 		switch val.Type() {
 		case event.FieldTypeInt:
+			if pred.Op == "in" {
+				n, _ := val.TryAsInt()
+				if !int64InPredicate(n, pred.Values) {
+					return false
+				}
+
+				continue
+			}
 			predValF, err := strconv.ParseFloat(pred.Value, 64)
 			if err != nil {
 				return false
@@ -1158,6 +1349,14 @@ func (r *Reader) evalPredicatesOnEvent(ev *event.Event, preds []Predicate) bool 
 				return false
 			}
 		case event.FieldTypeFloat:
+			if pred.Op == "in" {
+				f, _ := val.TryAsFloat()
+				if !float64InPredicate(f, pred.Values) {
+					return false
+				}
+
+				continue
+			}
 			predVal, err := strconv.ParseFloat(pred.Value, 64)
 			if err != nil {
 				return false
@@ -1167,6 +1366,13 @@ func (r *Reader) evalPredicatesOnEvent(ev *event.Event, preds []Predicate) bool 
 				return false
 			}
 		default:
+			if pred.Op == "in" {
+				if !stringInPredicate(val.String(), pred.Values) {
+					return false
+				}
+
+				continue
+			}
 			if !evalStringPredicate(val.String(), pred.Op, pred.Value) {
 				return false
 			}
@@ -1207,27 +1413,11 @@ func (r *Reader) ReadEventsByBitmap(bm *roaring.Bitmap, columns []string) ([]*ev
 			continue
 		}
 
-		// Read this row group's columns.
-		var rgEvents []*event.Event
-		var err error
-		if len(need) > 0 {
-			rgEvents, err = r.readRowGroupEventsProjected(rgi, rg, need)
-		} else {
-			rgEvents, err = r.readRowGroupEvents(rgi, rg)
-		}
+		rgEvents, err := r.readRowGroupEventsSelected(rgi, rg, need, rgRange, rgStart)
 		if err != nil {
 			return nil, err
 		}
-
-		// Extract only matching rows (converted to local offsets).
-		iter := rgRange.Iterator()
-		for iter.HasNext() {
-			pos := iter.Next()
-			localIdx := int(pos - rgStart)
-			if localIdx < len(rgEvents) {
-				result = append(result, rgEvents[localIdx])
-			}
-		}
+		result = append(result, rgEvents...)
 
 		rowOffset = rgEnd
 	}
@@ -1237,9 +1427,10 @@ func (r *Reader) ReadEventsByBitmap(bm *roaring.Bitmap, columns []string) ([]*ev
 
 // Predicate represents a simple filter to push down to segment read level.
 type Predicate struct {
-	Field string
-	Op    string // "=", "!=", "<", "<=", ">", ">="
-	Value string
+	Field  string
+	Op     string // "=", "!=", "<", "<=", ">", ">=", "in"
+	Value  string
+	Values []string // for "in"
 }
 
 // ReadEventsFiltered reads events with predicate pushdown and optional search bitmap.
@@ -1275,6 +1466,92 @@ func (r *Reader) ReadEventsFiltered(preds []Predicate, searchBitmap *roaring.Bit
 	}
 
 	return r.ReadEventsByBitmap(matchBitmap, columns)
+}
+
+// ReadEventsWithLiteralPreFilters reads rows matching all literal prefilters and
+// the optional search bitmap, then materializes only the requested columns.
+func (r *Reader) ReadEventsWithLiteralPreFilters(
+	filters []LiteralPreFilter,
+	searchBitmap *roaring.Bitmap,
+	columns []string,
+) ([]*event.Event, error) {
+	count := int(r.footer.EventCount)
+	if count == 0 {
+		return nil, nil
+	}
+
+	var matchBitmap *roaring.Bitmap
+	if searchBitmap != nil {
+		matchBitmap = searchBitmap.Clone()
+	} else {
+		matchBitmap = roaring.New()
+		matchBitmap.AddRange(0, uint64(count))
+	}
+
+	for _, filter := range filters {
+		if matchBitmap.GetCardinality() == 0 {
+			return nil, nil
+		}
+		filterBitmap, err := r.literalPreFilterBitmap(filter, matchBitmap)
+		if err != nil {
+			return nil, err
+		}
+		matchBitmap.And(filterBitmap)
+	}
+	if matchBitmap.GetCardinality() == 0 {
+		return nil, nil
+	}
+
+	return r.ReadEventsByBitmap(matchBitmap, columns)
+}
+
+func (r *Reader) literalPreFilterBitmap(filter LiteralPreFilter, matchBitmap *roaring.Bitmap) (*roaring.Bitmap, error) {
+	filterBitmap := roaring.New()
+	if filter.Field == "" || len(filter.Literals) == 0 || !r.HasColumn(filter.Field) {
+		return filterBitmap, nil
+	}
+
+	rowOffset := uint32(0)
+	for rgi := range r.footer.RowGroups {
+		rg := &r.footer.RowGroups[rgi]
+		rgStart := rowOffset
+		rgEnd := rowOffset + uint32(rg.RowCount)
+		rowOffset = rgEnd
+
+		selected := roaring.New()
+		selected.AddRange(uint64(rgStart), uint64(rgEnd))
+		selected.And(matchBitmap)
+		if selected.GetCardinality() == 0 {
+			continue
+		}
+
+		if cc := findConstColumn(rg, filter.Field); cc != nil {
+			if containsAnyLiteral(cc.Value, filter.Literals) {
+				filterBitmap.Or(selected)
+			}
+
+			continue
+		}
+
+		cc := findChunk(rg, filter.Field)
+		if cc == nil {
+			continue
+		}
+		values, err := r.cachedReadStrings(rgi, cc)
+		if err != nil {
+			return nil, fmt.Errorf("segment.ReadEventsWithLiteralPreFilters: read column %q: %w", filter.Field, err)
+		}
+		iter := selected.Iterator()
+		for iter.HasNext() {
+			pos := iter.Next()
+			localIdx := int(pos - rgStart)
+			if localIdx >= 0 && localIdx < len(values) && containsAnyLiteral(values[localIdx], filter.Literals) {
+				filterBitmap.Add(pos)
+			}
+		}
+	}
+
+	return filterBitmap, nil
 }
 
 func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*roaring.Bitmap, error) {
@@ -1313,6 +1590,22 @@ func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*
 
 		switch column.EncodingType(cc.EncodingType) {
 		case column.EncodingDict8, column.EncodingDict16:
+			if pred.Op == "in" {
+				values, err := r.cachedReadStrings(rgi, cc)
+				if err != nil {
+					return nil, fmt.Errorf("segment.ReadEventsFiltered: read column %q for predicate: %w", pred.Field, err)
+				}
+				iter := selected.Iterator()
+				for iter.HasNext() {
+					pos := iter.Next()
+					localIdx := int(pos - rgStart)
+					if localIdx >= 0 && localIdx < len(values) && stringInPredicate(values[localIdx], pred.Values) {
+						predBitmap.Add(pos)
+					}
+				}
+
+				continue
+			}
 			if pred.Op == "=" || pred.Op == "==" || pred.Op == "!=" {
 				if rawData, err := r.readChunk(cc); err == nil {
 					if df, dfErr := column.NewDictFilterFromEncoded(rawData); dfErr == nil {
@@ -1349,11 +1642,34 @@ func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*
 			for iter.HasNext() {
 				pos := iter.Next()
 				localIdx := int(pos - rgStart)
-				if localIdx >= 0 && localIdx < len(values) && evalStringPredicate(values[localIdx], pred.Op, pred.Value) {
+				if localIdx < 0 || localIdx >= len(values) {
+					continue
+				}
+				if pred.Op == "in" && stringInPredicate(values[localIdx], pred.Values) {
+					predBitmap.Add(pos)
+					continue
+				}
+				if pred.Op != "in" && evalStringPredicate(values[localIdx], pred.Op, pred.Value) {
 					predBitmap.Add(pos)
 				}
 			}
 		case column.EncodingDelta:
+			if pred.Op == "in" {
+				values, err := r.cachedReadInt64s(rgi, cc)
+				if err != nil {
+					return nil, fmt.Errorf("segment.ReadEventsFiltered: read column %q for predicate: %w", pred.Field, err)
+				}
+				iter := selected.Iterator()
+				for iter.HasNext() {
+					pos := iter.Next()
+					localIdx := int(pos - rgStart)
+					if localIdx >= 0 && localIdx < len(values) && int64InPredicate(values[localIdx], pred.Values) {
+						predBitmap.Add(pos)
+					}
+				}
+
+				continue
+			}
 			predVal, mode, ok := coerceIntPredicateValue(pred.Value, pred.Op)
 			if !ok {
 				continue
@@ -1378,6 +1694,22 @@ func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*
 				}
 			}
 		case column.EncodingGorilla:
+			if pred.Op == "in" {
+				values, err := r.cachedReadFloat64s(rgi, cc)
+				if err != nil {
+					return nil, fmt.Errorf("segment.ReadEventsFiltered: read column %q for predicate: %w", pred.Field, err)
+				}
+				iter := selected.Iterator()
+				for iter.HasNext() {
+					pos := iter.Next()
+					localIdx := int(pos - rgStart)
+					if localIdx >= 0 && localIdx < len(values) && float64InPredicate(values[localIdx], pred.Values) {
+						predBitmap.Add(pos)
+					}
+				}
+
+				continue
+			}
 			predVal, err := strconv.ParseFloat(pred.Value, 64)
 			if err != nil {
 				continue
@@ -1400,9 +1732,198 @@ func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*
 	return predBitmap, nil
 }
 
+func (r *Reader) predicateBitmapForRowGroup(
+	rgIdx int,
+	rg *RowGroupMeta,
+	pred Predicate,
+	selected *roaring.Bitmap,
+	rgStart uint32,
+) (*roaring.Bitmap, error) {
+	if selected == nil || selected.IsEmpty() {
+		return roaring.New(), nil
+	}
+	if !r.HasColumnInRowGroup(rgIdx, pred.Field) {
+		return selected.Clone(), nil
+	}
+
+	predBitmap := roaring.New()
+	if cc := findConstColumn(rg, pred.Field); cc != nil {
+		if evalConstPredicate(cc, pred) {
+			return selected.Clone(), nil
+		}
+
+		return predBitmap, nil
+	}
+
+	cc := findChunk(rg, pred.Field)
+	if cc == nil {
+		return selected.Clone(), nil
+	}
+
+	switch column.EncodingType(cc.EncodingType) {
+	case column.EncodingDict8, column.EncodingDict16:
+		if pred.Op == "in" {
+			values, err := r.cachedReadStrings(rgIdx, cc)
+			if err != nil {
+				return nil, fmt.Errorf("segment.ReadRowGroupFiltered: read column %q for predicate: %w", pred.Field, err)
+			}
+			addStringInPredicateMatches(predBitmap, selected, values, pred.Values, rgStart)
+
+			return predBitmap, nil
+		}
+		if pred.Op == "=" || pred.Op == "==" || pred.Op == "!=" {
+			if rawData, err := r.readChunk(cc); err == nil {
+				if df, dfErr := column.NewDictFilterFromEncoded(rawData); dfErr == nil {
+					var localMatches *roaring.Bitmap
+					if pred.Op == "!=" {
+						localMatches = df.FilterNotEquality(pred.Value)
+					} else {
+						localMatches = df.FilterEquality(pred.Value)
+					}
+					addSelectedLocalMatches(predBitmap, localMatches, selected, rgStart)
+
+					return predBitmap, nil
+				}
+			}
+		}
+		values, err := r.cachedReadStrings(rgIdx, cc)
+		if err != nil {
+			return nil, fmt.Errorf("segment.ReadRowGroupFiltered: read column %q for predicate: %w", pred.Field, err)
+		}
+		addStringPredicateMatches(predBitmap, selected, values, pred, rgStart)
+	case column.EncodingLZ4:
+		values, err := r.cachedReadStrings(rgIdx, cc)
+		if err != nil {
+			return nil, fmt.Errorf("segment.ReadRowGroupFiltered: read column %q for predicate: %w", pred.Field, err)
+		}
+		if pred.Op == "in" {
+			addStringInPredicateMatches(predBitmap, selected, values, pred.Values, rgStart)
+
+			return predBitmap, nil
+		}
+		addStringPredicateMatches(predBitmap, selected, values, pred, rgStart)
+	case column.EncodingDelta:
+		if pred.Op == "in" {
+			values, err := r.cachedReadInt64s(rgIdx, cc)
+			if err != nil {
+				return nil, fmt.Errorf("segment.ReadRowGroupFiltered: read column %q for predicate: %w", pred.Field, err)
+			}
+			iter := selected.Iterator()
+			for iter.HasNext() {
+				pos := iter.Next()
+				localIdx := int(pos - rgStart)
+				if localIdx >= 0 && localIdx < len(values) && int64InPredicate(values[localIdx], pred.Values) {
+					predBitmap.Add(pos)
+				}
+			}
+
+			return predBitmap, nil
+		}
+		predVal, mode, ok := coerceIntPredicateValue(pred.Value, pred.Op)
+		if !ok {
+			return predBitmap, nil
+		}
+		if mode == intPredicateAlways {
+			return selected.Clone(), nil
+		}
+		if mode == intPredicateNever {
+			return predBitmap, nil
+		}
+		values, err := r.cachedReadInt64s(rgIdx, cc)
+		if err != nil {
+			return nil, fmt.Errorf("segment.ReadRowGroupFiltered: read column %q for predicate: %w", pred.Field, err)
+		}
+		iter := selected.Iterator()
+		for iter.HasNext() {
+			pos := iter.Next()
+			localIdx := int(pos - rgStart)
+			if localIdx >= 0 && localIdx < len(values) && evalInt64Predicate(values[localIdx], pred.Op, predVal) {
+				predBitmap.Add(pos)
+			}
+		}
+	case column.EncodingGorilla:
+		if pred.Op == "in" {
+			values, err := r.cachedReadFloat64s(rgIdx, cc)
+			if err != nil {
+				return nil, fmt.Errorf("segment.ReadRowGroupFiltered: read column %q for predicate: %w", pred.Field, err)
+			}
+			iter := selected.Iterator()
+			for iter.HasNext() {
+				pos := iter.Next()
+				localIdx := int(pos - rgStart)
+				if localIdx >= 0 && localIdx < len(values) && float64InPredicate(values[localIdx], pred.Values) {
+					predBitmap.Add(pos)
+				}
+			}
+
+			return predBitmap, nil
+		}
+		predVal, err := strconv.ParseFloat(pred.Value, 64)
+		if err != nil {
+			return predBitmap, nil
+		}
+		values, err := r.cachedReadFloat64s(rgIdx, cc)
+		if err != nil {
+			return nil, fmt.Errorf("segment.ReadRowGroupFiltered: read column %q for predicate: %w", pred.Field, err)
+		}
+		iter := selected.Iterator()
+		for iter.HasNext() {
+			pos := iter.Next()
+			localIdx := int(pos - rgStart)
+			if localIdx >= 0 && localIdx < len(values) && evalFloat64Predicate(values[localIdx], pred.Op, predVal) {
+				predBitmap.Add(pos)
+			}
+		}
+	}
+
+	return predBitmap, nil
+}
+
+func addStringPredicateMatches(
+	dst *roaring.Bitmap,
+	selected *roaring.Bitmap,
+	values []string,
+	pred Predicate,
+	rgStart uint32,
+) {
+	iter := selected.Iterator()
+	for iter.HasNext() {
+		pos := iter.Next()
+		localIdx := int(pos - rgStart)
+		if localIdx >= 0 && localIdx < len(values) && evalStringPredicate(values[localIdx], pred.Op, pred.Value) {
+			dst.Add(pos)
+		}
+	}
+}
+
+func addStringInPredicateMatches(
+	dst *roaring.Bitmap,
+	selected *roaring.Bitmap,
+	values []string,
+	targets []string,
+	rgStart uint32,
+) {
+	iter := selected.Iterator()
+	for iter.HasNext() {
+		pos := iter.Next()
+		localIdx := int(pos - rgStart)
+		if localIdx >= 0 && localIdx < len(values) && stringInPredicate(values[localIdx], targets) {
+			dst.Add(pos)
+		}
+	}
+}
+
 func evalConstPredicate(cc *ConstColumnEntry, pred Predicate) bool {
 	switch column.EncodingType(cc.EncodingType) {
 	case column.EncodingDelta:
+		if pred.Op == "in" {
+			val, err := strconv.ParseInt(cc.Value, 10, 64)
+			if err != nil {
+				return false
+			}
+
+			return int64InPredicate(val, pred.Values)
+		}
 		predVal, mode, ok := coerceIntPredicateValue(pred.Value, pred.Op)
 		if !ok {
 			return false
@@ -1420,6 +1941,14 @@ func evalConstPredicate(cc *ConstColumnEntry, pred Predicate) bool {
 
 		return evalInt64Predicate(val, pred.Op, predVal)
 	case column.EncodingGorilla:
+		if pred.Op == "in" {
+			val, err := strconv.ParseFloat(cc.Value, 64)
+			if err != nil {
+				return false
+			}
+
+			return float64InPredicate(val, pred.Values)
+		}
 		predVal, err := strconv.ParseFloat(pred.Value, 64)
 		if err != nil {
 			return false
@@ -1431,6 +1960,10 @@ func evalConstPredicate(cc *ConstColumnEntry, pred Predicate) bool {
 
 		return evalFloat64Predicate(val, pred.Op, predVal)
 	default:
+		if pred.Op == "in" {
+			return stringInPredicate(cc.Value, pred.Values)
+		}
+
 		return evalStringPredicate(cc.Value, pred.Op, pred.Value)
 	}
 }
@@ -1443,6 +1976,64 @@ func addSelectedLocalMatches(dst, localMatches, selected *roaring.Bitmap, rgStar
 			dst.Add(pos)
 		}
 	}
+}
+
+func predicateColumnsUnique(preds []Predicate) []string {
+	if len(preds) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(preds))
+	cols := make([]string, 0, len(preds))
+	for _, pred := range preds {
+		if pred.Field == "" {
+			continue
+		}
+		if _, ok := seen[pred.Field]; ok {
+			continue
+		}
+		seen[pred.Field] = struct{}{}
+		cols = append(cols, pred.Field)
+	}
+
+	return cols
+}
+
+func projectedColumnsForStats(rg *RowGroupMeta, need map[string]bool) []string {
+	if len(need) > 0 {
+		cols := make([]string, 0, len(need))
+		for col := range need {
+			cols = append(cols, col)
+		}
+
+		return cols
+	}
+	cols := make([]string, 0, len(rg.Columns)+len(rg.ConstColumns))
+	for _, cc := range rg.Columns {
+		cols = append(cols, cc.Name)
+	}
+	for _, cc := range rg.ConstColumns {
+		cols = append(cols, cc.Name)
+	}
+
+	return cols
+}
+
+func (r *Reader) encodedBytesForColumns(rg *RowGroupMeta, cols []string) int64 {
+	if len(cols) == 0 {
+		return 0
+	}
+	need := make(map[string]struct{}, len(cols))
+	for _, col := range cols {
+		need[col] = struct{}{}
+	}
+	var total int64
+	for _, cc := range rg.Columns {
+		if _, ok := need[cc.Name]; ok {
+			total += cc.Length
+		}
+	}
+
+	return total
 }
 
 // LoadRangeBSI returns the decoded range BSI for a row-group column.
@@ -1991,6 +2582,16 @@ func evalStringPredicate(val, op, target string) bool {
 	return false
 }
 
+func stringInPredicate(val string, targets []string) bool {
+	for _, target := range targets {
+		if val == target {
+			return true
+		}
+	}
+
+	return false
+}
+
 func evalInt64Predicate(val int64, op string, target int64) bool {
 	switch op {
 	case "=", "==":
@@ -2010,6 +2611,20 @@ func evalInt64Predicate(val int64, op string, target int64) bool {
 	return false
 }
 
+func int64InPredicate(val int64, targets []string) bool {
+	for _, target := range targets {
+		n, mode, ok := coerceIntPredicateValue(target, "=")
+		if !ok || mode != intPredicateCompare {
+			continue
+		}
+		if val == n {
+			return true
+		}
+	}
+
+	return false
+}
+
 func evalFloat64Predicate(val float64, op string, target float64) bool {
 	switch op {
 	case "=", "==":
@@ -2024,6 +2639,30 @@ func evalFloat64Predicate(val float64, op string, target float64) bool {
 		return val > target
 	case ">=":
 		return val >= target
+	}
+
+	return false
+}
+
+func float64InPredicate(val float64, targets []string) bool {
+	for _, target := range targets {
+		f, err := strconv.ParseFloat(target, 64)
+		if err != nil {
+			continue
+		}
+		if val == f {
+			return true
+		}
+	}
+
+	return false
+}
+
+func containsAnyLiteral(s string, literals []string) bool {
+	for _, lit := range literals {
+		if lit != "" && strings.Contains(s, lit) {
+			return true
+		}
 	}
 
 	return false

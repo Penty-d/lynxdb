@@ -209,6 +209,9 @@ func handlePlanError(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, usecases.ErrTooManyQueries) {
+		// A query slot frees the instant any in-flight query finishes, so hint a
+		// short backoff rather than letting clients hammer the endpoint.
+		w.Header().Set("Retry-After", "1")
 		respondError(w, ErrCodeTooManyRequests, http.StatusTooManyRequests, err.Error())
 
 		return

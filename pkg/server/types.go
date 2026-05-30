@@ -105,6 +105,14 @@ type SearchStats struct {
 	RangeBSIChecks       int                   `json:"range_bsi_checks,omitempty"`
 	RangeBSISkips        int                   `json:"range_bsi_skips,omitempty"`
 	RangeBSIMaskBytes    int64                 `json:"range_bsi_mask_bytes,omitempty"`
+	PrewhereUsed         bool                  `json:"prewhere_used,omitempty"`
+	PrewhereSteps        int                   `json:"prewhere_steps,omitempty"`
+	PrewhereColumns      []string              `json:"prewhere_columns,omitempty"`
+	PrewhereRowsIn       int64                 `json:"prewhere_rows_in,omitempty"`
+	PrewhereRowsOut      int64                 `json:"prewhere_rows_out,omitempty"`
+	PrewhereRGSkipped    int                   `json:"prewhere_row_groups_skipped,omitempty"`
+	PrewhereBytesRead    int64                 `json:"prewhere_bytes_read,omitempty"`
+	PrewhereBytesAvoided int64                 `json:"prewhere_bytes_avoided,omitempty"`
 	RangePredicates      []spl2.RangePredicate `json:"-"`
 	CountStarOptimized   bool                  `json:"count_star_optimized"`
 	PartialAggUsed       bool                  `json:"partial_agg_used"`
@@ -266,6 +274,15 @@ type storeStats struct {
 	RangeBSIChecks       int
 	RangeBSISkips        int
 	RangeBSIMaskBytes    int64
+	PrewhereUsed         bool
+	PrewhereSteps        int
+	PrewhereColumns      []string
+	PrewhereRowsIn       int64
+	PrewhereRowsOut      int64
+	PrewhereRGSkipped    int
+	PrewhereBytesRead    int64
+	PrewhereBytesAvoided int64
+	RowsScanned          int64
 	// TotalBytesRead is the sum of SizeBytes for all scanned segments.
 	// Always accumulated (not trace-only) to support ClickHouse-style throughput display.
 	TotalBytesRead int64

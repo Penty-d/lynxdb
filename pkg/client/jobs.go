@@ -3,11 +3,19 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
 )
+
+// maxPollDuration bounds the total wall-clock a PollJob call will wait before
+// giving up. It sits above the server's default MaxQueryRuntime (5m) so a job
+// that runs its full budget still returns, while preventing an unbounded poll
+// loop when the caller supplies no deadline. Pass a context with an earlier
+// deadline (e.g. the CLI --timeout flag) to override it.
+const maxPollDuration = 6 * time.Minute
 
 // GetJob returns the status and results of a query job.
 func (c *Client) GetJob(ctx context.Context, jobID string) (*JobResult, error) {
@@ -30,8 +38,16 @@ func (c *Client) CancelJob(ctx context.Context, jobID string) error {
 }
 
 // PollJob polls a job until it completes, calling progressFn on each progress update.
-// Uses exponential backoff from 100ms to 1s between polls.
+// Uses exponential backoff from 100ms to 1s between polls. When the caller's
+// context has no deadline, an internal ceiling (maxPollDuration) is applied so
+// the loop cannot run forever against a job that never reaches a terminal state.
 func (c *Client) PollJob(ctx context.Context, jobID string, progressFn func(*JobProgress)) (*QueryResult, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, maxPollDuration)
+		defer cancel()
+	}
+
 	interval := 100 * time.Millisecond
 	maxInterval := 1 * time.Second
 
@@ -61,6 +77,10 @@ func (c *Client) PollJob(ctx context.Context, jobID string, progressFn func(*Job
 
 		select {
 		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("lynxdb: job %s did not complete before the poll deadline (raise --timeout if the query needs longer)", jobID)
+			}
+
 			return nil, ctx.Err()
 		case <-time.After(interval):
 		}
