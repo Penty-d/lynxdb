@@ -17,6 +17,7 @@ func TestE2E_Persistence_DataSurvivesRestart(t *testing.T) {
 	h := NewHarness(t, WithDisk())
 	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 	h.IngestFile("idx_openstack", "testdata/logs/OpenStack_2k.log")
+	h.FlushBatcher()
 
 	// Collect pre-restart reference results.
 	type queryCase struct {

@@ -160,6 +160,18 @@ func (h *Harness) RestartServer() {
 	h.t.Log("server restarted")
 }
 
+// FlushBatcher forces buffered ingest data into durable segments before a test
+// takes a query baseline.
+func (h *Harness) FlushBatcher() {
+	h.t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := h.srv.Engine().FlushBatcherContext(ctx); err != nil {
+		h.t.Fatalf("flush batcher: %v", err)
+	}
+}
+
 // Client returns the typed HTTP client.
 func (h *Harness) Client() *client.Client {
 	return h.client
