@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -775,5 +777,37 @@ func TestAsyncBatcher_DefaultIndex(t *testing.T) {
 	}
 	if parts[0].EventCount != 5 {
 		t.Errorf("expected 5 events, got %d", parts[0].EventCount)
+	}
+}
+
+func TestBatcher_IdleFlushRetainsEventsOnError(t *testing.T) {
+	// Root the writer at a regular file so the partition directory cannot be
+	// created and every flush fails deterministically.
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write blocker: %v", err)
+	}
+
+	layout := NewLayout(blocker)
+	registry := NewRegistry(testLogger())
+	writer := NewWriter(layout, segment.CompressionLZ4, DefaultRowGroupSize)
+	b := NewAsyncBatcher(writer, registry, BatcherConfig{
+		MaxEvents: 1000,
+		MaxBytes:  1 << 20,
+		MaxWait:   time.Millisecond,
+	}, testLogger())
+
+	if err := b.Add(makeEvents(3, "main")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// Let MaxWait elapse, then run idle flush. The flush fails, so the accepted
+	// events must be requeued for retry, not dropped.
+	time.Sleep(5 * time.Millisecond)
+	b.flushIdleShards()
+
+	if got := b.BufferedEvents(); got != 3 {
+		t.Fatalf("expected 3 events retained after failed flush, got %d", got)
 	}
 }

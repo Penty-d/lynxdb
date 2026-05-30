@@ -704,8 +704,34 @@ func (b *AsyncBatcher) flushIdleShardsWithContext(ctx context.Context) {
 			b.logger.Error("idle flush failed", "index", ft.key.index,
 				"partition", ft.key.partition,
 				"events", len(ft.events), "error", err)
+			b.requeueFailedFlush(ft)
 		}
 	}
+}
+
+// requeueFailedFlush returns events to their shard after a failed idle flush so
+// they are retried on a later tick instead of being lost. Add already returned
+// nil to the caller, so dropping them here would lose acknowledged data. lastAdd
+// is reset to now so the retry waits another MaxWait interval, acting as simple
+// backoff against a persistently failing disk.
+func (b *AsyncBatcher) requeueFailedFlush(ft flushTarget) {
+	if len(ft.events) == 0 {
+		return
+	}
+
+	b.mu.Lock()
+	shard, ok := b.shards[ft.key]
+	if !ok {
+		shard = &batchShard{}
+		b.shards[ft.key] = shard
+	}
+	// Prepend the failed events; flushEvents re-sorts by timestamp regardless.
+	shard.events = append(ft.events, shard.events...)
+	for _, ev := range ft.events {
+		shard.sizeBytes += int64(len(ev.Raw))
+	}
+	shard.lastAdd = time.Now()
+	b.mu.Unlock()
 }
 
 // flushEvents sorts events by timestamp and writes them to a part file.
