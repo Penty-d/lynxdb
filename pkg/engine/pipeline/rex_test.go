@@ -31,6 +31,33 @@ func TestRexIterator_Match(t *testing.T) {
 	}
 }
 
+func TestRexIterator_PreFilterLiterals(t *testing.T) {
+	rows := []map[string]event.Value{
+		{"message": event.StringValue(`2026-05-30 [1] INFO: still noisy`)},
+		{"message": event.StringValue(`2026-05-30 [1] ERROR: failed`)},
+	}
+	scan := NewRowScanIterator(rows, 2)
+
+	rex, err := NewRexIteratorWithPreFilters(scan, "message", `\] (?P<level>[A-Z]+):`, []string{"] ERROR:"})
+	if err != nil {
+		t.Fatalf("NewRexIteratorWithPreFilters: %v", err)
+	}
+
+	batch, err := rex.Next(context.Background())
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if batch == nil {
+		t.Fatal("expected batch")
+	}
+	if got := batch.Value("level", 0); !got.IsNull() {
+		t.Fatalf("row 0 level = %v, want null", got)
+	}
+	if got := batch.Value("level", 1).AsString(); got != "ERROR" {
+		t.Fatalf("row 1 level = %q, want ERROR", got)
+	}
+}
+
 func TestRexIterator_NoMatch(t *testing.T) {
 	events := []*event.Event{
 		{Raw: "no match here", Fields: map[string]event.Value{}},
