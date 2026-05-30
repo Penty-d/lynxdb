@@ -86,6 +86,14 @@ type SearchStats struct {
 	SegmentsSkippedRange int             `json:"segments_skipped_range,omitempty"`
 	BufferedEvents       int             `json:"buffered_events,omitempty"`
 	InvertedIndexHits    int             `json:"inverted_index_hits,omitempty"`
+	PrewhereUsed         bool            `json:"prewhere_used,omitempty"`
+	PrewhereSteps        int             `json:"prewhere_steps,omitempty"`
+	PrewhereColumns      []string        `json:"prewhere_columns,omitempty"`
+	PrewhereRowsIn       int64           `json:"prewhere_rows_in,omitempty"`
+	PrewhereRowsOut      int64           `json:"prewhere_rows_out,omitempty"`
+	PrewhereRGSkipped    int             `json:"prewhere_row_groups_skipped,omitempty"`
+	PrewhereBytesRead    int64           `json:"prewhere_bytes_read,omitempty"`
+	PrewhereBytesAvoided int64           `json:"prewhere_bytes_avoided,omitempty"`
 	IndexesUsed          []string        `json:"indexes_used,omitempty"`
 	CountStarOptimized   bool            `json:"count_star_optimized,omitempty"`
 	PartialAggUsed       bool            `json:"partial_agg_used,omitempty"`
@@ -380,11 +388,12 @@ type ExplainParsed struct {
 
 // ExplainPhysicalPlan describes the runtime execution strategy.
 type ExplainPhysicalPlan struct {
-	CountStarOnly bool   `json:"count_star_only,omitempty"`
-	PartialAgg    bool   `json:"partial_agg,omitempty"`
-	TopKAgg       bool   `json:"topk_agg,omitempty"`
-	TopK          int    `json:"topk,omitempty"`
-	JoinStrategy  string `json:"join_strategy,omitempty"`
+	CountStarOnly       bool   `json:"count_star_only,omitempty"`
+	PartialAgg          bool   `json:"partial_agg,omitempty"`
+	RexLiteralPreFilter bool   `json:"rex_literal_prefilter,omitempty"`
+	TopKAgg             bool   `json:"topk_agg,omitempty"`
+	TopK                int    `json:"topk,omitempty"`
+	JoinStrategy        string `json:"join_strategy,omitempty"`
 }
 
 // ExplainRuleDetail describes a single optimizer rule.
