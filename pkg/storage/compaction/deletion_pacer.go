@@ -117,7 +117,7 @@ func (p *DeletionPacer) drainBudget(budget int64) {
 	p.mu.Unlock()
 
 	for _, pd := range toDelete {
-		deleteFileAndDir(pd.path)
+		p.deleteFileAndDir(pd.path)
 	}
 
 	if p.logger != nil && len(toDelete) > 0 {
@@ -136,7 +136,7 @@ func (p *DeletionPacer) flushAll() {
 	p.mu.Unlock()
 
 	for _, pd := range remaining {
-		deleteFileAndDir(pd.path)
+		p.deleteFileAndDir(pd.path)
 	}
 
 	if p.logger != nil && len(remaining) > 0 {
@@ -153,9 +153,18 @@ func (p *DeletionPacer) Pending() int {
 	return len(p.pending)
 }
 
-func deleteFileAndDir(path string) {
-	if err := os.Remove(path); err == nil {
-		// Try to clean up empty partition directory.
-		_ = os.Remove(filepath.Dir(path))
+func (p *DeletionPacer) deleteFileAndDir(path string) {
+	if err := os.Remove(path); err != nil {
+		if !os.IsNotExist(err) && p.logger != nil {
+			// A file that cannot be deleted leaks disk space and is never
+			// retried; surface it so the failure is visible.
+			p.logger.Warn("deletion pacer: failed to remove file", "path", path, "error", err)
+		}
+
+		return
 	}
+
+	// Try to clean up the now-possibly-empty partition directory. Failure is
+	// expected when the directory still holds other parts, so ignore it.
+	_ = os.Remove(filepath.Dir(path))
 }
