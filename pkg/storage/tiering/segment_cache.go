@@ -18,6 +18,7 @@ var (
 	knownDirs           sync.Map
 	knownDirsCount      int64 // approximate count, updated atomically
 	knownDirsMaxEntries int64 = 10000
+	knownDirsMu         sync.Mutex
 )
 
 const (
@@ -208,13 +209,20 @@ func (sc *SegmentCache) PutChunk(segmentID string, rgIndex int, column string, d
 
 			return
 		}
-		// Bound the map: if we've accumulated too many entries, clear and start fresh.
+		// Bound the map: if we've accumulated too many entries, clear and start
+		// fresh. Serialize and re-check under the lock so concurrent callers don't
+		// each clear and reset the counter, which could drop entries a peer added
+		// between its clear and its reset.
 		if atomic.AddInt64(&knownDirsCount, 1) > knownDirsMaxEntries {
-			knownDirs.Range(func(k, _ any) bool {
-				knownDirs.Delete(k)
-				return true
-			})
-			atomic.StoreInt64(&knownDirsCount, 0)
+			knownDirsMu.Lock()
+			if atomic.LoadInt64(&knownDirsCount) > knownDirsMaxEntries {
+				knownDirs.Range(func(k, _ any) bool {
+					knownDirs.Delete(k)
+					return true
+				})
+				atomic.StoreInt64(&knownDirsCount, 0)
+			}
+			knownDirsMu.Unlock()
 		}
 		knownDirs.Store(dir, struct{}{})
 	}
