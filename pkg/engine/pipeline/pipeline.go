@@ -1054,7 +1054,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 			field = "_raw"
 		}
 
-		return NewRexIterator(child, field, c.Pattern)
+		return NewRexIteratorWithPreFilters(child, field, c.Pattern, c.PreFilterLiterals)
 
 	case *spl2.RegexCommand:
 		field := c.Field
