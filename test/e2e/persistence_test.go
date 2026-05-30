@@ -33,7 +33,7 @@ func TestE2E_Persistence_DataSurvivesRestart(t *testing.T) {
 		{"SSH_FailedCount", `FROM idx_ssh | EVAL has_failed = IF(match(_raw, "Failed password"), 1, 0) | STATS sum(has_failed) AS failed_count`},
 		// count AS attempts in compound STATS (with BY) uses single-agg path where alias is broken.
 		// We use count BY user directly.
-		{"SSH_TopAttackers", `FROM idx_ssh | REX "Failed password for (?:invalid user )?(?<user>\w+) from (?<ip>\d+\.\d+\.\d+\.\d+)" | WHERE isnotnull(user) | STATS count BY user | SORT - count | HEAD 3`},
+		{"SSH_TopAttackers", `FROM idx_ssh | REX "Failed password for (?:invalid user )?(?<user>\w+) from (?<ip>\d+\.\d+\.\d+\.\d+)" | WHERE isnotnull(user) | STATS count BY user | SORT - count user | HEAD 3`},
 		{"SSH_UniqueIPs", `FROM idx_ssh | REX "(?<ip>\d+\.\d+\.\d+\.\d+)" | WHERE isnotnull(ip) | DEDUP ip | STATS count`},
 		{"OpenStack_APILatency", `FROM idx_openstack | REX "\"(?<method>GET|POST|DELETE) (?<url_path>/[^\s]+) HTTP" | REX "status: (?<status>\d+) len: (?<resp_len>\d+) time: (?<resp_time>[0-9.]+)" | WHERE isnotnull(method) | EVAL resp_ms = round(tonumber(resp_time) * 1000, 2) | STATS count AS requests, avg(resp_ms) AS avg_latency BY method | SORT method`},
 		// Wildcard persistence — validates bloom filter tokenization after flush.
