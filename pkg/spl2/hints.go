@@ -66,6 +66,8 @@ type QueryHints struct {
 	InvertedIndexPredicates []InvertedIndexPredicate // field=value for inverted index
 	RangePredicates         []RangePredicate         // field range for pushdown
 	InPredicates            []InPredicate            // field IN (values) for segment-level pushdown
+	PrewherePlan            *PrewherePlan            // internal staged-read plan for physical field predicates
+	RexPreFilters           []RexPreFilter           // safe literal prefilters for rex-generated field predicates
 	SkipRaw                 bool                     // true when _raw is not needed — all required fields are stored columns
 	Warnings                []string                 // user-facing warnings about the query
 	searchExpr              SearchExpr               // first search expression (for pushdown analysis)
@@ -107,6 +109,27 @@ type RangePredicate struct {
 type InPredicate struct {
 	Field  string
 	Values []string
+}
+
+// PrewherePlan is an internal staged-read plan. Each step reads a small set of
+// physical predicate columns first, intersects matching row bitmaps, then lets
+// the scan materialize projected columns for surviving rows only.
+type PrewherePlan struct {
+	Steps []PrewhereStep
+}
+
+// PrewhereStep is one ordered predicate-read step in a PrewherePlan.
+type PrewhereStep struct {
+	Field     string
+	Predicate *FieldPredicate
+	InValues  []string
+}
+
+// RexPreFilter describes a safe source-field literal guard derived from a rex
+// command and a downstream filter on the generated field.
+type RexPreFilter struct {
+	Field    string
+	Literals []string
 }
 
 // ExtractQueryHints walks the AST of a Program and extracts optimization hints.
@@ -178,6 +201,7 @@ func ExtractQueryHints(prog *Program) *QueryHints {
 			return h
 		}
 	}
+	filterGeneratedRequiredCols(h, collectGeneratedFieldsFromQuery(prog.Main))
 	return h
 }
 
@@ -261,12 +285,53 @@ func extractQueryHintsFromQuery(q *Query) *QueryHints {
 	}
 
 	h.RequiredCols = GetRequiredColumns(q)
+	filterGeneratedRequiredCols(h, generatedFields)
+	h.RexPreFilters = collectRexPreFilters(q)
 
 	// Merge optimizer annotations into hints.
 	mergeAnnotations(q, h)
 	filterGeneratedFieldPredicates(h, generatedFields)
+	filterGeneratedRequiredCols(h, generatedFields)
+	h.RexPreFilters = collectRexPreFilters(q)
+	h.PrewherePlan = buildPrewherePlan(h)
 
 	return h
+}
+
+func filterGeneratedRequiredCols(h *QueryHints, generatedFields *generatedFieldInfo) {
+	if h == nil || generatedFields == nil || generatedFields.empty() || h.RequiredCols == nil {
+		return
+	}
+	filtered := h.RequiredCols[:0]
+	for _, col := range h.RequiredCols {
+		if !generatedFields.contains(col) {
+			filtered = append(filtered, col)
+		}
+	}
+	h.RequiredCols = filtered
+}
+
+func collectRexPreFilters(q *Query) []RexPreFilter {
+	if q == nil {
+		return nil
+	}
+	var filters []RexPreFilter
+	for _, cmd := range q.Commands {
+		rex, ok := cmd.(*RexCommand)
+		if !ok || len(rex.PreFilterLiterals) == 0 {
+			continue
+		}
+		field := rex.Field
+		if field == "" {
+			field = "_raw"
+		}
+		filters = append(filters, RexPreFilter{
+			Field:    normalizeFieldName(field),
+			Literals: append([]string(nil), rex.PreFilterLiterals...),
+		})
+	}
+
+	return filters
 }
 
 func filterGeneratedFieldPredicates(h *QueryHints, generatedFields *generatedFieldInfo) {
@@ -363,6 +428,13 @@ func mergeAnnotations(q *Query, h *QueryHints) {
 		}
 	}
 
+	// fieldPredicates — for segment/row-group predicate pushdown.
+	if fp, ok := q.Annotations["fieldPredicates"]; ok {
+		if preds, ok := fp.([]FieldPredicate); ok {
+			h.FieldPredicates = appendUniqueFieldPredicates(h.FieldPredicates, preds)
+		}
+	}
+
 	// rangePredicates — for field range pushdown.
 	if rp, ok := q.Annotations["rangePredicates"]; ok {
 		if preds, ok := rp.([]RangePredicate); ok {
@@ -449,6 +521,93 @@ func appendUnique(dst, src []string) []string {
 	}
 
 	return dst
+}
+
+func appendUniqueFieldPredicates(dst []FieldPredicate, src []FieldPredicate) []FieldPredicate {
+	for _, pred := range src {
+		seen := false
+		for _, existing := range dst {
+			if existing.Field == pred.Field && existing.Op == pred.Op && existing.Value == pred.Value {
+				seen = true
+
+				break
+			}
+		}
+		if !seen {
+			dst = append(dst, pred)
+		}
+	}
+
+	return dst
+}
+
+func buildPrewherePlan(h *QueryHints) *PrewherePlan {
+	if h == nil {
+		return nil
+	}
+	steps := make([]PrewhereStep, 0, len(h.FieldPredicates)+len(h.InPredicates))
+	for _, pred := range h.FieldPredicates {
+		if !isPrewhereFieldPredicateSafe(pred) {
+			continue
+		}
+		p := pred
+		p.Field = normalizeFieldName(p.Field)
+		steps = append(steps, PrewhereStep{
+			Field:     p.Field,
+			Predicate: &p,
+		})
+	}
+	for _, pred := range h.InPredicates {
+		if pred.Field == "" || len(pred.Values) == 0 {
+			continue
+		}
+		steps = append(steps, PrewhereStep{
+			Field:    normalizeFieldName(pred.Field),
+			InValues: append([]string(nil), pred.Values...),
+		})
+	}
+	if len(steps) == 0 {
+		return nil
+	}
+	sortPrewhereSteps(steps)
+
+	return &PrewherePlan{Steps: steps}
+}
+
+func isPrewhereFieldPredicateSafe(pred FieldPredicate) bool {
+	if pred.Field == "" || pred.Field == "_time" {
+		return false
+	}
+	switch pred.Op {
+	case "=", "==", "!=", "<", "<=", ">", ">=":
+		return true
+	default:
+		return false
+	}
+}
+
+func sortPrewhereSteps(steps []PrewhereStep) {
+	for i := 1; i < len(steps); i++ {
+		cur := steps[i]
+		j := i - 1
+		for ; j >= 0 && prewhereStepCost(cur) < prewhereStepCost(steps[j]); j-- {
+			steps[j+1] = steps[j]
+		}
+		steps[j+1] = cur
+	}
+}
+
+func prewhereStepCost(step PrewhereStep) int {
+	switch step.Field {
+	case "_source", "_sourcetype", "index":
+		return 0
+	case "host", "level", "status", "service":
+		return 1
+	case "_raw", "message":
+		return 100
+	default:
+		return 10
+	}
 }
 
 func extractSearchHints(cmd *SearchCommand, h *QueryHints) {
