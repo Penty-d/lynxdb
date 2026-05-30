@@ -69,7 +69,7 @@ func (ms *ManifestStore) Write(m *Manifest) error {
 	path := filepath.Join(ms.pendingDir, m.ID+".json")
 	tmpPath := path + ".tmp"
 
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := writeFileSync(tmpPath, data, 0o644); err != nil {
 		return fmt.Errorf("compaction.ManifestStore.Write: write tmp: %w", err)
 	}
 
@@ -77,6 +77,12 @@ func (ms *ManifestStore) Write(m *Manifest) error {
 		os.Remove(tmpPath)
 
 		return fmt.Errorf("compaction.ManifestStore.Write: rename: %w", err)
+	}
+
+	// fsync the directory so the rename survives a crash — the manifest is the
+	// crash-recovery signal and must be durable once Write returns.
+	if err := syncDir(ms.pendingDir); err != nil {
+		return fmt.Errorf("compaction.ManifestStore.Write: sync dir: %w", err)
 	}
 
 	return nil
@@ -116,6 +122,11 @@ func (ms *ManifestStore) Complete(m *Manifest) error {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("compaction.ManifestStore.Complete: write history: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("compaction.ManifestStore.Complete: sync history: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("compaction.ManifestStore.Complete: close history: %w", err)
@@ -125,6 +136,9 @@ func (ms *ManifestStore) Complete(m *Manifest) error {
 		_ = os.Remove(tmpPath)
 
 		return fmt.Errorf("compaction.ManifestStore.Complete: rename history: %w", err)
+	}
+	if err := syncDir(ms.historyDir); err != nil {
+		return fmt.Errorf("compaction.ManifestStore.Complete: sync history dir: %w", err)
 	}
 
 	// Remove from pending.
