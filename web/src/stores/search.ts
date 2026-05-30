@@ -9,6 +9,8 @@ import type {
   HistogramBucketGrouped,
   FieldInfo,
 } from "../api/client";
+import { fetchFields } from "../api/client";
+import { FIELDS_CACHE_TTL_MS } from "../api/config";
 import type { TailEvent } from "../api/sse";
 
 interface SearchState {
@@ -33,6 +35,9 @@ interface SearchState {
   explainResult: ExplainResult | null;
   fieldTypeMap: Map<string, string>;
   catalogFields: FieldInfo[];
+  /** Epoch ms of the last field-catalog fetch; null = never fetched. Used to
+   *  skip redundant per-query catalog refetches within FIELDS_CACHE_TTL_MS. */
+  catalogFetchedAt: number | null;
 
   // Part 4: Live Tail
   tailActive: boolean;
@@ -85,6 +90,7 @@ export const useSearchStore = create<SearchState>(() => ({
   explainResult: null,
   fieldTypeMap: new Map(),
   catalogFields: [],
+  catalogFetchedAt: null,
 
   tailActive: false,
   tailEvents: [],
@@ -107,3 +113,39 @@ export const useSearchStore = create<SearchState>(() => ({
   viewMode: "table",
   copyTooltip: { visible: false, x: 0, y: 0 },
 }));
+
+/** In-flight catalog fetch, shared so concurrent callers coalesce to one request. */
+let fieldsInFlight: Promise<void> | null = null;
+
+/**
+ * Load the field catalog into the store, reusing a recently-fetched catalog
+ * instead of re-fetching on every query. Pass `force` to bypass the TTL (e.g.
+ * an explicit refresh). Errors are swallowed — the catalog is non-critical.
+ */
+export function ensureFieldsLoaded(force = false): Promise<void> {
+  const { catalogFetchedAt } = useSearchStore.getState();
+  const fresh =
+    catalogFetchedAt !== null &&
+    Date.now() - catalogFetchedAt < FIELDS_CACHE_TTL_MS;
+  if (!force && fresh) return Promise.resolve();
+  if (fieldsInFlight) return fieldsInFlight;
+
+  fieldsInFlight = fetchFields()
+    .then((fields) => {
+      const typeMap = new Map<string, string>();
+      for (const f of fields) typeMap.set(f.name, f.type);
+      useSearchStore.setState({
+        catalogFields: fields,
+        fieldTypeMap: typeMap,
+        catalogFetchedAt: Date.now(),
+      });
+    })
+    .catch(() => {
+      /* non-critical: leave the previous catalog in place */
+    })
+    .finally(() => {
+      fieldsInFlight = null;
+    });
+
+  return fieldsInFlight;
+}
