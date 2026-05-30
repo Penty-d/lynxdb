@@ -141,6 +141,34 @@ func TestExplain_PhysicalPlan_PartialAgg(t *testing.T) {
 	}
 }
 
+func TestExplain_PhysicalPlan_RexLiteralPreFilter(t *testing.T) {
+	svc := NewQueryService(planner.New(), nil, config.QueryConfig{})
+
+	result, err := svc.Explain(context.Background(), ExplainRequest{
+		Query: `from main | search _source="/var/log/app/postgres.log" | rex field=message "\] (?P<level>[A-Z]+):" | where level="ERROR" or level="FATAL" or level="PANIC" | stats count() as errors`,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsValid {
+		t.Fatal("expected valid query")
+	}
+	if result.Parsed.PhysicalPlan == nil {
+		t.Fatal("expected PhysicalPlan to be non-nil")
+	}
+	if !result.Parsed.PhysicalPlan.PartialAgg {
+		t.Error("expected transform partial aggregation to be surfaced as PartialAgg")
+	}
+	if !result.Parsed.PhysicalPlan.RexLiteralPreFilter {
+		t.Error("expected RexLiteralPreFilter=true")
+	}
+	for _, field := range result.Parsed.FieldsRead {
+		if field == "level" {
+			t.Fatalf("generated field %q should not be read from storage: %v", field, result.Parsed.FieldsRead)
+		}
+	}
+}
+
 func TestExplain_PhysicalPlan_TopKAgg(t *testing.T) {
 	svc := NewQueryService(planner.New(), nil, config.QueryConfig{})
 
