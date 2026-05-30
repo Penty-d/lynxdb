@@ -292,6 +292,18 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 	// the old inputs remain active and restart must not load both old and output.
 	e.partRegistry.Add(outputMeta)
 
+	// Record the output in the pending manifest before removing inputs. If we
+	// crash after this point, recovery sees the output is durable and removes
+	// the now-redundant inputs instead of loading both (which would duplicate
+	// events). The rename is atomic, so a registered output is fully written.
+	if manifest != nil && e.manifestStore != nil {
+		manifest.OutputSegmentID = outputMeta.ID
+		if err := e.manifestStore.Write(manifest); err != nil {
+			e.logger.Warn("failed to record compaction output in manifest",
+				"id", manifest.ID, "error", err)
+		}
+	}
+
 	e.logger.Debug("compaction output registered",
 		"id", outputMeta.ID,
 		"level", outputMeta.Level,

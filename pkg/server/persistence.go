@@ -82,9 +82,26 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 	} else if len(pending) > 0 {
 		e.logger.Info("found interrupted compactions, cleaning up",
 			"count", len(pending))
-		cleaned := manifestStore.CleanupInterrupted(pending, func(id string) bool {
-			return e.partRegistry.Get(id) != nil
-		})
+		cleaned := manifestStore.CleanupInterrupted(pending,
+			func(id string) bool {
+				return e.partRegistry.Get(id) != nil
+			},
+			func(m *compaction.Manifest) {
+				// Output exists, so these inputs are redundant — drop them from
+				// the registry and disk before they are loaded as segments, to
+				// avoid duplicate events.
+				for _, inID := range m.InputIDs {
+					meta := e.partRegistry.Get(inID)
+					if meta == nil {
+						continue
+					}
+					e.partRegistry.Remove(inID)
+					if err := os.Remove(meta.Path); err != nil && !os.IsNotExist(err) {
+						e.logger.Warn("failed to remove redundant compaction input",
+							"id", inID, "path", meta.Path, "error", err)
+					}
+				}
+			})
 		e.logger.Info("compaction manifest cleanup complete",
 			"cleaned", len(cleaned))
 	}

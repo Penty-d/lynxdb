@@ -216,12 +216,19 @@ func TestManifestStore_CleanupInterrupted(t *testing.T) {
 		t.Fatalf("pending before cleanup: got %d, want 2", len(pending))
 	}
 
-	// Run cleanup with a dummy existsFn (not used by current conservative implementation).
-	existsFn := func(id string) bool { return false }
-	cleaned := store.CleanupInterrupted(pending, existsFn)
+	// Neither manifest recorded an output, so inputs must be left untouched and
+	// removeInputs must never be called.
+	var removed []string
+	cleaned := store.CleanupInterrupted(pending,
+		func(id string) bool { return true },
+		func(m *Manifest) { removed = append(removed, m.InputIDs...) },
+	)
 
 	if len(cleaned) != 2 {
 		t.Errorf("cleaned count: got %d, want 2", len(cleaned))
+	}
+	if len(removed) != 0 {
+		t.Errorf("removeInputs should not run without an output id, removed %v", removed)
 	}
 
 	// Verify manifests are removed.
@@ -232,6 +239,62 @@ func TestManifestStore_CleanupInterrupted(t *testing.T) {
 
 	if len(after) != 0 {
 		t.Errorf("pending after cleanup: got %d, want 0", len(after))
+	}
+}
+
+func TestManifestStore_CleanupInterruptedRemovesRedundantInputs(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewManifestStore(dir)
+	if err != nil {
+		t.Fatalf("NewManifestStore: %v", err)
+	}
+
+	// A merge that wrote and registered its output but crashed before removing
+	// its inputs: the pending manifest records the output id.
+	done := &Manifest{
+		ID:              "compact-done",
+		Index:           "main",
+		InputIDs:        []string{"seg-1", "seg-2"},
+		OutputLevel:     L1,
+		OutputSegmentID: "seg-out",
+		StartedAt:       time.Now(),
+	}
+	// A merge that crashed before its output materialized: no output id.
+	partial := &Manifest{
+		ID:          "compact-partial",
+		Index:       "main",
+		InputIDs:    []string{"seg-3"},
+		OutputLevel: L1,
+		StartedAt:   time.Now(),
+	}
+	if err := store.Write(done); err != nil {
+		t.Fatalf("Write done: %v", err)
+	}
+	if err := store.Write(partial); err != nil {
+		t.Fatalf("Write partial: %v", err)
+	}
+
+	pending, err := store.LoadPending()
+	if err != nil {
+		t.Fatalf("LoadPending: %v", err)
+	}
+
+	// Output exists only for the completed merge.
+	var removed []string
+	store.CleanupInterrupted(pending,
+		func(id string) bool { return id == "seg-out" },
+		func(m *Manifest) { removed = append(removed, m.InputIDs...) },
+	)
+
+	// Only the completed merge's inputs should be removed.
+	want := map[string]bool{"seg-1": true, "seg-2": true}
+	if len(removed) != len(want) {
+		t.Fatalf("removed inputs: got %v, want seg-1,seg-2", removed)
+	}
+	for _, id := range removed {
+		if !want[id] {
+			t.Errorf("unexpected input removed: %s", id)
+		}
 	}
 }
 
