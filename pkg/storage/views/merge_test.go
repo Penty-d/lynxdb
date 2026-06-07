@@ -188,6 +188,59 @@ func TestMergeView_NotEnoughSegments(t *testing.T) {
 	}
 }
 
+func TestMergeView_InputReadFailureKeepsOriginals(t *testing.T) {
+	dir := t.TempDir()
+	layout := storage.NewLayout(dir)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	def := ViewDefinition{
+		Name:   "mv_corrupt",
+		Type:   ViewTypeProjection,
+		Status: ViewStatusActive,
+	}
+
+	segDir := layout.ViewSegmentDir("mv_corrupt")
+	if err := os.MkdirAll(segDir, 0o755); err != nil {
+		t.Fatalf("mkdir segment dir: %v", err)
+	}
+
+	for i := 0; i < mergeMinSegments-1; i++ {
+		e := event.NewEvent(time.Now(), fmt.Sprintf("valid-%d", i))
+		e.Index = "mv_corrupt"
+		writeTestSegment(t, segDir, []*event.Event{e})
+		time.Sleep(time.Millisecond)
+	}
+	corruptPath := filepath.Join(segDir, fmt.Sprintf("seg-z-corrupt-L0-%d.lsg", time.Now().UnixNano()))
+	if err := os.WriteFile(corruptPath, []byte("not a segment"), 0o600); err != nil {
+		t.Fatalf("write corrupt segment: %v", err)
+	}
+
+	before, err := os.ReadDir(segDir)
+	if err != nil {
+		t.Fatalf("read segment dir before merge: %v", err)
+	}
+	if len(before) != mergeMinSegments {
+		t.Fatalf("segments before merge: got %d, want %d", len(before), mergeMinSegments)
+	}
+
+	if err := MergeView(def, layout, logger); err == nil {
+		t.Fatal("MergeView succeeded with a corrupt input segment")
+	}
+
+	after, err := os.ReadDir(segDir)
+	if err != nil {
+		t.Fatalf("read segment dir after merge: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("segments after failed merge: got %d, want %d", len(after), len(before))
+	}
+	for _, entry := range after {
+		if filepath.Ext(entry.Name()) != ".lsg" {
+			t.Fatalf("unexpected temporary output after failed merge: %s", entry.Name())
+		}
+	}
+}
+
 func TestMergeAggregates_CountSum(t *testing.T) {
 	def := ViewDefinition{
 		GroupBy: []string{"src"},

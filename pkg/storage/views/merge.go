@@ -63,17 +63,17 @@ func MergeView(def ViewDefinition, layout *storage.Layout, logger *slog.Logger) 
 	for _, path := range batch {
 		ms, err := segment.OpenSegmentFile(path)
 		if err != nil {
-			logger.Warn("views merge: open segment", "path", path, "err", err)
-
-			continue
+			return fmt.Errorf("views merge: open segment %s: %w", path, err)
 		}
 		reader := ms.Reader()
 		events, err := reader.ReadEvents()
-		ms.Close()
 		if err != nil {
-			logger.Warn("views merge: read events", "path", path, "err", err)
+			ms.Close()
 
-			continue
+			return fmt.Errorf("views merge: read segment %s: %w", path, err)
+		}
+		if err := ms.Close(); err != nil {
+			return fmt.Errorf("views merge: close segment %s: %w", path, err)
 		}
 		allEvents = append(allEvents, events...)
 	}
