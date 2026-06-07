@@ -55,14 +55,18 @@ func EnforceRetention(def ViewDefinition, layout *storage.Layout, logger *slog.L
 		}
 
 		if expired {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			if err := os.Remove(path); err == nil {
+				removed++
+			} else if !os.IsNotExist(err) {
 				logger.Warn("views retention: remove expired segment", "path", path, "err", err)
 			}
-			removed++
 		}
 	}
 
 	if removed > 0 {
+		if err := syncDir(segDir); err != nil {
+			return err
+		}
 		logger.Info("views retention: removed expired segments",
 			"view", def.Name,
 			"removed", removed,

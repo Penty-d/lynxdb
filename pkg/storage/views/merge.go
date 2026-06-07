@@ -156,9 +156,17 @@ func MergeView(def ViewDefinition, layout *storage.Layout, logger *slog.Logger) 
 	}
 
 	// Remove old segments.
+	removed := false
 	for _, path := range batch {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(path); err == nil {
+			removed = true
+		} else if !os.IsNotExist(err) {
 			logger.Warn("views merge: remove old segment", "path", path, "err", err)
+		}
+	}
+	if removed {
+		if err := syncDir(segDir); err != nil {
+			return fmt.Errorf("views merge: sync segment dir after remove: %w", err)
 		}
 	}
 
