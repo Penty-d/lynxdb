@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/storage"
@@ -779,6 +781,47 @@ func TestDispatcher_AggregationView_DCMerge(t *testing.T) {
 	got := dcVal.AsInt()
 	if got != 3 {
 		t.Errorf("dc(user): got %d, want 3 (union of {alice,bob,charlie})", got)
+	}
+}
+
+func TestPartialGroupsToEvents_DCHLLRoundtrip(t *testing.T) {
+	spec := &pipeline.PartialAggSpec{
+		GroupBy: []string{"host"},
+		Funcs: []pipeline.PartialAggFunc{
+			{Name: "dc", Field: "user", Alias: "dc(user)"},
+		},
+	}
+	hll := pipeline.NewHyperLogLog()
+	for i := 0; i < 12000; i++ {
+		hll.Add(fmt.Sprintf("user-%d", i))
+	}
+	groups := []*pipeline.PartialAggGroup{
+		{
+			Key: map[string]event.Value{
+				"host": event.StringValue("web1"),
+			},
+			States: []pipeline.PartialAggState{
+				{DistinctHLL: hll, Count: 12000},
+			},
+		},
+	}
+
+	events := PartialGroupsToEvents(groups, spec, "mv_hll")
+	roundtripped := EventsToPartialGroups(events, spec)
+	if len(roundtripped) != 1 {
+		t.Fatalf("roundtripped groups: got %d, want 1", len(roundtripped))
+	}
+	if roundtripped[0].States[0].DistinctHLL == nil {
+		t.Fatal("DistinctHLL was not preserved")
+	}
+
+	rows := pipeline.MergePartialAggs([][]*pipeline.PartialAggGroup{roundtripped}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(rows))
+	}
+	got := rows[0]["dc(user)"].AsInt()
+	if got < 11000 || got > 13000 {
+		t.Fatalf("dc(user): got %d, want approximate count near 12000", got)
 	}
 }
 

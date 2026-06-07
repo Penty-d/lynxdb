@@ -2,6 +2,7 @@ package views
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -911,17 +912,21 @@ func serializePartialState(ev *event.Event, fn pipeline.PartialAggFunc, s *pipel
 	case aggFnMax:
 		ev.Fields[prefix+"max"] = s.Max
 	case aggFnDC:
-		// JSON array — safe for values containing commas, quotes, etc.
-		vals := make([]string, 0, len(s.DistinctSet))
-		for k := range s.DistinctSet {
-			vals = append(vals, k)
+		if s.DistinctHLL != nil {
+			ev.Fields[prefix+"dc_hll"] = event.StringValue(base64.StdEncoding.EncodeToString(s.DistinctHLL.MarshalBinary()))
+		} else {
+			// JSON array — safe for values containing commas, quotes, etc.
+			vals := make([]string, 0, len(s.DistinctSet))
+			for k := range s.DistinctSet {
+				vals = append(vals, k)
+			}
+			b, _ := json.Marshal(vals)
+			ev.Fields[prefix+"dc_set"] = event.StringValue(string(b))
 		}
-		b, _ := json.Marshal(vals)
-		ev.Fields[prefix+"dc_set"] = event.StringValue(string(b))
 		// Fallback count for the backfill path where DistinctSet may be
 		// lost (finalizedResultsToPartialGroups sets Count but not the set).
 		// On deserialization we prefer len(DistinctSet) when non-empty,
-		// falling back to dc_count otherwise.
+		// DistinctHLL when present, falling back to dc_count otherwise.
 		ev.Fields[prefix+"dc_count"] = event.IntValue(s.Count)
 	}
 }
@@ -988,6 +993,12 @@ func deserializePartialState(ev *event.Event, fn pipeline.PartialAggFunc) pipeli
 			s.Max = v
 		}
 	case aggFnDC:
+		if v, ok := ev.Fields[prefix+"dc_hll"]; ok && !v.IsNull() {
+			str, _ := v.TryAsString()
+			if data, err := base64.StdEncoding.DecodeString(str); err == nil {
+				s.DistinctHLL = pipeline.UnmarshalHyperLogLog(data)
+			}
+		}
 		if v, ok := ev.Fields[prefix+"dc_set"]; ok && !v.IsNull() {
 			var vals []string
 			str, _ := v.TryAsString()
