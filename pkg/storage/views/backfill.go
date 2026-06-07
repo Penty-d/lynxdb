@@ -169,7 +169,7 @@ func (b *Backfiller) RunWithBudgetedDispatch(ctx context.Context, name string, s
 		default:
 		}
 
-		events, nextCursor, more, scanErr := b.scanWithBackpressure(ctx, source, cursor, batchSize)
+		events, nextCursor, more, scanErr := b.scanWithBackpressure(ctx, name, source, cursor, batchSize)
 		if scanErr != nil {
 			return fmt.Errorf("views backfill: scan: %w", scanErr)
 		}
@@ -194,8 +194,17 @@ func (b *Backfiller) RunWithBudgetedDispatch(ctx context.Context, name string, s
 			break
 		}
 
-		// Rate limiting.
-		time.Sleep(rateLimit)
+		timer := time.NewTimer(rateLimit)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			b.saveCursor(name, cursor)
+
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 
 	// Mark backfill complete.
@@ -247,6 +256,7 @@ func (b *Backfiller) createBudgetAdapter(viewName string) *memgov.BudgetAdapter 
 // queries fail fast with 503, while backfills wait — this is the correct priority.
 func (b *Backfiller) scanWithBackpressure(
 	ctx context.Context,
+	viewName string,
 	source EventSource,
 	cursor string,
 	batchSize int,
@@ -278,7 +288,8 @@ func (b *Backfiller) scanWithBackpressure(
 		}
 
 		b.logger.Info("mv backfill paused: global pool under pressure",
-			"view", cursor,
+			"view", viewName,
+			"cursor", cursor,
 			"retry", retry+1,
 			"max_retries", maxRetries,
 			"wait", backpressureWait)

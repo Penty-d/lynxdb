@@ -127,6 +127,51 @@ func TestBackfiller_CancelledContext(t *testing.T) {
 	}
 }
 
+func TestBackfiller_CancelledDuringRateLimit(t *testing.T) {
+	dir := t.TempDir()
+	viewsDir := filepath.Join(dir, "views")
+	os.MkdirAll(viewsDir, 0o755)
+
+	reg, _ := Open(viewsDir)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	def := ViewDefinition{
+		Name:    "mv_rate_cancel",
+		Version: 1,
+		Type:    ViewTypeProjection,
+		Filter:  "",
+		Columns: []ColumnDef{{Name: "_time", Type: event.FieldTypeTimestamp}},
+		Status:  ViewStatusBackfill,
+	}
+	reg.Create(def)
+
+	source := &mockSource{
+		events: []*event.Event{
+			makeTestEvent("nginx", "/a", "200"),
+			makeTestEvent("nginx", "/b", "200"),
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	dispatched := 0
+	backfiller := NewBackfillerWithBudget(reg, nil, BackfillConfig{
+		BatchSize: 1,
+		RateLimit: time.Hour,
+	}, logger)
+	err := backfiller.Run(ctx, "mv_rate_cancel", source, func(events []*event.Event) error {
+		dispatched += len(events)
+		cancel()
+
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error: got %v, want %v", err, context.Canceled)
+	}
+	if dispatched != 1 {
+		t.Fatalf("dispatched: got %d, want 1", dispatched)
+	}
+}
+
 func TestBackfiller_WrongStatus(t *testing.T) {
 	dir := t.TempDir()
 	viewsDir := filepath.Join(dir, "views")
