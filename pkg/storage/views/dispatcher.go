@@ -364,7 +364,6 @@ func (d *Dispatcher) dispatch(events []*event.Event, adapter *memgov.BudgetAdapt
 	d.mu.RLock()
 	var batches []viewBatch
 	for _, av := range d.views {
-		// Bug #4: skip paused views.
 		if av.def.Status == ViewStatusPaused {
 			continue
 		}
@@ -533,7 +532,8 @@ func collectPipelineRowsWithBudget(ctx context.Context, iter pipeline.Iterator, 
 }
 
 // FlushView flushes a single view's memtable to a segment on disk.
-// Bug #6 fix: atomic swap of memtable under lock, then write outside lock.
+// FlushView swaps the buffered events under lock, then writes the segment outside
+// the lock so dispatch is blocked only for the in-memory snapshot.
 func (d *Dispatcher) FlushView(name string) error {
 	d.mu.RLock()
 	av, ok := d.views[name]
@@ -810,7 +810,6 @@ func (d *Dispatcher) mergeLoop() {
 		case <-d.done:
 			return
 		case <-ticker.C:
-			// Bug #3 fix: flush in-memory events to disk segments first.
 			if err := d.FlushAll(); err != nil {
 				d.logger.Warn("views: periodic flush failed", "err", err)
 			}

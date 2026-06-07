@@ -701,7 +701,6 @@ func TestDispatcher_AggregationView_SourceFilter(t *testing.T) {
 }
 
 func TestDispatcher_AggregationView_PausedSkipped(t *testing.T) {
-	// Bug #4: paused views should not receive events.
 	d, reg, _ := setupDispatcher(t)
 	def := createAggView(t, reg, "mv_paused", `FROM main | stats count by host`)
 	def.Status = ViewStatusPaused
