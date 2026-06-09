@@ -173,8 +173,9 @@ func (eds *externalDedupSet) writeHashesToDisk(hashes []uint64) error {
 	eds.hashCount = int64(len(hashes))
 	eds.spillBytes = eds.hashCount * 8
 
-	// Sync to ensure data is on disk before reads.
-	return eds.hashFile.Sync()
+	// No fsync: spill files are per-query scratch data; reads are served from
+	// the page cache and durability across crashes is irrelevant.
+	return nil
 }
 
 // containsHash checks if a hash value has been seen.
@@ -294,12 +295,6 @@ func (eds *externalDedupSet) flushBuffer() error {
 			return fmt.Errorf("dedup_external: write merged hash: %w", writeErr)
 		}
 		newCount++
-	}
-
-	if syncErr := newFile.Sync(); syncErr != nil {
-		newFile.Close()
-
-		return fmt.Errorf("dedup_external: sync merged file: %w", syncErr)
 	}
 
 	// Swap files.
