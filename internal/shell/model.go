@@ -1290,6 +1290,8 @@ func welcomeBanner(mode, server, since string) string {
 	b.WriteString("    " + t.Accent.Render("from * | head 10") + "\n")
 	b.WriteString("    " + t.Accent.Render("errors by service") + "\n")
 	b.WriteString("    " + t.Accent.Render("latency duration_ms every 1m by service compute p95") + "\n")
+	b.WriteString("\n")
+	b.WriteString("  " + t.Dim.Render("Type /help for commands, quit to exit.") + "\n")
 
 	return b.String()
 }

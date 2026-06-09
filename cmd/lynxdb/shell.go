@@ -28,8 +28,9 @@ func newShellCmd() *cobra.Command {
 		Short:   "Start an interactive SPL2 shell (REPL)",
 		Long: `Starts an interactive shell for running SPL2 queries.
 
-Supports query history (arrow keys), dot commands (.help, .quit),
-autocomplete (Tab), and both server and file modes.`,
+Supports query history (arrow keys), slash commands (/help, /quit),
+autocomplete (Tab), and both server and file modes.
+Exit with /quit, by typing quit (or exit, q, :q), or with Ctrl+D.`,
 		Example: `  lynxdb shell                          Connect to server
   lynxdb shell --file access.log        Query a local file
   lynxdb shell --since 1h               Default time range`,
