@@ -1606,6 +1606,32 @@ func TestTailIterator(t *testing.T) {
 		}
 	})
 
+	t.Run("tail_huge_count_allocates_lazily", func(t *testing.T) {
+		// Regression: tail with an enormous count must not preallocate
+		// O(count) ring slots before any row arrives.
+		events := makeEvents(10)
+		scan := NewScanIterator(events, 1024)
+		tail := NewTailIterator(scan, 1<<30, 1024)
+		if got := cap(tail.ring); got > maxTailRingPrealloc {
+			t.Fatalf("ring preallocated %d slots, want <= %d", got, maxTailRingPrealloc)
+		}
+
+		ctx := context.Background()
+		tail.Init(ctx)
+		rows, err := CollectAll(ctx, tail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 10 {
+			t.Fatalf("expected 10 rows (all events), got %d", len(rows))
+		}
+		for i, row := range rows {
+			if got := row["x"].AsInt(); got != int64(i) {
+				t.Errorf("row %d: x = %d, want %d", i, got, i)
+			}
+		}
+	})
+
 	t.Run("tail_3_on_0_events", func(t *testing.T) {
 		scan := NewScanIterator(nil, 1024)
 		tail := NewTailIterator(scan, 3, 1024)

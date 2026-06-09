@@ -1505,17 +1505,26 @@ type TailIterator struct {
 	acct      memgov.MemoryAccount // per-operator memory tracking
 }
 
+// maxTailRingPrealloc caps the ring buffer capacity allocated up front.
+// Beyond this the ring grows lazily as rows arrive, so `tail <huge N>` on a
+// small input allocates O(rows), not O(N).
+const maxTailRingPrealloc = 4096
+
 // NewTailIterator creates a tail operator that keeps the last count rows.
 func NewTailIterator(child Iterator, count, batchSize int) *TailIterator {
 	if count < 0 {
 		count = 0
 	}
+	prealloc := count
+	if prealloc > maxTailRingPrealloc {
+		prealloc = maxTailRingPrealloc
+	}
 
 	return &TailIterator{
 		child:     child,
 		count:     count,
-		ring:      make([]map[string]event.Value, count),
-		ringBytes: make([]int64, count),
+		ring:      make([]map[string]event.Value, 0, prealloc),
+		ringBytes: make([]int64, 0, prealloc),
 		batchSize: batchSize,
 		acct:      memgov.NopAccount(),
 	}
@@ -1560,21 +1569,25 @@ func (t *TailIterator) Next(ctx context.Context) (*Batch, error) {
 				for i := 0; i < batch.Len; i++ {
 					row := batch.Row(i)
 					rowBytes := EstimateRowBytes(row)
-					slot := t.totalSeen % t.count
-					// Track memory: only Grow for new slots (first fill of ring).
+					// Fill phase: ring grows lazily up to count slots.
 					if t.totalSeen < t.count {
 						if err := t.acct.Grow(rowBytes); err != nil {
 							return nil, fmt.Errorf("tail: memory budget exceeded: %w", err)
 						}
-					} else {
-						oldBytes := t.ringBytes[slot]
-						if rowBytes > oldBytes {
-							if err := t.acct.Grow(rowBytes - oldBytes); err != nil {
-								return nil, fmt.Errorf("tail: memory budget exceeded: %w", err)
-							}
-						} else if oldBytes > rowBytes {
-							t.acct.Shrink(oldBytes - rowBytes)
+						t.ring = append(t.ring, row)
+						t.ringBytes = append(t.ringBytes, rowBytes)
+						t.totalSeen++
+						continue
+					}
+					// Wrap phase: overwrite the oldest slot.
+					slot := t.totalSeen % t.count
+					oldBytes := t.ringBytes[slot]
+					if rowBytes > oldBytes {
+						if err := t.acct.Grow(rowBytes - oldBytes); err != nil {
+							return nil, fmt.Errorf("tail: memory budget exceeded: %w", err)
 						}
+					} else if oldBytes > rowBytes {
+						t.acct.Shrink(oldBytes - rowBytes)
 					}
 					t.ring[slot] = row
 					t.ringBytes[slot] = rowBytes
