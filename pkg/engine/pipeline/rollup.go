@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -148,16 +150,18 @@ func (r *RollupIterator) addToRollupState(state *rollupSpanState, row map[string
 	ts := rollupEventTime(row)
 	bucket := ts.Truncate(state.dur)
 
-	key := state.name + "|" + fmt.Sprintf("%d", bucket.UnixNano())
-	keyBytes := int64(len(key))
+	var sb strings.Builder
+	sb.WriteString(state.name)
+	sb.WriteByte('|')
+	sb.WriteString(strconv.FormatInt(bucket.UnixNano(), 10))
 	for _, f := range r.groupBy {
-		key += "|"
+		sb.WriteByte('|')
 		if v, ok := row[f]; ok {
-			vk := rollupValueKey(v)
-			key += vk
-			keyBytes += int64(len(vk))
+			sb.WriteString(rollupValueKey(v))
 		}
 	}
+	key := sb.String()
+	keyBytes := int64(len(key))
 
 	info, ok := state.groups[key]
 	if !ok {
