@@ -28,6 +28,12 @@ func (f *FieldformatIterator) Close() error {
 	return f.child.Close()
 }
 
+// Warnings implements Warner: fieldformat parses but does not apply its
+// expression, so the silent no-op is surfaced in the query result meta.
+func (f *FieldformatIterator) Warnings() []string {
+	return []string{"fieldformat is display-only in LynxDB: the expression was validated but field values are not modified"}
+}
+
 func (f *FieldformatIterator) Schema() []FieldInfo {
 	return f.child.Schema()
 }

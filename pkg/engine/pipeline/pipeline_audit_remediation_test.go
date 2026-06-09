@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -349,5 +350,22 @@ func appendToFile(t *testing.T, path string, data []byte) {
 	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestFieldformatSurfacesDisplayOnlyWarning verifies that the fieldformat
+// no-op is reported in query warnings rather than silently ignored.
+func TestFieldformatSurfacesDisplayOnlyWarning(t *testing.T) {
+	scan := NewRowScanIterator([]map[string]event.Value{
+		{"x": event.IntValue(1)},
+	}, 1)
+	iter := NewFieldformatIterator(scan)
+
+	warnings := CollectWarnings(iter)
+	if len(warnings) != 1 {
+		t.Fatalf("warnings: got %d, want 1 (%v)", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "display-only") {
+		t.Errorf("warning should mention display-only, got %q", warnings[0])
 	}
 }

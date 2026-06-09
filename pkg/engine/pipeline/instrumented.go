@@ -327,6 +327,8 @@ func iteratorChild(iter Iterator) Iterator {
 		return it.child
 	case *RenameIterator:
 		return it.child
+	case *FieldformatIterator:
+		return it.child
 	case *RexIterator:
 		return it.child
 	case *BinIterator:
