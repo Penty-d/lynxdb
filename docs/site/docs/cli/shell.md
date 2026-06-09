@@ -88,19 +88,21 @@ Meta-operations available inside the shell:
 | `Ctrl+C` | Cancel a running query / clear input (twice on empty input: exit) |
 | `Ctrl+D` | Exit (on empty input) |
 | `Esc` | Close popup / leave scroll mode (twice on idle prompt: exit) |
-| `PgUp` / `PgDn` | Scroll results (enters scroll mode) |
+| `PgUp` / `PgDn` (or `Option+↑` / `Option+↓`) | Scroll results (enters scroll mode) |
 | `F2` | Toggle the sidebar |
 
 ## Scrolling Results
 
 Press `PgUp` or `PgDn` to move focus from the prompt into the results area
-(scroll mode). Inside scroll mode the full set of Vim-style keys works:
+(scroll mode). On Mac keyboards without physical paging keys use `Option+↑` /
+`Option+↓` (or `Fn+↑` / `Fn+↓`). Inside scroll mode the full set of Vim-style
+keys works:
 
 | Key | Action |
 |-----|--------|
 | `j` / `k`, arrow keys | Scroll line by line |
 | `u` / `d` (also `Ctrl+U`) | Half page up / down |
-| `b` / `f`, `PgUp` / `PgDn`, `Space` | Page up / down |
+| `b` / `f`, `PgUp` / `PgDn`, `Option+↑` / `Option+↓`, `Space` | Page up / down |
 | `g` / `G` (also `Home` / `End`) | Jump to top / bottom |
 | `y` / `Y` | Copy last result table (plain / Markdown) |
 | `Esc` | Back to the prompt |
