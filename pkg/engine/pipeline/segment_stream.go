@@ -102,6 +102,7 @@ type SegmentStreamStats struct {
 	BloomSkips       int   // row groups skipped by bloom filter
 	TimeSkips        int   // row groups skipped by time range pruning
 	BitmapHits       int64 // events selected by inverted index bitmap
+	BitmapTermErrors int   // index term lookups that failed; term excluded from bitmap pruning
 	PeakMemoryBytes  int64 // max memory used at any point
 
 	// Row-group-level skip counters from the unified RG filter evaluator.
@@ -1000,13 +1001,17 @@ func (s *SegmentStreamIterator) computeSegmentBitmap(seg *SegmentSource) *roarin
 			s.streamStats.BitmapHits += int64(bm.GetCardinality())
 		}
 	} else if len(s.hints.SearchTerms) > 0 && seg.InvertedIdx != nil {
-		// Fallback: flat terms (AND only) — existing logic unchanged.
-		for i, term := range s.hints.SearchTerms {
+		// Fallback: flat terms (AND only). A failed lookup excludes that term
+		// from bitmap pruning rather than failing the scan — the bitmap is an
+		// optimization (see the selectivity-threshold discard below); the
+		// filter above the scan re-verifies terms against row data.
+		for _, term := range s.hints.SearchTerms {
 			termBM, err := seg.InvertedIdx.Search(term)
 			if err != nil {
+				s.streamStats.BitmapTermErrors++
 				continue
 			}
-			if i == 0 {
+			if bm == nil {
 				bm = termBM
 			} else {
 				bm.And(termBM)
@@ -1025,6 +1030,7 @@ func (s *SegmentStreamIterator) computeSegmentBitmap(seg *SegmentSource) *roarin
 		for _, iip := range s.hints.InvertedPreds {
 			fieldBM, err := seg.InvertedIdx.SearchField(iip.Field, iip.Value)
 			if err != nil {
+				s.streamStats.BitmapTermErrors++
 				continue
 			}
 			if bm == nil {

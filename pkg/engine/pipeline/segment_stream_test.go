@@ -3,7 +3,9 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -621,4 +624,99 @@ func drainIterator(t *testing.T, iter *SegmentStreamIterator) int {
 	}
 
 	return total
+}
+
+// buildCorruptedSerializedIndex builds an index over the given terms, then
+// corrupts the posting list of corruptTerm (its 4-byte length prefix is set
+// to 0xFFFFFFFF) so that Search(corruptTerm) returns an error while lookups
+// for all other terms still succeed.
+func buildCorruptedSerializedIndex(t *testing.T, termDocs map[string][]uint32, corruptTerm string) *index.SerializedIndex {
+	t.Helper()
+	idx := index.NewInvertedIndex()
+	for term, docs := range termDocs {
+		for _, docID := range docs {
+			idx.Add(docID, term)
+		}
+	}
+	data, err := idx.Encode()
+	if err != nil {
+		t.Fatalf("encode inverted index: %v", err)
+	}
+
+	// Postings are written in sorted-term order; find corruptTerm's slot.
+	terms := make([]string, 0, len(termDocs))
+	for term := range termDocs {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+
+	// Walk the posting area to the corrupt term's length prefix.
+	fstLen := binary.LittleEndian.Uint32(data[8:12])
+	off := 12 + int(fstLen)
+	for _, term := range terms {
+		if term == corruptTerm {
+			binary.LittleEndian.PutUint32(data[off:off+4], 0xFFFFFFFF)
+			si, decErr := index.DecodeInvertedIndex(data)
+			if decErr != nil {
+				t.Fatalf("decode corrupted index: %v", decErr)
+			}
+			if _, sErr := si.Search(corruptTerm); sErr == nil {
+				t.Fatalf("expected Search(%q) to fail on corrupted posting", corruptTerm)
+			}
+
+			return si
+		}
+		bmLen := binary.LittleEndian.Uint32(data[off : off+4])
+		off += 4 + int(bmLen)
+	}
+	t.Fatalf("corruptTerm %q not found in index", corruptTerm)
+
+	return nil
+}
+
+// TestComputeSegmentBitmap_FirstTermSearchError is a regression test: an
+// index lookup error on the first flat search term must not panic via a nil
+// bitmap AND on the next term; the failed term is excluded from pruning and
+// counted in BitmapTermErrors.
+func TestComputeSegmentBitmap_FirstTermSearchError(t *testing.T) {
+	si := buildCorruptedSerializedIndex(t, map[string][]uint32{
+		"alpha": {1, 2, 3},
+		"beta":  {2, 3, 4},
+	}, "alpha")
+
+	iter := &SegmentStreamIterator{
+		hints: &SegmentStreamHints{SearchTerms: []string{"alpha", "beta"}},
+	}
+	bm := iter.computeSegmentBitmap(&SegmentSource{InvertedIdx: si})
+
+	if bm == nil {
+		t.Fatal("expected bitmap from the surviving term, got nil")
+	}
+	if got := bm.GetCardinality(); got != 3 {
+		t.Errorf("expected 3 hits from beta posting, got %d", got)
+	}
+	if iter.streamStats.BitmapTermErrors != 1 {
+		t.Errorf("expected BitmapTermErrors=1, got %d", iter.streamStats.BitmapTermErrors)
+	}
+}
+
+// TestComputeSegmentBitmap_AllTermsSearchError verifies that when every term
+// lookup fails, the bitmap is nil (no pruning, full scan) instead of a panic
+// or a wrong empty bitmap that would skip the segment.
+func TestComputeSegmentBitmap_AllTermsSearchError(t *testing.T) {
+	si := buildCorruptedSerializedIndex(t, map[string][]uint32{
+		"alpha": {1, 2, 3},
+	}, "alpha")
+
+	iter := &SegmentStreamIterator{
+		hints: &SegmentStreamHints{SearchTerms: []string{"alpha"}},
+	}
+	bm := iter.computeSegmentBitmap(&SegmentSource{InvertedIdx: si})
+
+	if bm != nil {
+		t.Errorf("expected nil bitmap (no pruning) when all terms fail, got cardinality=%d", bm.GetCardinality())
+	}
+	if iter.streamStats.BitmapTermErrors != 1 {
+		t.Errorf("expected BitmapTermErrors=1, got %d", iter.streamStats.BitmapTermErrors)
+	}
 }
