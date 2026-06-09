@@ -1427,7 +1427,15 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 
 	case *spl2.MakeresultsCommand:
 		if c.Format != "" || c.Data != "" {
-			return nil, fmt.Errorf("makeresults format/data is not implemented")
+			if c.Format == "" || c.Data == "" {
+				return nil, fmt.Errorf("makeresults: format and data must be used together")
+			}
+			rows, err := makeresultsRowsFromData(c.Format, c.Data)
+			if err != nil {
+				return nil, err
+			}
+
+			return NewRowScanIterator(rows, qc.batchSize), nil
 		}
 		count := c.Count
 		if count < 0 {

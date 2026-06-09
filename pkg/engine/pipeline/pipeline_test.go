@@ -379,17 +379,37 @@ func TestBuildPipelineMakeresultsAnnotate(t *testing.T) {
 	}
 }
 
-func TestBuildPipelineMakeresultsFormatDataDeferred(t *testing.T) {
-	query, err := spl2.Parse(`| makeresults format=json data="[{\"name\":\"Ada\"}]"`)
+func TestBuildPipelineMakeresultsFormatData(t *testing.T) {
+	query, err := spl2.Parse(`| makeresults format=json data="[{\"name\":\"Ada\"},{\"name\":\"Grace\"}]"`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	_, err = BuildPipeline(context.Background(), query, nil, 2)
-	if err == nil {
-		t.Fatal("expected deferred format/data error")
+	iter, err := BuildPipeline(context.Background(), query, nil, 2)
+	if err != nil {
+		t.Fatalf("BuildPipeline: %v", err)
 	}
-	if !strings.Contains(err.Error(), "makeresults format/data is not implemented") {
-		t.Fatalf("error: got %q", err.Error())
+	rows, err := CollectAll(context.Background(), iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows: got %d, want 2", len(rows))
+	}
+	if got := rows[0]["name"].String(); got != "Ada" {
+		t.Fatalf("name: got %q, want Ada", got)
+	}
+	if _, ok := rows[0]["_time"]; !ok {
+		t.Fatal("expected default _time field")
+	}
+}
+
+func TestBuildPipelineMakeresultsFormatWithoutData(t *testing.T) {
+	query, err := spl2.Parse(`| makeresults format=json`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if _, err := BuildPipeline(context.Background(), query, nil, 2); err == nil {
+		t.Fatal("expected error when format is used without data")
 	}
 }
 
