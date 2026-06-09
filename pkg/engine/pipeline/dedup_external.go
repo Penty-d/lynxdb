@@ -418,7 +418,7 @@ func (eds *externalDedupSet) close() {
 		if eds.spillMgr != nil {
 			eds.spillMgr.Release(path)
 		} else {
-			os.Remove(path)
+			removeSpillFile(path)
 		}
 		eds.hashFile = nil
 	}

@@ -115,13 +115,22 @@ func (m *SpillManager) NewSpillFile(prefix string) (*os.File, error) {
 	return f, nil
 }
 
+// removeSpillFile deletes a spill scratch file, logging failures instead of
+// dropping them so orphaned files are observable rather than silently
+// accumulating on disk.
+func removeSpillFile(path string) {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Warn("spill: failed to remove spill file, orphan left on disk", "path", path, "err", err)
+	}
+}
+
 // Release removes a spill file from tracking and deletes it from disk.
 // Safe to call with a path that is not tracked (no-op in that case).
 // Nil-safe: no-op on nil receiver.
 func (m *SpillManager) Release(path string) {
 	if m == nil {
 		// Unmanaged: best-effort remove.
-		os.Remove(path)
+		removeSpillFile(path)
 
 		return
 	}
@@ -139,7 +148,7 @@ func (m *SpillManager) Release(path string) {
 	if info, err := os.Stat(path); err == nil {
 		m.totalBytes.Add(-info.Size())
 	}
-	os.Remove(path)
+	removeSpillFile(path)
 }
 
 // TrackBytes adjusts the total spill bytes counter for observability and quota

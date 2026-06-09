@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"math"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -270,7 +269,7 @@ func (a *AggregateIterator) Close() error {
 		if a.spillMgr != nil {
 			a.spillMgr.Release(path)
 		} else {
-			os.Remove(path)
+			removeSpillFile(path)
 		}
 	}
 	a.spillFiles = nil
@@ -939,7 +938,7 @@ func (a *AggregateIterator) mergeSpillFilesPartitioned() *Batch {
 		if a.spillMgr != nil {
 			a.spillMgr.Release(path)
 		} else {
-			os.Remove(path)
+			removeSpillFile(path)
 		}
 	}
 	a.spillFiles = nil

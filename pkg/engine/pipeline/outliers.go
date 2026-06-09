@@ -139,7 +139,7 @@ func (o *OutliersIterator) Close() error {
 		if o.spillMgr != nil {
 			o.spillMgr.Release(o.spillPath)
 		} else {
-			os.Remove(o.spillPath)
+			removeSpillFile(o.spillPath)
 		}
 		o.spillPath = ""
 	}

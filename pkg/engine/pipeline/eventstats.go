@@ -151,7 +151,7 @@ func (e *EventStatsIterator) Close() error {
 		if e.spillMgr != nil {
 			e.spillMgr.Release(e.spillPath)
 		} else {
-			os.Remove(e.spillPath)
+			removeSpillFile(e.spillPath)
 		}
 		e.spillPath = ""
 	}
