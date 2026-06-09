@@ -130,39 +130,49 @@ lynxdb tail 'level=ERROR'
 
 ## Configuration
 
-Zero config needed - sensible defaults for everything. Customize in `~/.config/lynxdb/config.yaml`:
+Zero config needed - sensible defaults for everything. Customize in `~/.config/lynxdb/config.yaml`.
+The values below are the defaults - override only what you need:
 
 ```yaml
-listen: "0.0.0.0:3100"
-data_dir: "/data/lynxdb"
-retention: 30d
+listen: "localhost:3100"
+data_dir: "~/.local/share/lynxdb"   # $XDG_DATA_HOME/lynxdb if set
+retention: 7d
+log_level: info
 
 storage:
-  compression: lz4
-  cache_max_bytes: 4gb
+  compression: lz4                  # lz4 | zstd
+  cache_max_bytes: 1gb
 ```
 
 Cascade: CLI flags -> `LYNXDB_*` env vars -> config file -> defaults.
 
 <details>
-<summary>Full configuration reference</summary>
+<summary>Full configuration reference (defaults)</summary>
 
 ```yaml
-listen: "0.0.0.0:3100"
-data_dir: "/data/lynxdb"
-retention: 30d
+listen: "localhost:3100"
+data_dir: "~/.local/share/lynxdb"   # $XDG_DATA_HOME/lynxdb if set
+retention: 7d
+log_level: info
 
 storage:
   compression: lz4          # lz4 | zstd
   flush_threshold: 512mb
-  cache_max_bytes: 4gb
-  s3_bucket: my-logs-bucket
+  cache_max_bytes: 1gb
+  s3_bucket: ""             # no default - set to enable S3 tiering
   s3_region: us-east-1
 
 query:
-  max_concurrent: 20
-  max_query_runtime: 10m
+  max_concurrent: 32
+  max_query_runtime: 5m
+  default_result_limit: 1000
+
+ingest:
+  max_body_size: 100mb
 ```
+
+`lynxdb config` prints the effective config with the source of each value;
+`lynxdb config init` writes a fully commented template with every setting.
 
 </details>
 
