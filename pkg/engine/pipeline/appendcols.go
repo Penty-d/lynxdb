@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // AppendcolsIterator appends subsearch fields to current rows by row position.
@@ -16,14 +17,28 @@ type AppendcolsIterator struct {
 	maxout   int
 	batch    int
 	output   Iterator
+	acct     memgov.MemoryAccount
 }
 
 // NewAppendcolsIterator creates a row-wise appendcols operator.
 func NewAppendcolsIterator(child, sub Iterator, override bool, maxout int, batchSize int) *AppendcolsIterator {
+	return NewAppendcolsIteratorWithBudget(child, sub, override, maxout, batchSize, memgov.NopAccount())
+}
+
+// NewAppendcolsIteratorWithBudget creates an appendcols operator that charges
+// both materialized result sets to the given memory account.
+func NewAppendcolsIteratorWithBudget(child, sub Iterator, override bool, maxout int, batchSize int, acct memgov.MemoryAccount) *AppendcolsIterator {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}
-	return &AppendcolsIterator{child: child, sub: sub, override: override, maxout: maxout, batch: batchSize}
+	return &AppendcolsIterator{
+		child:    child,
+		sub:      sub,
+		override: override,
+		maxout:   maxout,
+		batch:    batchSize,
+		acct:     memgov.EnsureAccount(acct),
+	}
 }
 
 func (a *AppendcolsIterator) Init(ctx context.Context) error {
@@ -43,11 +58,11 @@ func (a *AppendcolsIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (a *AppendcolsIterator) materialize(ctx context.Context) error {
-	mainRows, err := CollectAll(ctx, a.child)
+	mainRows, err := CollectAllWithBudget(ctx, a.child, a.acct)
 	if err != nil {
 		return err
 	}
-	subRows, err := CollectAll(ctx, a.sub)
+	subRows, err := CollectAllWithBudget(ctx, a.sub, a.acct)
 	if err != nil {
 		return err
 	}
@@ -69,6 +84,10 @@ func (a *AppendcolsIterator) materialize(ctx context.Context) error {
 			}
 		}
 	}
+	// Charge the merged clone set — it coexists with the collected inputs.
+	if err := growRowsEstimate(a.acct, out); err != nil {
+		return err
+	}
 	a.output = NewRowScanIterator(out, a.batch)
 	return a.output.Init(ctx)
 }
@@ -80,6 +99,7 @@ func (a *AppendcolsIterator) Close() error {
 	}
 	err = errors.Join(err, a.sub.Close())
 	err = errors.Join(err, a.child.Close())
+	a.acct.Close()
 	return err
 }
 

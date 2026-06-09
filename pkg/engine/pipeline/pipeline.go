@@ -384,7 +384,7 @@ func (qc *queryContext) buildQuery(ctx context.Context, query *spl2.Query) (Iter
 				shiftedQC := qc.cloneForReExec()
 				return shiftedQC.buildQuery(ctx, shiftedQuery)
 			}
-			iter = NewCompareIterator(iter, shift, reExec, qc.batchSize)
+			iter = NewCompareIteratorWithBudget(iter, shift, reExec, qc.batchSize, qc.newAccount("compare"))
 			if qc.instrument {
 				iter = WrapInstrumented(iter, commandStageName(cmd))
 			}
@@ -1163,7 +1163,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 			return nil, fmt.Errorf("build APPENDCOLS subquery: %w", err)
 		}
 
-		return NewAppendcolsIterator(child, subIter, c.Override, c.Maxout, qc.batchSize), nil
+		return NewAppendcolsIteratorWithBudget(child, subIter, c.Override, c.Maxout, qc.batchSize, qc.newAccount("appendcols")), nil
 
 	case *spl2.AppendpipeCommand:
 		if c.Subquery == nil {
@@ -1180,7 +1180,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 			}
 			return iter, nil
 		}
-		return NewAppendpipeIterator(child, c.Subquery.Commands, qc.batchSize, buildSubpipe), nil
+		return NewAppendpipeIteratorWithBudget(child, c.Subquery.Commands, qc.batchSize, buildSubpipe, qc.newAccount("appendpipe")), nil
 
 	case *spl2.MultisearchCommand:
 		children := make([]Iterator, 0, len(c.Searches))
@@ -1462,7 +1462,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return iter, nil
 
 	case *spl2.MvcombineCommand:
-		return NewMvcombineIterator(child, c.Field, qc.batchSize), nil
+		return NewMvcombineIteratorWithBudget(child, c.Field, qc.batchSize, qc.newAccount("mvcombine")), nil
 
 	case *spl2.NomvCommand:
 		return NewNomvIterator(child, c.Field), nil
@@ -1843,6 +1843,52 @@ type CollectOptions struct {
 	// rows is the accumulated slice — safe to read synchronously since
 	// it is not mutated until the next iter.Next call.
 	OnBatch func(totalRows int, rows []map[string]event.Value)
+}
+
+// CollectAllWithBudget runs a pipeline to completion like CollectAll, charging
+// each collected row to acct. Collected bytes stay charged until the account
+// is closed; the caller owns the account lifecycle.
+func CollectAllWithBudget(ctx context.Context, iter Iterator, acct memgov.MemoryAccount) (rows []map[string]event.Value, err error) {
+	acct = memgov.EnsureAccount(acct)
+	if err := iter.Init(ctx); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	for {
+		batch, err := iter.Next(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
+			break
+		}
+		for i := 0; i < batch.Len; i++ {
+			row := batch.Row(i)
+			if growErr := acct.Grow(EstimateRowBytes(row)); growErr != nil {
+				return nil, growErr
+			}
+			rows = append(rows, row)
+		}
+	}
+
+	return rows, nil
+}
+
+// growRowsEstimate charges the estimated size of each row to acct. Used by
+// materializing operators to account for row clones and merged output.
+func growRowsEstimate(acct memgov.MemoryAccount, rows []map[string]event.Value) error {
+	for _, row := range rows {
+		if err := acct.Grow(EstimateRowBytes(row)); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // CollectAll runs a pipeline to completion and returns all result rows.

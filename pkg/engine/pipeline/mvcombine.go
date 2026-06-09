@@ -2,10 +2,12 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // MvcombineIterator merges rows that differ only by one field.
@@ -16,15 +18,22 @@ type MvcombineIterator struct {
 	rows      []map[string]event.Value
 	offset    int
 	built     bool
+	acct      memgov.MemoryAccount
 }
 
 // NewMvcombineIterator creates a blocking mvcombine operator.
 func NewMvcombineIterator(child Iterator, field string, batchSize int) *MvcombineIterator {
+	return NewMvcombineIteratorWithBudget(child, field, batchSize, memgov.NopAccount())
+}
+
+// NewMvcombineIteratorWithBudget creates an mvcombine operator that charges
+// its group state to the given memory account.
+func NewMvcombineIteratorWithBudget(child Iterator, field string, batchSize int, acct memgov.MemoryAccount) *MvcombineIterator {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}
 
-	return &MvcombineIterator{child: child, field: field, batchSize: batchSize}
+	return &MvcombineIterator{child: child, field: field, batchSize: batchSize, acct: memgov.EnsureAccount(acct)}
 }
 
 func (m *MvcombineIterator) Init(ctx context.Context) error {
@@ -51,6 +60,8 @@ func (m *MvcombineIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (m *MvcombineIterator) Close() error {
+	m.acct.Close()
+
 	return m.child.Close()
 }
 
@@ -79,12 +90,23 @@ func (m *MvcombineIterator) materialize(ctx context.Context) error {
 			key := mvcombineGroupKey(row, m.field)
 			g, ok := groups[key]
 			if !ok {
+				if err := m.acct.Grow(EstimateRowBytes(row) + int64(len(key))); err != nil {
+					return fmt.Errorf("mvcombine: memory budget exceeded: %w", err)
+				}
 				g = &group{row: cloneRow(row)}
 				groups[key] = g
 				order = append(order, key)
 			}
 			if value, ok := row[m.field]; ok && !value.IsNull() {
-				g.values = append(g.values, splitInternalMultivalue(value.String())...)
+				vals := splitInternalMultivalue(value.String())
+				var valBytes int64
+				for _, v := range vals {
+					valBytes += int64(len(v))
+				}
+				if err := m.acct.Grow(valBytes); err != nil {
+					return fmt.Errorf("mvcombine: memory budget exceeded: %w", err)
+				}
+				g.values = append(g.values, vals...)
 			}
 		}
 	}

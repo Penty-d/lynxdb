@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -17,6 +18,7 @@ type CompareIterator struct {
 	shift     time.Duration
 	reExec    func(ctx context.Context) (Iterator, error)
 	batchSize int
+	acct      memgov.MemoryAccount
 
 	// Accumulation phases.
 	currentDone  bool
@@ -31,11 +33,19 @@ type CompareIterator struct {
 
 // NewCompareIterator creates a new compare iterator.
 func NewCompareIterator(child Iterator, shift time.Duration, reExec func(ctx context.Context) (Iterator, error), batchSize int) *CompareIterator {
+	return NewCompareIteratorWithBudget(child, shift, reExec, batchSize, memgov.NopAccount())
+}
+
+// NewCompareIteratorWithBudget creates a compare iterator that charges both
+// materialized result sets (current and time-shifted previous) plus the merged
+// output to the given memory account.
+func NewCompareIteratorWithBudget(child Iterator, shift time.Duration, reExec func(ctx context.Context) (Iterator, error), batchSize int, acct memgov.MemoryAccount) *CompareIterator {
 	return &CompareIterator{
 		child:     child,
 		shift:     shift,
 		reExec:    reExec,
 		batchSize: batchSize,
+		acct:      memgov.EnsureAccount(acct),
 	}
 }
 
@@ -56,7 +66,11 @@ func (c *CompareIterator) Next(ctx context.Context) (*Batch, error) {
 				break
 			}
 			for i := 0; i < batch.Len; i++ {
-				c.currentRows = append(c.currentRows, batch.Row(i))
+				row := batch.Row(i)
+				if growErr := c.acct.Grow(EstimateRowBytes(row)); growErr != nil {
+					return nil, fmt.Errorf("compare: memory budget exceeded: %w", growErr)
+				}
+				c.currentRows = append(c.currentRows, row)
 			}
 		}
 	}
@@ -77,7 +91,13 @@ func (c *CompareIterator) Next(ctx context.Context) (*Batch, error) {
 						break
 					}
 					for i := 0; i < batch.Len; i++ {
-						c.previousRows = append(c.previousRows, batch.Row(i))
+						row := batch.Row(i)
+						if growErr := c.acct.Grow(EstimateRowBytes(row)); growErr != nil {
+							prevIter.Close()
+
+							return nil, fmt.Errorf("compare: memory budget exceeded: %w", growErr)
+						}
+						c.previousRows = append(c.previousRows, row)
 					}
 				}
 				prevIter.Close()
@@ -85,9 +105,15 @@ func (c *CompareIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 	}
 
-	// Merge and emit.
+	// Merge and emit. Merged rows coexist with both input sets — charge them.
 	if c.output == nil {
-		c.output = c.mergeRows()
+		merged := c.mergeRows()
+		for i := 0; i < merged.Len; i++ {
+			if growErr := c.acct.Grow(EstimateRowBytes(merged.Row(i))); growErr != nil {
+				return nil, fmt.Errorf("compare: memory budget exceeded: %w", growErr)
+			}
+		}
+		c.output = merged
 	}
 
 	if c.offset >= c.output.Len {
@@ -106,6 +132,8 @@ func (c *CompareIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (c *CompareIterator) Close() error {
+	c.acct.Close()
+
 	return c.child.Close()
 }
 

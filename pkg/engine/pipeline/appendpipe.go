@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
@@ -17,14 +18,27 @@ type AppendpipeIterator struct {
 	build    appendpipeBuildFunc
 	batch    int
 	output   Iterator
+	acct     memgov.MemoryAccount
 }
 
 // NewAppendpipeIterator creates an appendpipe operator.
 func NewAppendpipeIterator(child Iterator, commands []spl2.Command, batchSize int, build appendpipeBuildFunc) *AppendpipeIterator {
+	return NewAppendpipeIteratorWithBudget(child, commands, batchSize, build, memgov.NopAccount())
+}
+
+// NewAppendpipeIteratorWithBudget creates an appendpipe operator that charges
+// the materialized child rows and their clones to the given memory account.
+func NewAppendpipeIteratorWithBudget(child Iterator, commands []spl2.Command, batchSize int, build appendpipeBuildFunc, acct memgov.MemoryAccount) *AppendpipeIterator {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}
-	return &AppendpipeIterator{child: child, commands: commands, build: build, batch: batchSize}
+	return &AppendpipeIterator{
+		child:    child,
+		commands: commands,
+		build:    build,
+		batch:    batchSize,
+		acct:     memgov.EnsureAccount(acct),
+	}
 }
 
 func (a *AppendpipeIterator) Init(ctx context.Context) error {
@@ -41,12 +55,22 @@ func (a *AppendpipeIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (a *AppendpipeIterator) materialize(ctx context.Context) error {
-	rows, err := CollectAll(ctx, a.child)
+	rows, err := CollectAllWithBudget(ctx, a.child, a.acct)
 	if err != nil {
 		return err
 	}
-	original := NewRowScanIterator(cloneAppendpipeRows(rows), a.batch)
-	subSource := NewRowScanIterator(cloneAppendpipeRows(rows), a.batch)
+	// Two clone sets coexist with the collected rows: the passthrough copy
+	// and the subpipe input copy. Charge both.
+	originalRows := cloneAppendpipeRows(rows)
+	if err := growRowsEstimate(a.acct, originalRows); err != nil {
+		return err
+	}
+	subRows := cloneAppendpipeRows(rows)
+	if err := growRowsEstimate(a.acct, subRows); err != nil {
+		return err
+	}
+	original := NewRowScanIterator(originalRows, a.batch)
+	subSource := NewRowScanIterator(subRows, a.batch)
 	subIter, err := a.build(subSource, a.commands)
 	if err != nil {
 		return err
@@ -61,6 +85,7 @@ func (a *AppendpipeIterator) Close() error {
 		err = errors.Join(err, a.output.Close())
 	}
 	err = errors.Join(err, a.child.Close())
+	a.acct.Close()
 	return err
 }
 
