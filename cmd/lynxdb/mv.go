@@ -12,6 +12,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/lynxflow/translate"
 )
 
 func init() {
@@ -103,7 +104,38 @@ func newMVCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(createCmd, listCmd, statusCmd, dropCmd, pauseCmd, resumeCmd, backfillCmd)
+	var migrateAllFlag bool
+	var migrateDryRunFlag bool
+
+	migrateCmd := &cobra.Command{
+		Use:   "migrate [name]",
+		Short: "Translate materialized view queries from SPL2 to LynxFlow",
+		Long: `Translate materialized view queries from SPL2 to LynxFlow v2.
+
+With a name argument, migrates a single view. With --all, migrates all
+SPL2 views. Use --dry-run to preview translations without applying.
+
+The translator supports the restricted MV grammar (filters, stats,
+eval, sort, head/tail, etc.). Unsupported constructs produce clear
+errors listing the unsupported element.`,
+		Example: `  lynxdb mv migrate mv_errors_5m
+  lynxdb mv migrate mv_errors_5m --dry-run
+  lynxdb mv migrate --all --dry-run
+  lynxdb mv migrate --all`,
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: completeMVNames,
+		RunE: func(_ *cobra.Command, args []string) error {
+			name := ""
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return runMVMigrate(name, migrateAllFlag, migrateDryRunFlag)
+		},
+	}
+	migrateCmd.Flags().BoolVar(&migrateAllFlag, "all", false, "Migrate all SPL2 views")
+	migrateCmd.Flags().BoolVar(&migrateDryRunFlag, "dry-run", false, "Show translations without applying")
+
+	cmd.AddCommand(createCmd, listCmd, statusCmd, dropCmd, pauseCmd, resumeCmd, backfillCmd, migrateCmd)
 
 	return cmd
 }
@@ -361,6 +393,109 @@ func patchMVPaused(name string, paused bool) error {
 	return nil
 }
 
+// runMVMigrate translates materialized view queries from SPL2 to LynxFlow.
+func runMVMigrate(name string, all, dryRun bool) error {
+	if name == "" && !all {
+		return fmt.Errorf("specify a view name or use --all to migrate all SPL2 views")
+	}
+
+	ctx := context.Background()
+	c := apiClient()
+
+	views, err := c.ListViews(ctx)
+	if err != nil {
+		return fmt.Errorf("list views: %w", err)
+	}
+
+	// Filter to matching views
+	var targets []client.View
+	for _, v := range views {
+		if !all && v.Name != name {
+			continue
+		}
+		targets = append(targets, v)
+	}
+
+	if name != "" && len(targets) == 0 {
+		return fmt.Errorf("view %q not found", name)
+	}
+
+	if len(targets) == 0 {
+		printHint("No views to migrate.")
+		return nil
+	}
+
+	migrated := 0
+	failed := 0
+
+	for _, v := range targets {
+		// Skip views that are already LynxFlow
+		// The server View type doesn't expose language_version, but the query
+		// field is available. We attempt translation regardless -- if the query
+		// is already LynxFlow the SPL2 parser will fail and we'll skip it.
+		translated, notes, err := translate.SPL2ToLynxFlow(v.Query)
+		if err != nil {
+			if all {
+				// In --all mode, print the error and continue
+				fmt.Printf("  %s: SKIP (%s)\n", v.Name, err)
+				failed++
+				continue
+			}
+			return fmt.Errorf("translate %s: %w", v.Name, err)
+		}
+
+		if dryRun {
+			fmt.Printf("  %s:\n", v.Name)
+			fmt.Printf("    SPL2:     %s\n", v.Query)
+			fmt.Printf("    LynxFlow: %s\n", translated)
+			for _, n := range notes {
+				fmt.Printf("    Note [%s]: %s\n", n.Code, n.Message)
+			}
+			fmt.Println()
+			migrated++
+			continue
+		}
+
+		// Apply the migration via PATCH
+		lang := "lynxflow"
+		originalQuery := v.Query
+		if _, err := c.PatchView(ctx, v.Name, client.ViewPatchInput{
+			Query:           &translated,
+			LanguageVersion: &lang,
+			MigratedFrom:    &originalQuery,
+		}); err != nil {
+			if all {
+				fmt.Printf("  %s: FAILED (%s)\n", v.Name, err)
+				failed++
+				continue
+			}
+			return fmt.Errorf("patch %s: %w", v.Name, err)
+		}
+
+		printSuccess("Migrated %s", v.Name)
+		for _, n := range notes {
+			printHint("  Note [%s]: %s", n.Code, n.Message)
+		}
+		migrated++
+	}
+
+	if dryRun {
+		fmt.Printf("%d view(s) would be migrated", migrated)
+		if failed > 0 {
+			fmt.Printf(", %d skipped", failed)
+		}
+		fmt.Println()
+	} else {
+		fmt.Printf("%d view(s) migrated", migrated)
+		if failed > 0 {
+			fmt.Printf(", %d failed", failed)
+		}
+		fmt.Println()
+	}
+
+	return nil
+}
+
 // mvStatusColored returns a colored status string for TTY display.
 func mvStatusColored(t *ui.Theme, status string) string {
 	lower := strings.ToLower(status)
@@ -371,6 +506,8 @@ func mvStatusColored(t *ui.Theme, status string) string {
 		return t.Warning.Render(status)
 	case lower == "paused":
 		return t.Dim.Render(status)
+	case lower == "needs-migration":
+		return t.Warning.Render(status)
 	case lower == "error" || strings.HasPrefix(lower, "err"):
 		return t.Error.Render(status)
 	default:
