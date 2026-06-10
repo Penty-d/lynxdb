@@ -733,7 +733,18 @@ func (p *parser) parseSearchValue() ast.Expr {
 	}
 
 	// Fallback: parse a primary expression only (not a full expression).
-	return p.parsePrimary()
+	e := p.parsePrimary()
+	switch e.(type) {
+	case *ast.Literal, *ast.Ident, *ast.ErrorExpr:
+	default:
+		p.diags = append(p.diags, Diag{
+			Code:       CodeStageError,
+			Message:    "search values are literals; use | where for expressions",
+			Span:       e.ExprSpan(),
+			Suggestion: "from x | where field == <expr>",
+		})
+	}
+	return e
 }
 
 // ---------------------------------------------------------------------------
