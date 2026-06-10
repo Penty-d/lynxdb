@@ -630,35 +630,47 @@ func (b *builder) buildParse(nd *logical.Parse) (pipeline.Iterator, error) {
 		return nil, err
 	}
 
-	// Not-yet-implemented options.
-	if nd.OnError != "" && nd.OnError != "propagate" {
-		return nil, &NotYetImplementedError{Feature: fmt.Sprintf("parse on_error=%q", nd.OnError)}
-	}
-	if len(nd.FirstOf) > 0 {
-		return nil, &NotYetImplementedError{Feature: "parse first_of"}
-	}
-
-	format := nd.Format
-	if format == "" {
-		format = "json" // default
-	}
-
-	parser, err := unpack.NewParser(format)
-	if err != nil {
-		return nil, fmt.Errorf("physical.Build: parse format %q: %w", format, err)
-	}
-
 	from := nd.From
 	if from == "" {
 		from = "_raw"
 	}
 
-	var fields []string
-	for _, c := range nd.Captures {
-		fields = append(fields, c.Name)
+	onError := pipeline.ParseOnErrorFromString(nd.OnError)
+
+	// Build the parser list: either a first_of chain or a single format.
+	var parsers []unpack.FormatParser
+
+	if len(nd.FirstOf) > 0 {
+		parsers = make([]unpack.FormatParser, 0, len(nd.FirstOf))
+		for _, fmtName := range nd.FirstOf {
+			p, err := unpack.NewParser(fmtName)
+			if err != nil {
+				return nil, fmt.Errorf("physical.Build: parse first_of format %q: %w", fmtName, err)
+			}
+			parsers = append(parsers, p)
+		}
+	} else {
+		format := nd.Format
+		if format == "" {
+			format = "json" // default
+		}
+		p, err := unpack.NewParser(format)
+		if err != nil {
+			return nil, fmt.Errorf("physical.Build: parse format %q: %w", format, err)
+		}
+		parsers = []unpack.FormatParser{p}
 	}
 
-	return pipeline.NewUnpackIterator(child, parser, from, fields, nd.Prefix, false), nil
+	// Build capture specs from the logical node.
+	var captures []pipeline.CaptureSpec
+	for _, c := range nd.Captures {
+		captures = append(captures, pipeline.CaptureSpec{
+			Name: c.Name,
+			Type: c.Type,
+		})
+	}
+
+	return pipeline.NewParseIterator(child, parsers, from, captures, nd.Prefix, onError), nil
 }
 
 // ---------------------------------------------------------------------------

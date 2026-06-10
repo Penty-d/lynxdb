@@ -230,15 +230,8 @@ func classifySkip(e corpusEntry) *skipReason {
 		}
 	}
 
-	// parse first_of
-	if strings.Contains(e.LynxFlow, "first_of") {
-		return &skipReason{Reason: "NotYetImplemented: parse first_of"}
-	}
-
-	// on_error (non-default)
-	if strings.Contains(e.LynxFlow, "on_error") {
-		return &skipReason{Reason: "NotYetImplemented: parse on_error"}
-	}
+	// parse first_of and on_error are now implemented via ParseIterator (Phase 5).
+	// No blanket skip needed.
 
 	// Specific entries that can't run against ephemeral data.
 	switch e.ID {
@@ -253,8 +246,11 @@ func classifySkip(e corpusEntry) *skipReason {
 		return &skipReason{Reason: "cross-index join requires server engine for SPL2 FROM index"}
 	case "c054":
 		// parse docker + parse json from message + explode + object access.
-		// Docker parser not available in unpack.
-		return &skipReason{Reason: "parse docker format not available in unpack"}
+		// Docker parser IS available in unpack, but the SPL2 side of c054 uses
+		// LynxFlow syntax ("| parse docker(_raw) | ... | group by ... compute ...")
+		// which the SPL2 parser cannot handle. Additionally, the test dataset does
+		// not contain docker-formatted log lines. Cannot differential-test.
+		return &skipReason{Reason: "c054 SPL2 field uses LynxFlow syntax, not valid SPL2"}
 	}
 
 	// Sugar stages that desugar in LynxFlow but the SPL2 side may not have
