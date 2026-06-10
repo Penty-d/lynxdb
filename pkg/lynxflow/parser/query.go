@@ -249,7 +249,7 @@ func (p *parser) parseSourceAtom() ast.SourceAtom {
 		if strings.Contains(pattern, "*") || strings.Contains(pattern, "?") {
 			return ast.SourceAtom{Kind: ast.SourceNegated, Name: name, Pattern: pattern, Pos: ast.Span{Start: start, End: end}}
 		}
-		return ast.SourceAtom{Kind: ast.SourceNegated, Name: name, Pos: ast.Span{Start: start, End: end}}
+		return ast.SourceAtom{Kind: ast.SourceNegated, Name: pattern, Pos: ast.Span{Start: start, End: end}}
 	}
 
 	// Backtick-quoted source
@@ -264,30 +264,15 @@ func (p *parser) parseSourceAtom() ast.SourceAtom {
 		return ast.SourceAtom{Kind: ast.SourceName, Name: name, Quoted: true, Pos: ast.Span{Start: start, End: end}}
 	}
 
-	// Bare name, possibly with glob chars (* follows immediately)
+	// Bare name, possibly with glob chars or dashes (span-adjacent run)
 	if n, ok := p.identLike(); ok {
 		nameEnd := p.cur.End
 		p.advance()
-		// Check for adjacent * (glob): the lexer emits ident then star adjacently.
-		// Reassemble glob tokens using span adjacency.
-		pattern := n
-		isGlob := false
-		for p.at(lexer.Star) && p.cur.Start == nameEnd {
-			pattern += "*"
-			nameEnd = p.cur.End
-			isGlob = true
-			p.advance()
-			// Continue reading ident chars after *
-			if nn, ok2 := p.identLike(); ok2 && p.cur.Start == nameEnd {
-				pattern += nn
-				nameEnd = p.cur.End
-				p.advance()
-			}
-		}
+		pattern, nameEnd, isGlob := p.readAdjacentRun(n, nameEnd)
 		if isGlob {
 			return ast.SourceAtom{Kind: ast.SourceGlob, Name: n, Pattern: pattern, Pos: ast.Span{Start: start, End: nameEnd}}
 		}
-		return ast.SourceAtom{Kind: ast.SourceName, Name: n, Pos: ast.Span{Start: start, End: nameEnd}}
+		return ast.SourceAtom{Kind: ast.SourceName, Name: pattern, Pos: ast.Span{Start: start, End: nameEnd}}
 	}
 
 	return ast.SourceAtom{Kind: SourceAtomEmpty}
@@ -297,20 +282,40 @@ func (p *parser) parseSourceName() (name, pattern string) {
 	if n, ok := p.identLike(); ok {
 		nameEnd := p.cur.End
 		p.advance()
-		pattern = n
-		for p.at(lexer.Star) && p.cur.Start == nameEnd {
-			pattern += "*"
-			nameEnd = p.cur.End
-			p.advance()
-			if nn, ok2 := p.identLike(); ok2 && p.cur.Start == nameEnd {
-				pattern += nn
-				nameEnd = p.cur.End
-				p.advance()
-			}
-		}
+		pattern, nameEnd, _ = p.readAdjacentRun(n, nameEnd)
 		return n, pattern
 	}
 	return "", ""
+}
+
+// runTokenOK reports whether the current token may extend a bare-word/glob
+// run: glob metacharacters, dashes, digit groups, or further ident chunks.
+// Source names and search-sugar values commonly contain dashes
+// (`logs-debug*`, `host=web-01`), which the lexer splits into separate
+// tokens; the parser reassembles span-adjacent runs.
+func (p *parser) runTokenOK() bool {
+	switch p.cur.Kind {
+	case lexer.Star, lexer.Minus, lexer.Question, lexer.Int, lexer.Float, lexer.Duration:
+		return true
+	}
+	_, ok := p.identLike()
+	return ok
+}
+
+// readAdjacentRun extends pattern with span-adjacent run tokens starting at
+// byte offset end. It returns the assembled text, the new end offset, and
+// whether the run contains glob metacharacters.
+func (p *parser) readAdjacentRun(pattern string, end int) (string, int, bool) {
+	isGlob := strings.ContainsAny(pattern, "*?")
+	for p.cur.Start == end && p.runTokenOK() {
+		if p.cur.Kind == lexer.Star || p.cur.Kind == lexer.Question {
+			isGlob = true
+		}
+		pattern += p.cur.Text
+		end = p.cur.End
+		p.advance()
+	}
+	return pattern, end, isGlob
 }
 
 // ---------------------------------------------------------------------------
@@ -585,11 +590,9 @@ func (p *parser) parseSearchPrimary() ast.SearchExpr {
 			}
 		}
 
-		// Bare word — check for adjacent glob (ident + star span-adjacent)
-		if p.at(lexer.Star) && p.cur.Start == nameEnd {
-			pattern := name + "*"
-			gEnd := p.cur.End
-			p.advance()
+		// Bare word — check for adjacent glob/dash run (span-adjacent)
+		if p.cur.Start == nameEnd && p.runTokenOK() {
+			pattern, gEnd, _ := p.readAdjacentRun(name, nameEnd)
 			return &ast.SearchBareWord{Word: pattern, Pos: ast.Span{Start: start, End: gEnd}}
 		}
 
@@ -645,27 +648,15 @@ func (p *parser) parseSearchValue() ast.Expr {
 			Pos: ast.Span{Start: tok.Start, End: tok.End}}
 	}
 
-	// Check for glob: ident with adjacent * or ident*ident patterns
+	// Check for glob or dashed value: span-adjacent run starting at an ident
 	if n, ok := p.identLike(); ok {
 		nameEnd := p.cur.End
 		p.advance()
-		pattern := n
-		isGlob := false
-		for p.at(lexer.Star) && p.cur.Start == nameEnd {
-			pattern += "*"
-			nameEnd = p.cur.End
-			isGlob = true
-			p.advance()
-			if nn, ok2 := p.identLike(); ok2 && p.cur.Start == nameEnd {
-				pattern += nn
-				nameEnd = p.cur.End
-				p.advance()
-			}
-		}
+		pattern, nameEnd, isGlob := p.readAdjacentRun(n, nameEnd)
 		if isGlob {
 			return &ast.SearchGlobValue{Pattern: pattern, Pos: ast.Span{Start: start, End: nameEnd}}
 		}
-		return &ast.Ident{Name: n, Pos: ast.Span{Start: start, End: nameEnd}}
+		return &ast.Ident{Name: pattern, Pos: ast.Span{Start: start, End: nameEnd}}
 	}
 
 	// Fallback: parse a primary expression only (not a full expression).
