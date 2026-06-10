@@ -241,6 +241,16 @@ func (p *parser) parseSourceAtom() ast.SourceAtom {
 	// $cte reference
 	if p.at(lexer.Dollar) {
 		p.advance() // consume $
+		if p.at(lexer.BacktickIdent) {
+			p.diags = append(p.diags, Diag{
+				Code:       CodeStageError,
+				Message:    "CTE names are plain identifiers and cannot be backtick-quoted",
+				Span:       p.curSpan(),
+				Suggestion: "let $name = ...; from $name",
+			})
+			p.advance()
+			return ast.SourceAtom{Kind: SourceAtomEmpty}
+		}
 		if n, ok := p.identLike(); ok {
 			end := p.cur.End
 			p.advance()
