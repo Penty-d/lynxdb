@@ -246,12 +246,23 @@ type CreateViewRequest struct {
 	Name      string
 	Query     string
 	Retention string
+
+	// Language is the explicit language of the query ("spl2" or "lynxflow").
+	// Empty means auto-detect via langdetect.Detect.
+	Language string
 }
 
 // PatchViewRequest is the domain input for updating a materialized view.
 type PatchViewRequest struct {
 	Retention *string
 	Paused    *bool
+
+	// Query, LanguageVersion, and MigratedFrom support the mv migrate
+	// workflow: the CLI translates the query locally and PATCHes the
+	// definition with the new query text and language version.
+	Query           *string
+	LanguageVersion *string
+	MigratedFrom    *string
 }
 
 // ViewSummary is a brief representation of a materialized view.

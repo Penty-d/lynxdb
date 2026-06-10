@@ -34,12 +34,13 @@ type AggregationDef struct {
 type ViewStatus string
 
 const (
-	ViewStatusCreating   ViewStatus = "creating"
-	ViewStatusBackfill   ViewStatus = "backfill"
-	ViewStatusActive     ViewStatus = "active"
-	ViewStatusPaused     ViewStatus = "paused"
-	ViewStatusRebuilding ViewStatus = "rebuilding"
-	ViewStatusDropping   ViewStatus = "dropping"
+	ViewStatusCreating       ViewStatus = "creating"
+	ViewStatusBackfill       ViewStatus = "backfill"
+	ViewStatusActive         ViewStatus = "active"
+	ViewStatusPaused         ViewStatus = "paused"
+	ViewStatusRebuilding     ViewStatus = "rebuilding"
+	ViewStatusDropping       ViewStatus = "dropping"
+	ViewStatusNeedsMigration ViewStatus = "needs-migration"
 )
 
 // ViewDefinition is the persistent metadata for a materialized view.
@@ -47,7 +48,7 @@ type ViewDefinition struct {
 	Name         string           `json:"name"`
 	Version      int              `json:"version"`
 	Type         ViewType         `json:"type"`
-	Query        string           `json:"query"`  // original SPL2 query
+	Query        string           `json:"query"`  // original query text (SPL2 or LynxFlow)
 	Filter       string           `json:"filter"` // WHERE clause (e.g. "level=error")
 	Columns      []ColumnDef      `json:"columns"`
 	Aggregations []AggregationDef `json:"aggregations,omitempty"`
@@ -68,6 +69,26 @@ type ViewDefinition struct {
 	// Persisted so that deserialization of state columns is possible after
 	// server restart. Nil for projection views.
 	AggSpec *pipeline.PartialAggSpec `json:"agg_spec,omitempty"`
+
+	// LanguageVersion identifies the query language used in Query.
+	// Values: "spl2" or "lynxflow". Empty string is treated as "spl2"
+	// for backward compatibility with definitions persisted before this
+	// field existed (JSON-additive: old files load unchanged).
+	LanguageVersion string `json:"language_version,omitempty"`
+
+	// MigratedFrom holds the original query text before migration from
+	// SPL2 to LynxFlow (via `lynxdb mv migrate`). Empty when the view
+	// was created directly in the target language.
+	MigratedFrom string `json:"migrated_from,omitempty"`
+}
+
+// EffectiveLanguage returns the language version for this view's query.
+// Empty/absent LanguageVersion is treated as "spl2" for backward compatibility.
+func (d *ViewDefinition) EffectiveLanguage() string {
+	if d.LanguageVersion == "" {
+		return "spl2"
+	}
+	return d.LanguageVersion
 }
 
 // validName matches alphanumeric characters, underscores, and hyphens.

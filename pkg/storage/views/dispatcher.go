@@ -315,16 +315,47 @@ func (d *Dispatcher) activateView(def ViewDefinition) error {
 	// derive StreamingCmds, AggSpec, etc. from the persisted Query. On
 	// server restart the analysis is re-derived; only AggSpec is persisted
 	// (for state column deserialization).
+	//
+	// Language-aware activation:
+	//  - lynxflow views: not yet supported for insert-time dispatch (the
+	//    streaming pipeline runs through the SPL2 pipeline builder). Mark
+	//    as needs-migration so the user gets a clear error. This will be
+	//    lifted when the LynxFlow physical builder gains MV insert support.
+	//  - spl2 views (including legacy empty LanguageVersion): parse with
+	//    the SPL2 AnalyzeQuery path. On parse failure, mark the view as
+	//    needs-migration instead of blocking startup.
 	if def.Query != "" {
-		analysis, err := AnalyzeQuery(def.Query)
-		if err != nil {
-			return fmt.Errorf("views: analyze query for %s: %w", def.Name, err)
-		}
-		av.analysis = analysis
-		// If the definition doesn't have AggSpec populated (e.g., older
-		// views created before this code), populate it from analysis.
-		if def.AggSpec == nil && analysis.AggSpec != nil {
-			av.def.AggSpec = analysis.AggSpec
+		lang := def.EffectiveLanguage()
+		switch lang {
+		case "lynxflow":
+			// LynxFlow MVs are not yet supported for insert-time dispatch.
+			// They load without error but cannot execute the streaming
+			// pipeline. Mark as needs-migration so queries return a clear
+			// error directing the user to wait or migrate back.
+			//
+			// NOTE: We still register the view so it appears in `mv list`
+			// and `mv status`. Queries against it will check the status
+			// and return ErrViewNeedsMigration.
+			d.logger.Warn("views: lynxflow MV insert-time dispatch not yet supported; view registered but inactive",
+				"name", def.Name)
+		default:
+			// SPL2 path (existing behavior).
+			analysis, err := AnalyzeQuery(def.Query)
+			if err != nil {
+				// Parse failure at startup: do NOT block. Mark the view
+				// as needs-migration so it is visible to `mv list` and
+				// `mv migrate` can fix it.
+				d.logger.Warn("views: failed to analyze SPL2 query; marking as needs-migration",
+					"name", def.Name, "err", err)
+				av.def.Status = ViewStatusNeedsMigration
+			} else {
+				av.analysis = analysis
+				// If the definition doesn't have AggSpec populated (e.g., older
+				// views created before this code), populate it from analysis.
+				if def.AggSpec == nil && analysis.AggSpec != nil {
+					av.def.AggSpec = analysis.AggSpec
+				}
+			}
 		}
 	}
 
@@ -365,7 +396,7 @@ func (d *Dispatcher) dispatch(events []*event.Event, adapter *memgov.BudgetAdapt
 	d.mu.RLock()
 	var batches []viewBatch
 	for _, av := range d.views {
-		if av.def.Status == ViewStatusPaused {
+		if av.def.Status == ViewStatusPaused || av.def.Status == ViewStatusNeedsMigration {
 			continue
 		}
 		if av.closed.Load() {
@@ -716,12 +747,17 @@ func (d *Dispatcher) InjectBackfillEvents(name string, events []*event.Event) er
 // For aggregation views, deserializes partial state, merges, and finalizes
 // into result events with clean column names. For projection views, returns
 // raw events in time order.
+//
+// Returns ErrViewNeedsMigration if the view is in needs-migration status.
 func (d *Dispatcher) ViewAllEvents(name string) ([]*event.Event, error) {
 	d.mu.RLock()
 	av, ok := d.views[name]
 	d.mu.RUnlock()
 	if !ok {
 		return nil, ErrViewNotFound
+	}
+	if av.def.Status == ViewStatusNeedsMigration {
+		return nil, fmt.Errorf("views.ViewAllEvents: view %q: %w", name, ErrViewNeedsMigration)
 	}
 
 	// Flush pending into the memtable and snapshot it under the lock. Sorting

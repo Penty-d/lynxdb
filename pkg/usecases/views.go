@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/langdetect"
 	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
@@ -26,33 +27,56 @@ func NewViewService(engine ViewEngine) *ViewService {
 // the view is created as an aggregation view with a PartialAggSpec that drives
 // insert-time partial aggregation. Unsupported patterns (eventstats, stdev,
 // percentiles, etc.) are rejected with a descriptive error.
+//
+// The query language is resolved via langdetect.Detect when req.Language is
+// empty, or used directly when explicitly provided. LynxFlow MVs are stored
+// with LanguageVersion="lynxflow" but currently return a not-yet-supported
+// error because the insert-time dispatch pipeline requires the SPL2 AST.
 func (s *ViewService) Create(req CreateViewRequest) error {
+	// Detect or validate the query language.
+	// For MV creation, use DetectStrict: ambiguous queries (those that parse
+	// as both SPL2 and LynxFlow) default to SPL2 because LynxFlow MVs are
+	// not yet supported for insert-time dispatch.
+	lang := langdetect.DetectStrict(req.Query, req.Language)
+
 	def := views.ViewDefinition{
-		Name:      req.Name,
-		Version:   1,
-		Type:      views.ViewTypeProjection,
-		Query:     req.Query,
-		Columns:   defaultColumns(),
-		Status:    views.ViewStatusBackfill,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		Name:            req.Name,
+		Version:         1,
+		Type:            views.ViewTypeProjection,
+		Query:           req.Query,
+		Columns:         defaultColumns(),
+		Status:          views.ViewStatusBackfill,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+		LanguageVersion: string(lang.Language),
 	}
 
 	// Analyze the query to determine view type and extract pipeline metadata.
 	if req.Query != "" {
-		analysis, err := views.AnalyzeQuery(req.Query)
-		if err != nil {
-			return fmt.Errorf("usecases.CreateView: %w", err)
-		}
+		switch lang.Language {
+		case langdetect.LangLynxFlow:
+			// LynxFlow MVs: the insert-time streaming pipeline currently
+			// requires SPL2 AST types (spl2.Command). Until the LynxFlow
+			// physical builder supports MV insert-time dispatch, reject
+			// creation with a clear message.
+			return fmt.Errorf("usecases.CreateView: LynxFlow materialized views are not yet supported for insert-time dispatch; " +
+				"the query was detected as LynxFlow — use language=spl2 to create an SPL2 view, or wait for LynxFlow MV support")
+		default:
+			// SPL2 path (existing behavior).
+			analysis, err := views.AnalyzeQuery(req.Query)
+			if err != nil {
+				return fmt.Errorf("usecases.CreateView: %w", err)
+			}
 
-		if analysis.SourceIndex != "" {
-			def.SourceIndex = analysis.SourceIndex
-		}
+			if analysis.SourceIndex != "" {
+				def.SourceIndex = analysis.SourceIndex
+			}
 
-		if analysis.IsAggregation {
-			def.Type = views.ViewTypeAggregation
-			def.AggSpec = analysis.AggSpec
-			def.GroupBy = analysis.GroupBy
+			if analysis.IsAggregation {
+				def.Type = views.ViewTypeAggregation
+				def.AggSpec = analysis.AggSpec
+				def.GroupBy = analysis.GroupBy
+			}
 		}
 	}
 
@@ -139,6 +163,18 @@ func (s *ViewService) Patch(name string, req PatchViewRequest) (*ViewDetail, err
 		} else if def.Status == views.ViewStatusPaused {
 			def.Status = views.ViewStatusActive
 		}
+	}
+
+	// Migration fields: allow updating query, language version, and
+	// migrated-from in a single atomic PATCH (used by `lynxdb mv migrate`).
+	if req.Query != nil {
+		def.Query = *req.Query
+	}
+	if req.LanguageVersion != nil {
+		def.LanguageVersion = *req.LanguageVersion
+	}
+	if req.MigratedFrom != nil {
+		def.MigratedFrom = *req.MigratedFrom
 	}
 
 	def.UpdatedAt = time.Now()

@@ -29,6 +29,13 @@ type SavedQuery struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
 	UpdatedAt time.Time              `json:"updated_at"`
+
+	// LanguageVersion identifies the query language ("spl2" or "lynxflow").
+	// Empty string is treated as "spl2" for backward compatibility.
+	LanguageVersion string `json:"language_version,omitempty"`
+
+	// MigratedFrom holds the original query text before migration.
+	MigratedFrom string `json:"migrated_from,omitempty"`
 }
 
 type SavedQueryInput struct {

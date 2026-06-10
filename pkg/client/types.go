@@ -873,8 +873,11 @@ type ViewInput struct {
 
 // ViewPatchInput is the request body for patching a view.
 type ViewPatchInput struct {
-	Retention *string `json:"retention,omitempty"`
-	Paused    *bool   `json:"paused,omitempty"`
+	Retention       *string `json:"retention,omitempty"`
+	Paused          *bool   `json:"paused,omitempty"`
+	Query           *string `json:"query,omitempty"`
+	LanguageVersion *string `json:"language_version,omitempty"`
+	MigratedFrom    *string `json:"migrated_from,omitempty"`
 }
 
 // SavedQuery is a saved query definition.

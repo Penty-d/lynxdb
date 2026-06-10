@@ -32,6 +32,7 @@ func (s *Server) handleCreateMV(w http.ResponseWriter, r *http.Request) {
 		Name      string `json:"name"`
 		Query     string `json:"query"`
 		Retention string `json:"retention"`
+		Language  string `json:"language,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
@@ -48,6 +49,7 @@ func (s *Server) handleCreateMV(w http.ResponseWriter, r *http.Request) {
 		Name:      req.Name,
 		Query:     req.Query,
 		Retention: req.Retention,
+		Language:  req.Language,
 	}); err != nil {
 		if errors.Is(err, views.ErrViewAlreadyExists) {
 			respondError(w, ErrCodeAlreadyExists, http.StatusConflict, err.Error())
@@ -146,8 +148,11 @@ func (s *Server) handlePatchView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var patch struct {
-		Retention *string `json:"retention,omitempty"`
-		Paused    *bool   `json:"paused,omitempty"`
+		Retention       *string `json:"retention,omitempty"`
+		Paused          *bool   `json:"paused,omitempty"`
+		Query           *string `json:"query,omitempty"`
+		LanguageVersion *string `json:"language_version,omitempty"`
+		MigratedFrom    *string `json:"migrated_from,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
@@ -156,8 +161,11 @@ func (s *Server) handlePatchView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := s.viewService.Patch(name, usecases.PatchViewRequest{
-		Retention: patch.Retention,
-		Paused:    patch.Paused,
+		Retention:       patch.Retention,
+		Paused:          patch.Paused,
+		Query:           patch.Query,
+		LanguageVersion: patch.LanguageVersion,
+		MigratedFrom:    patch.MigratedFrom,
 	})
 	if err != nil {
 		if errors.Is(err, views.ErrViewNotFound) {
