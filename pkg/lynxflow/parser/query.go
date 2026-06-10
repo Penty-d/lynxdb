@@ -1220,20 +1220,7 @@ func (p *parser) parseFieldPattern() ast.FieldPattern {
 	if n, ok := p.identLike(); ok {
 		nameEnd := p.cur.End
 		p.advance()
-		// Check for adjacent * (glob)
-		pattern := n
-		isGlob := false
-		for p.at(lexer.Star) && p.cur.Start == nameEnd {
-			pattern += "*"
-			nameEnd = p.cur.End
-			isGlob = true
-			p.advance()
-			if nn, ok2 := p.identLike(); ok2 && p.cur.Start == nameEnd {
-				pattern += nn
-				nameEnd = p.cur.End
-				p.advance()
-			}
-		}
+		pattern, nameEnd, isGlob := p.readAdjacentRun(n, nameEnd)
 		return ast.FieldPattern{Name: pattern, Glob: isGlob, Pos: ast.Span{Start: start, End: nameEnd}}
 	}
 	if p.at(lexer.BacktickIdent) {
