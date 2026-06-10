@@ -1,0 +1,4 @@
+Sort(+service)
+  Helper(xyseries)
+    Aggregate(count() by service, level)
+      Scan(main)

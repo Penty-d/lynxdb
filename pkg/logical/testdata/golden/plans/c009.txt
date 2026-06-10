@@ -1,0 +1,2 @@
+Aggregate(avg(duration_ms), max(duration_ms), min(duration_ms))
+  Scan(main)

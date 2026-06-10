@@ -1,0 +1,4 @@
+Sort(+err)
+  Aggregate(count() by err)
+    Extend(err=(error ?? "none"), amt=(amount_cents ?? 0))
+      Scan(main)

@@ -1,0 +1,5 @@
+Sort(+error)
+  Aggregate(count() by error)
+    Filter((error != "N/A"))
+      Extend(error=(error ?? "N/A"), threat_type=(threat_type ?? "N/A"))
+        Scan(main)

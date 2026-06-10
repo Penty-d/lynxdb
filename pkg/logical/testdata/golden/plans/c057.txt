@@ -1,0 +1,2 @@
+Filter(((EventID == 4625) and (not (SubStatus == "0xC0000064"))))
+  Scan(main)

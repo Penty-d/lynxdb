@@ -1,0 +1,5 @@
+Aggregate(count() as cnt by errors.code, errors.service)
+  Explode(errors)
+    Parse(json, from=message)
+      Parse(docker)
+        Scan(main)

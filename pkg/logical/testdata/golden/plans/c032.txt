@@ -1,0 +1,3 @@
+TopK(3, +count)
+  Aggregate(count() as count by service)
+    Scan(main)

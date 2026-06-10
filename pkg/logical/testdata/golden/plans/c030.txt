@@ -1,0 +1,3 @@
+TopK(10, +level, -count, +service)
+  Aggregate(count() by level, service)
+    Scan(main)

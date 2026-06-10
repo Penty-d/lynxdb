@@ -1,0 +1,2 @@
+Filter(((exists(FieldA) and (not exists(FieldB))) and (Enabled == true)))
+  Scan(main)

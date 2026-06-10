@@ -1,0 +1,3 @@
+Aggregate(count())
+  Filter((((level == "ERROR") and (status == 500)) or ((level == "WARN") and (threat_type == "sqli"))))
+    Scan(main)

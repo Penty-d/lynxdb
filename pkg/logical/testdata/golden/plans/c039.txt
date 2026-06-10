@@ -1,0 +1,5 @@
+Limit(6)
+  Project(service, duration_ms, rolling_avg)
+    Aggregate(avg(duration_ms) as rolling_avg [streamstats window=3])
+      Sort(+timestamp)
+        Scan(main)

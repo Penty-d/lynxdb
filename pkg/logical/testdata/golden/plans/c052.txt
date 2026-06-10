@@ -1,0 +1,4 @@
+Materialize("mv_errors_5m")
+  Aggregate(count(), avg(duration) by source, bin(_time, 5m))
+    Filter((level == error))
+      Scan(main)

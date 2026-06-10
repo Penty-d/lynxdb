@@ -1,0 +1,2 @@
+Filter((CommandLine == "whoami"))
+  Scan(main)

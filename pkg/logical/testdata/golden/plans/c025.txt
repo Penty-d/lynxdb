@@ -1,0 +1,4 @@
+Sort(+has_error, +has_amount)
+  Aggregate(count() by has_error, has_amount)
+    Extend(has_error=if(exists(error), "yes", "no"), has_amount=if(exists(amount_cents), "yes", "no"))
+      Scan(main)

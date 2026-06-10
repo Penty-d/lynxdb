@@ -1,0 +1,3 @@
+Aggregate(count())
+  Filter(starts_with(path, "/api/v2/users"))
+    Scan(main)

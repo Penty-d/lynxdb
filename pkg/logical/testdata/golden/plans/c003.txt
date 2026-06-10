@@ -1,0 +1,3 @@
+Aggregate(count())
+  Filter((contains(_raw, "SQL injection") or contains(_raw, "Path traversal")))
+    Scan(main)

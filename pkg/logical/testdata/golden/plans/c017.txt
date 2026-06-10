@@ -1,0 +1,5 @@
+Sort(+amount_usd)
+  Project(amount_usd, service)
+    Extend(amount_usd=round((amount_cents / 100), 2))
+      Filter((amount_cents > 0))
+        Scan(main)

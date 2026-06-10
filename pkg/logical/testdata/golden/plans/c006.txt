@@ -1,0 +1,3 @@
+Aggregate(count())
+  Filter((level in ["ERROR", "WARN"]))
+    Scan(main)

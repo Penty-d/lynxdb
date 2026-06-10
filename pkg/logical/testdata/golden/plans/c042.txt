@@ -1,0 +1,11 @@
+Let $base
+  Filter((service == "payment-service"))
+    Scan(main)
+Let $pay_errs
+  Filter((status == 500))
+    Filter((service == "payment-service"))
+      Scan(main)
+Aggregate(count(), sum(amount_cents) as total)
+  Filter((status == 500))
+    Filter((service == "payment-service"))
+      Scan(main)

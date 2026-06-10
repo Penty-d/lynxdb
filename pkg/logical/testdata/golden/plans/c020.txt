@@ -1,0 +1,5 @@
+Sort(+path_prefix)
+  Project(path_prefix)
+    Dedup(1, path_prefix)
+      Extend(path_prefix=substr(path, 0, 7))
+        Scan(main)

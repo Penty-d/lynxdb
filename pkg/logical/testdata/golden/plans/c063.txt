@@ -1,0 +1,2 @@
+Filter(matches(CommandLine, r".*whoami.*"))
+  Scan(main)

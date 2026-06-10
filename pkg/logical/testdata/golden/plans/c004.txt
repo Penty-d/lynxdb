@@ -1,0 +1,3 @@
+Aggregate(count())
+  Filter((status == 500))
+    Scan(main)

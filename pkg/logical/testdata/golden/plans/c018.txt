@@ -1,0 +1,4 @@
+Sort(+severity)
+  Aggregate(count() by severity)
+    Extend(severity=case((level == "ERROR"), "critical", (level == "WARN"), "warning", "normal"))
+      Scan(main)

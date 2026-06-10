@@ -1,0 +1,2 @@
+Aggregate(dc(service) as unique_services)
+  Scan(main)

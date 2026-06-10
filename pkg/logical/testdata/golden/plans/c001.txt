@@ -1,0 +1,2 @@
+Filter(contains(_raw, "connection refused"))
+  Scan(main)

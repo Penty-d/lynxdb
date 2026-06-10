@@ -1,0 +1,2 @@
+Aggregate(count() as errors, count() as success, count() as total)
+  Scan(main)

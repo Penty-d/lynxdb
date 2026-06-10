@@ -1,0 +1,8 @@
+Sort(+n)
+  Union(2 inputs)
+    Aggregate(count() as n)
+      Filter((level == "ERROR"))
+        Scan(main)
+    Aggregate(count() as n)
+      Filter((level == "WARN"))
+        Scan(main)

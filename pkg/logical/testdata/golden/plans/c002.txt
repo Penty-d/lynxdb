@@ -1,0 +1,3 @@
+Aggregate(count())
+  Filter((has(_raw, "payment") and has(_raw, "failed")))
+    Scan(main)

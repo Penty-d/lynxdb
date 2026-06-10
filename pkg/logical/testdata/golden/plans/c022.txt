@@ -1,0 +1,4 @@
+Sort(+is_api)
+  Aggregate(count() by is_api)
+    Extend(is_api=if(matches(path, r"^/api/"), "yes", "no"))
+      Scan(main)

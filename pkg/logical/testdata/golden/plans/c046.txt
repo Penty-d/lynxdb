@@ -1,0 +1,3 @@
+Aggregate(count() by service)
+  Filter((lower(level) in ["error", "fatal"]))
+    Scan(main)

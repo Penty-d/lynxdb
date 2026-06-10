@@ -1,0 +1,19 @@
+Let $logins
+  Project(src_ip->client_ip)
+    Aggregate(count() as failures by src_ip)
+      Filter(((type == "USER_LOGIN") and (res == "failed")))
+        Scan(idx_audit)
+Let $threats
+  Project(client_ip, threat_type)
+    Filter((threat_type in ["sqli", "path_traversal"]))
+      Scan(idx_backend)
+Project(client_ip, threat_type, failures)
+  Join(inner, on=[client_ip])
+    Project(client_ip, threat_type)
+      Filter((threat_type in ["sqli", "path_traversal"]))
+        Scan(idx_backend)
+    Right:
+      Project(src_ip->client_ip)
+        Aggregate(count() as failures by src_ip)
+          Filter(((type == "USER_LOGIN") and (res == "failed")))
+            Scan(idx_audit)

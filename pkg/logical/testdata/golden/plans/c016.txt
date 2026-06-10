@@ -1,0 +1,3 @@
+Sort(+service)
+  Aggregate(earliest(level) as first_level, latest(level) as last_level by service)
+    Scan(main)

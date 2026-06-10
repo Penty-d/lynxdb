@@ -1,0 +1,4 @@
+Sort(+timestamp)
+  Limit(3)
+    Project(-trace_id, -span_id, -instance, -memory_mb, -cpu_pct, level, service, method, path, status, duration_ms, message, timestamp)
+      Scan(main)

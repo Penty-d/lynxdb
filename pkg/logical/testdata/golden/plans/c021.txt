@@ -1,0 +1,4 @@
+Sort(+label)
+  Aggregate(count() by label)
+    Extend(label=((level + ":") + service))
+      Scan(main)
