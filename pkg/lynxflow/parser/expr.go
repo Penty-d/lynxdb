@@ -518,6 +518,10 @@ func (p *parser) parsePostfix() ast.Expr {
 func calleeFromExpr(e ast.Expr) (string, bool) {
 	switch x := e.(type) {
 	case *ast.Ident:
+		// Quoted identifiers are field references, never function names.
+		if x.Quoted {
+			return "", false
+		}
 		return strings.ToLower(x.Name), true
 	}
 	return "", false
