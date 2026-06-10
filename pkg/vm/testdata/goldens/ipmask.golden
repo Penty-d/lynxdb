@@ -1,0 +1,12 @@
+=== constants ===
+  [0] 255.255.255.0
+=== fields ===
+  [0] ip
+=== regexes ===
+=== cidrs ===
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpConstStr 0
+  0003: OpLoadField 0
+  0006: OpIPMask
+  0007: OpReturn

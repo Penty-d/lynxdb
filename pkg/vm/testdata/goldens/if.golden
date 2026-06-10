@@ -1,0 +1,15 @@
+=== constants ===
+  [0] yes
+  [1] no
+=== fields ===
+  [0] status
+=== regexes ===
+=== cidrs ===
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpLoadField 0
+  0003: OpJumpIfFalse 12
+  0006: OpConstStr 0
+  0009: OpJump 15
+  0012: OpConstStr 1
+  0015: OpReturn

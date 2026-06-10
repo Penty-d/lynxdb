@@ -1,0 +1,9 @@
+=== constants ===
+  [0] 3.141592653589793
+=== fields ===
+=== regexes ===
+=== cidrs ===
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpConstFloat 0
+  0003: OpReturn

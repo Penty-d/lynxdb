@@ -1,0 +1,10 @@
+=== constants ===
+=== fields ===
+  [0] x
+=== regexes ===
+=== cidrs ===
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpLoadField 0
+  0003: OpIsObject
+  0004: OpReturn

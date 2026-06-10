@@ -1,0 +1,11 @@
+=== constants ===
+=== fields ===
+  [0] ip
+=== regexes ===
+=== cidrs ===
+  [0] 10.0.0.0/8
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpLoadField 0
+  0003: OpCIDRMatch 0
+  0006: OpReturn

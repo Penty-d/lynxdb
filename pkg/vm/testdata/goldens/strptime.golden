@@ -1,0 +1,12 @@
+=== constants ===
+  [0] 2024-01-01
+  [1] %Y-%m-%d
+=== fields ===
+=== regexes ===
+=== cidrs ===
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpConstStr 0
+  0003: OpConstStr 1
+  0006: OpStrptime
+  0007: OpReturn

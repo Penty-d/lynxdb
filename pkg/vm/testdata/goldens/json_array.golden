@@ -1,0 +1,14 @@
+=== constants ===
+  [0] 1
+  [1] 2
+  [2] 3
+=== fields ===
+=== regexes ===
+=== cidrs ===
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpConstInt 0
+  0003: OpConstInt 1
+  0006: OpConstInt 2
+  0009: OpJsonArray 3
+  0012: OpReturn

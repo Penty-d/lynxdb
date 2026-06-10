@@ -1,0 +1,16 @@
+=== constants ===
+  [0] 200
+  [1] 201
+  [2] 204
+=== fields ===
+  [0] status
+=== regexes ===
+=== cidrs ===
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpLoadField 0
+  0003: OpConstInt 0
+  0006: OpConstInt 1
+  0009: OpConstInt 2
+  0012: OpInList 3
+  0015: OpReturn

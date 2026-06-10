@@ -1,0 +1,10 @@
+=== constants ===
+=== fields ===
+  [0] msg
+=== regexes ===
+=== cidrs ===
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpLoadField 0
+  0003: OpSHA256
+  0004: OpReturn

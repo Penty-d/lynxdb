@@ -1,0 +1,12 @@
+=== constants ===
+=== fields ===
+  [0] a
+  [1] b
+=== regexes ===
+=== cidrs ===
+=== bsi_handled_comparisons: 0 ===
+=== instructions ===
+  0000: OpLoadField 0
+  0003: OpLoadField 1
+  0006: OpJsonMerge
+  0007: OpReturn
