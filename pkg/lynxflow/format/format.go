@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/ast"
+	"github.com/lynxbase/lynxdb/pkg/lynxflow/lexer"
 )
 
 // Query formats a complete Query AST into canonical LynxFlow text.
@@ -489,23 +490,31 @@ func formatSourceAtom(b *strings.Builder, s *ast.SourceAtom) {
 	}
 }
 
-// needsQuoting reports whether a source name needs backtick quoting to
-// survive a round-trip through format-parse. Allowlist, not blocklist: only
-// names the parser reassembles as bare tokens (ident start, then ident chars
-// or dashes) may render unquoted; everything else gets backticks.
+// needsQuoting reports whether a name needs backtick quoting to survive a
+// round-trip through format-parse. The authoritative predicate: a name is
+// bare-safe iff it lexes back as exactly one plain Ident token covering the
+// whole string. Keywords (which identLike would case-fold), numbers, glob
+// characters, spaces, and operators all fail that test and get backticks.
 func needsQuoting(name string) bool {
 	if name == "" {
 		return true
 	}
-	for i, c := range name {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_':
-		case i > 0 && (c >= '0' && c <= '9' || c == '-'):
-		default:
-			return true
-		}
+	toks, diags := lexer.Lex(name)
+	if len(diags) != 0 {
+		return true
 	}
-	return false
+	var real []lexer.Token
+	for _, t := range toks {
+		if t.Kind == lexer.EOF {
+			continue
+		}
+		real = append(real, t)
+	}
+	if len(real) != 1 {
+		return true
+	}
+	t := real[0]
+	return t.Kind != lexer.Ident || t.Start != 0 || t.End != len(name)
 }
 
 func formatTimeRange(b *strings.Builder, tr *ast.TimeRange) {
