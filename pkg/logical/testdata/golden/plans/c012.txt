@@ -1,4 +1,5 @@
 Project(total, errors, error_pct)
   Extend(error_pct=round(((errors * 100) / total), 1))
-    Aggregate(count() as total, count() as errors)
+    Aggregate(count() as total, count() as errors [partial])
       Scan(main)
+        pushdown.columns: [_raw, _source, _time, level]

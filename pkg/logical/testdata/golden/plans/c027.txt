@@ -1,4 +1,5 @@
 Sort(+timestamp)
-  Limit(3)
-    Project(-trace_id, -span_id, -instance, -memory_mb, -cpu_pct, level, service, method, path, status, duration_ms, message, timestamp)
+  Project(-trace_id, -span_id, -instance, -memory_mb, -cpu_pct, level, service, method, path, status, duration_ms, message, timestamp)
+    Limit(3)
       Scan(main)
+        pushdown.columns: [_raw, _source, _time, duration_ms, level, message, method, path, service, status, timestamp]

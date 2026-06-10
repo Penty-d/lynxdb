@@ -1,2 +1,3 @@
-Aggregate(avg(duration_ms), max(duration_ms), min(duration_ms))
+Aggregate(avg(duration_ms), max(duration_ms), min(duration_ms) [partial])
   Scan(main)
+    pushdown.columns: [_raw, _source, _time, duration_ms]

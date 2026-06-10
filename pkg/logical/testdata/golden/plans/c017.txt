@@ -4,3 +4,4 @@ Sort(+amount_usd)
       Filter((amount_cents > 0))
         Scan(main)
           pushdown.field_predicate: (amount_cents > 0)
+          pushdown.columns: [_raw, _source, _time, amount_cents, service]

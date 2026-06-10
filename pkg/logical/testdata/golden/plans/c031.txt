@@ -1,3 +1,4 @@
 TopK(3, -count)
-  Aggregate(count() as count by service)
+  Aggregate(count() as count by service [partial] [topk=3])
     Scan(main)
+      pushdown.columns: [_raw, _source, _time, service]

@@ -3,3 +3,4 @@ Limit(tail 5)
     Aggregate(sum(duration_ms) as cumulative_dur [streamstats])
       Sort(+timestamp)
         Scan(main)
+          pushdown.columns: [_raw, _source, _time, duration_ms, service, timestamp]

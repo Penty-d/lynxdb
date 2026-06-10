@@ -2,3 +2,4 @@ Sort(+level, +service)
   Project(level, service)
     Dedup(2, level)
       Scan(main)
+        pushdown.columns: [_raw, _source, _time, level, service]

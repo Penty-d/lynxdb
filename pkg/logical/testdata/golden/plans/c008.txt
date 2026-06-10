@@ -1,3 +1,4 @@
-Aggregate(count())
+Aggregate(count() [partial])
   Filter(starts_with(path, "/api/v2/users"))
     Scan(main)
+      pushdown.columns: [_raw, _source, _time, path]

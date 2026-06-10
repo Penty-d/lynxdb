@@ -1,2 +1,3 @@
-Aggregate(stdev(duration_ms) as sd, avg(duration_ms) as mean)
+Aggregate(stdev(duration_ms) as sd, avg(duration_ms) as mean [partial])
   Scan(main)
+    pushdown.columns: [_raw, _source, _time, duration_ms]

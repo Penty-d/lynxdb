@@ -7,8 +7,9 @@ Let $pay_errs
     Scan(main)
       pushdown.field_predicate: (service == "payment-service")
       pushdown.field_predicate: (status == 500)
-Aggregate(count(), sum(amount_cents) as total)
+Aggregate(count(), sum(amount_cents) as total [partial])
   Filter(((service == "payment-service") and (status == 500)))
     Scan(main)
       pushdown.field_predicate: (service == "payment-service")
       pushdown.field_predicate: (status == 500)
+      pushdown.columns: [_raw, _source, _time, amount_cents, service, status]

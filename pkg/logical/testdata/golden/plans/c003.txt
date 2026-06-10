@@ -1,3 +1,4 @@
-Aggregate(count())
+Aggregate(count() [partial])
   Filter((contains(_raw, "SQL injection") or contains(_raw, "Path traversal")))
     Scan(main)
+      pushdown.columns: [_raw, _source, _time]

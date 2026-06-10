@@ -1,3 +1,4 @@
-Aggregate(count())
+Aggregate(count() [partial])
   Filter((level in ["ERROR", "WARN"]))
     Scan(main)
+      pushdown.columns: [_raw, _source, _time, level]

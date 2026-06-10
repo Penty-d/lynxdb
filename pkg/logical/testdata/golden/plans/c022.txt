@@ -1,4 +1,5 @@
 Sort(+is_api)
-  Aggregate(count() by is_api)
+  Aggregate(count() by is_api [partial])
     Extend(is_api=if(matches(path, r"^/api/"), "yes", "no"))
       Scan(main)
+        pushdown.columns: [_raw, _source, _time, path]

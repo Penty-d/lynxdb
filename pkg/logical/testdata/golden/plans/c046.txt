@@ -1,3 +1,4 @@
-Aggregate(count() by service)
+Aggregate(count() by service [partial])
   Filter((lower(level) in ["error", "fatal"]))
     Scan(main)
+      pushdown.columns: [_raw, _source, _time, level, service]

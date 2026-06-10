@@ -95,6 +95,10 @@ type Pushdown struct {
 	FieldPredicates []ast.Expr
 	BloomTerms      []string
 	RawTerms        []string
+	// Columns is the sorted set of column names required by the query.
+	// Set by the column-pruning optimizer rule. nil means "all columns"
+	// (pruning could not be determined or was conservatively disabled).
+	Columns []string
 }
 
 // Scan reads events from one or more sources.
@@ -102,6 +106,10 @@ type Scan struct {
 	Sources   []SourcePattern
 	TimeRange *TimeBounds
 	Pushdown  Pushdown
+	// Reverse is set by the tail-scan optimizer rule. When true, the physical
+	// scan reads segments/rows in reverse chronological order so that a
+	// subsequent Limit (head) can terminate early.
+	Reverse bool
 	// OutputSchema is set during lowering from the initial catalog schema.
 	OutputSchema []sema.Field
 }
@@ -133,6 +141,9 @@ func (n *Scan) String() string {
 	if n.TimeRange != nil {
 		b.WriteString(", ")
 		b.WriteString(timeBoundsString(n.TimeRange))
+	}
+	if n.Reverse {
+		b.WriteString(", reverse")
 	}
 	b.WriteByte(')')
 	return b.String()
@@ -383,6 +394,15 @@ type WindowSpec struct {
 	Current *bool // streamstats current row inclusion
 }
 
+// TopKHint is set on Aggregate by the topk-into-agg optimizer rule.
+// It lets the physical aggregate bound its hash table or use a heap.
+// The TopK node above the Aggregate is KEPT for final ordering; this hint
+// is purely advisory for the physical planner.
+type TopKHint struct {
+	K        int64
+	SortKeys []SortKey
+}
+
 // Aggregate groups and aggregates its input.
 type Aggregate struct {
 	unaryNode
@@ -390,6 +410,7 @@ type Aggregate struct {
 	Keys    []Key
 	TimeBin *TimeBin
 	Partial bool
+	TopK    *TopKHint   // set by topk-into-agg rule; nil = no hint
 	Window  *WindowSpec // nil = plain stats
 	// cachedSchema built from keys + aggs
 	cachedSchema []sema.Field
@@ -474,6 +495,12 @@ func (n *Aggregate) String() string {
 			}
 			b.WriteByte(']')
 		}
+	}
+	if n.Partial {
+		b.WriteString(" [partial]")
+	}
+	if n.TopK != nil {
+		b.WriteString(fmt.Sprintf(" [topk=%d]", n.TopK.K))
 	}
 	b.WriteByte(')')
 	return b.String()

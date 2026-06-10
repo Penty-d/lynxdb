@@ -83,6 +83,10 @@ func dumpPushdown(b *strings.Builder, pd *Pushdown, depth int) {
 		indent(b, depth)
 		fmt.Fprintf(b, "pushdown.raw_term: %q\n", rt)
 	}
+	if len(pd.Columns) > 0 {
+		indent(b, depth)
+		fmt.Fprintf(b, "pushdown.columns: [%s]\n", strings.Join(pd.Columns, ", "))
+	}
 }
 
 func indent(b *strings.Builder, depth int) {

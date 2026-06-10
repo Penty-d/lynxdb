@@ -1,3 +1,4 @@
 Sort(+level, +service)
-  Aggregate(count() by level, service)
+  Aggregate(count() by level, service [partial])
     Scan(main)
+      pushdown.columns: [_raw, _source, _time, level, service]

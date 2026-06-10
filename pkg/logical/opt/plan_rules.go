@@ -29,15 +29,21 @@ type PlanRule struct {
 //     single Filter before predicate-pushdown analyzes conjuncts. This avoids
 //     analyzing the same predicate twice across two Filter nodes.
 //   - filter-elim and filter-false-to-empty run next to remove trivial filters.
-//   - predicate-pushdown runs last to decompose the (now-merged) filter into
-//     Scan.Pushdown hints.
+//   - predicate-pushdown decomposes the (now-merged) filter into Scan.Pushdown.
+//   - partial-agg sets Aggregate.Partial when all agg funcs are decomposable.
+//   - topk-into-agg annotates Aggregate with TopKHint when TopK sits above.
+//   - tail-scan converts tail + streaming chain into reverse-scan + head.
+//   - limit-pushdown swaps Limit below row-count-preserving per-row nodes.
+//   - column-pruning (last) computes required columns and sets Scan.Pushdown.Columns.
 func defaultPlanRules() []PlanRule {
-	return []PlanRule{
+	rules := []PlanRule{
 		{Name: "filter-merge", Apply: filterMerge},
 		{Name: "filter-elim", Apply: filterElim},
 		{Name: "filter-false-to-empty", Apply: filterFalseToEmpty},
 		{Name: "predicate-pushdown", Apply: predicatePushdown},
 	}
+	rules = append(rules, batch3PlanRules()...)
+	return rules
 }
 
 // ---------------------------------------------------------------------------
@@ -793,11 +799,13 @@ func cloneScan(s *logical.Scan) *logical.Scan {
 	newScan := &logical.Scan{
 		Sources:      s.Sources,
 		TimeRange:    s.TimeRange,
+		Reverse:      s.Reverse,
 		OutputSchema: s.OutputSchema,
 		Pushdown: logical.Pushdown{
 			FieldPredicates: cloneExprs(s.Pushdown.FieldPredicates),
 			BloomTerms:      cloneStrings(s.Pushdown.BloomTerms),
 			RawTerms:        cloneStrings(s.Pushdown.RawTerms),
+			Columns:         cloneStrings(s.Pushdown.Columns),
 		},
 	}
 	if s.Pushdown.TimeBounds != nil {

@@ -1,4 +1,4 @@
-Aggregate(count() as cnt by errors.code, errors.service)
+Aggregate(count() as cnt by errors.code, errors.service [partial])
   Explode(errors)
     Parse(json, from=message)
       Parse(docker)
