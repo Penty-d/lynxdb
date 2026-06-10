@@ -1173,6 +1173,18 @@ func (p *parser) parseFieldPatternsBody(s *ast.Stage, isKeep bool) {
 
 func (p *parser) parseFieldPattern() ast.FieldPattern {
 	start := p.cur.Start
+	// Backtick names take the quoted path before identLike so they never
+	// participate in glob adjacency.
+	if p.at(lexer.BacktickIdent) {
+		raw := p.cur.Text
+		name := raw
+		if len(raw) >= 2 && raw[0] == '`' && raw[len(raw)-1] == '`' {
+			name = raw[1 : len(raw)-1]
+		}
+		end := p.cur.End
+		p.advance()
+		return ast.FieldPattern{Name: name, Pos: ast.Span{Start: start, End: end}}
+	}
 	if n, ok := p.identLike(); ok {
 		nameEnd := p.cur.End
 		p.advance()
