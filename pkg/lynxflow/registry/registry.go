@@ -187,3 +187,14 @@ func LookupAggregate(name string) (Aggregate, bool) {
 	}
 	return Aggregate{}, false
 }
+
+// ParseFormats is the closed set of parse-stage formats (RFC-002 §7.1).
+// first_of is a combinator over these, not a format itself.
+func ParseFormats() []string {
+	return []string{
+		"json", "logfmt", "kv", "pattern", "regex",
+		"syslog", "combined", "clf", "nginx_error", "cef", "docker",
+		"redis", "apache_error", "postgres", "mysql_slow", "haproxy",
+		"leef", "w3c",
+	}
+}

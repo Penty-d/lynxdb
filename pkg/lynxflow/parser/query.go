@@ -1304,9 +1304,12 @@ func (p *parser) parseParseBody(s *ast.Stage) {
 			for {
 				if fn, ok2 := p.identLike(); ok2 {
 					payload.FirstOf = append(payload.FirstOf, fn)
+					p.checkParseFormat(fn, p.curSpan())
 					p.advance()
 				} else if p.at(lexer.String) {
-					payload.FirstOf = append(payload.FirstOf, interpretString(p.cur.Text))
+					fn := interpretString(p.cur.Text)
+					payload.FirstOf = append(payload.FirstOf, fn)
+					p.checkParseFormat(fn, p.curSpan())
 					p.advance()
 				}
 				if !p.consume(lexer.Comma) {
@@ -1319,6 +1322,7 @@ func (p *parser) parseParseBody(s *ast.Stage) {
 		// Format name
 		payload.Format = n
 		payload.FormatPos = p.curSpan()
+		p.checkParseFormat(n, p.curSpan())
 		p.advance()
 
 		// Optional format args: regex r"...", pattern "...", kv(sep=..., assign=...)
@@ -1357,6 +1361,12 @@ func (p *parser) parseParseBody(s *ast.Stage) {
 			case "prefix":
 				p.advance()
 				if p.at(lexer.String) {
+					p.diags = append(p.diags, Diag{
+						Code:       CodeStageError,
+						Message:    "parse prefix must be an identifier path, not a string",
+						Span:       p.curSpan(),
+						Suggestion: "write prefix log. (no quotes)",
+					})
 					payload.Prefix = interpretString(p.cur.Text)
 					p.advance()
 				} else if n2, ok2 := p.identLike(); ok2 {
@@ -2274,4 +2284,25 @@ func min3(a, b, c int) int {
 		return b
 	}
 	return c
+}
+
+// checkParseFormat diags unknown parse formats with a did-you-mean from the
+// closed format set (RFC-002 §7.1).
+func (p *parser) checkParseFormat(name string, span ast.Span) {
+	for _, f := range registry.ParseFormats() {
+		if name == f {
+			return
+		}
+	}
+	msg := fmt.Sprintf("unknown parse format %q", name)
+	suggestion := didYouMean(name, registry.ParseFormats())
+	if suggestion != "" {
+		msg += fmt.Sprintf(", did you mean %q?", suggestion)
+	}
+	p.diags = append(p.diags, Diag{
+		Code:       CodeStageError,
+		Message:    msg,
+		Span:       span,
+		Suggestion: suggestion,
+	})
 }
