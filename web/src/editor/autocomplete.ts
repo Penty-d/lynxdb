@@ -12,6 +12,12 @@ import {
   type IndexInfo,
 } from "../api/client";
 import {
+  fetchCatalog,
+  type CatalogOperator,
+  type CatalogFunction,
+  type CatalogAggregate,
+} from "../api/catalog";
+import {
   AGG_FUNCTIONS,
   BUILTIN_FIELDS,
   COMMAND_DOCS,
@@ -31,14 +37,35 @@ let cachedFields: FieldInfo[] = [];
 let cachedIndexes: IndexInfo[] = [];
 let lastFetchTime = 0;
 
+// Catalog-derived completion lists (built once from the /api/v1/catalog response)
+let catalogOperators: CatalogOperator[] = [];
+let catalogFunctions: CatalogFunction[] = [];
+let catalogAggregates: CatalogAggregate[] = [];
+let catalogParseFormats: string[] = [];
+let catalogLoaded = false;
+
 const CACHE_TTL_MS = 60_000;
 
+async function ensureCatalog(): Promise<void> {
+  if (catalogLoaded) return;
+  const cat = await fetchCatalog();
+  catalogOperators = cat.operators;
+  catalogFunctions = cat.functions;
+  catalogAggregates = cat.aggregates;
+  catalogParseFormats = cat.parse_formats;
+  catalogLoaded = true;
+}
+
 async function ensureCache(): Promise<void> {
+  // Kick off catalog load (no-ops after first success)
+  const catalogPromise = ensureCatalog();
+
   const now = Date.now();
   if (
     now - lastFetchTime < CACHE_TTL_MS &&
     (cachedFields.length > 0 || cachedIndexes.length > 0)
   ) {
+    await catalogPromise;
     return;
   }
 
@@ -46,6 +73,7 @@ async function ensureCache(): Promise<void> {
   const [fieldsResult, indexesResult] = await Promise.allSettled([
     fetchFields(),
     fetchIndexes(),
+    catalogPromise,
   ]);
 
   if (fieldsResult.status === "fulfilled") {
@@ -105,12 +133,29 @@ function allFieldCompletions(lowerWord: string): Completion[] {
 }
 
 function commandCompletions(lowerWord: string): Completion[] {
-  const commands = COMMANDS.map((cmd) => ({
-    label: cmd,
-    type: "keyword",
-    detail: COMMAND_DOCS[cmd] || "command",
-    boost: lowerWord && cmd.startsWith(lowerWord) ? 2 : 0,
-  }));
+  // Start with the hardcoded catalog (always available)
+  const seen = new Set<string>();
+  const commands: Completion[] = COMMANDS.map((cmd) => {
+    seen.add(cmd);
+    return {
+      label: cmd,
+      type: "keyword",
+      detail: COMMAND_DOCS[cmd] || "command",
+      boost: lowerWord && cmd.startsWith(lowerWord) ? 2 : 0,
+    };
+  });
+
+  // Merge operators from the server catalog, deduped by name
+  for (const op of catalogOperators) {
+    if (seen.has(op.name)) continue;
+    seen.add(op.name);
+    commands.push({
+      label: op.name,
+      type: "keyword",
+      detail: op.doc || op.class || "command",
+      boost: lowerWord && op.name.startsWith(lowerWord) ? 2 : 0,
+    });
+  }
 
   return [...commands, ...QUERY_TEMPLATES];
 }
@@ -125,6 +170,52 @@ function functionCompletions(
     detail: "function",
     apply: fn,
     boost: lowerWord && fn.toLowerCase().startsWith(lowerWord) ? 2 : 0,
+  }));
+}
+
+/** Merge catalog scalar functions into the hardcoded eval function list. */
+function mergedEvalFunctions(lowerWord: string): Completion[] {
+  const base = functionCompletions(EVAL_FUNCTIONS, lowerWord);
+  const seen = new Set(EVAL_FUNCTIONS.map((f) => f.replace(/\(\)$/, "")));
+  for (const fn of catalogFunctions) {
+    if (seen.has(fn.name)) continue;
+    seen.add(fn.name);
+    base.push({
+      label: `${fn.name}()`,
+      type: "function",
+      detail: fn.doc || fn.category || "function",
+      apply: `${fn.name}()`,
+      boost: lowerWord && fn.name.startsWith(lowerWord) ? 2 : 0,
+    });
+  }
+  return base;
+}
+
+/** Merge catalog aggregates into the hardcoded agg function list. */
+function mergedAggFunctions(lowerWord: string): Completion[] {
+  const base = functionCompletions(AGG_FUNCTIONS, lowerWord);
+  const seen = new Set(AGG_FUNCTIONS.map((f) => f.replace(/\(\)$/, "")));
+  for (const agg of catalogAggregates) {
+    if (seen.has(agg.name)) continue;
+    seen.add(agg.name);
+    base.push({
+      label: `${agg.name}()`,
+      type: "function",
+      detail: agg.doc || "aggregate",
+      apply: `${agg.name}()`,
+      boost: lowerWord && agg.name.startsWith(lowerWord) ? 2 : 0,
+    });
+  }
+  return base;
+}
+
+/** Build completions for parse format names (after `parse`). */
+function parseFormatCompletions(lowerWord: string): Completion[] {
+  return catalogParseFormats.map((fmt) => ({
+    label: fmt,
+    type: "type",
+    detail: "parse format",
+    boost: lowerWord && fmt.startsWith(lowerWord) ? 2 : 0,
   }));
 }
 
@@ -239,6 +330,18 @@ async function lynxflowCompletion(
     }
   }
 
+  // --- After "parse " -> parse format names from catalog ---
+  if (/\bparse\s+[A-Za-z0-9_]*$/i.test(beforeCursor)) {
+    const formats = parseFormatCompletions(lowerWord);
+    if (formats.length > 0) {
+      return {
+        from: absFrom,
+        options: formats,
+        filter: true,
+      };
+    }
+  }
+
   // --- After "from " -> index names ---
   if (/\b(?:from|index)\s+[A-Za-z0-9_.:$!*-]*$/i.test(beforeCursor)) {
     return {
@@ -304,7 +407,7 @@ async function lynxflowCompletion(
   ) {
     return {
       from: absFrom,
-      options: functionCompletions(AGG_FUNCTIONS, lowerWord),
+      options: mergedAggFunctions(lowerWord),
       filter: true,
     };
   }
@@ -317,7 +420,7 @@ async function lynxflowCompletion(
   ) {
     return {
       from: absFrom,
-      options: functionCompletions(AGG_FUNCTIONS, lowerWord),
+      options: mergedAggFunctions(lowerWord),
       filter: true,
     };
   }
@@ -327,7 +430,7 @@ async function lynxflowCompletion(
     return {
       from: absFrom,
       options: [
-        ...functionCompletions(EVAL_FUNCTIONS, lowerWord),
+        ...mergedEvalFunctions(lowerWord),
         ...allFieldCompletions(lowerWord),
       ],
       filter: true,

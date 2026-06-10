@@ -10,6 +10,7 @@ export default defineConfig({
       include: [
         "src/utils/**",
         "src/api/streaming.ts",
+        "src/api/catalog.ts",
         "src/editor/lynxflow-catalog.ts",
       ],
     },
