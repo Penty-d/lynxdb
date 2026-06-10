@@ -30,9 +30,29 @@ const (
 	CodeTrailingOperator DiagCode = "E006"
 )
 
-// Diag is a structured diagnostic produced by the parser.
+// Severity classifies how critical a diagnostic is.
+type Severity uint8
+
+const (
+	// SeverityError is for diagnostics that indicate definite mistakes.
+	SeverityError Severity = iota
+	// SeverityWarning is for diagnostics that indicate likely mistakes or
+	// style issues but do not block execution.
+	SeverityWarning
+)
+
+// String returns "error" or "warning".
+func (s Severity) String() string {
+	if s == SeverityWarning {
+		return "warning"
+	}
+	return "error"
+}
+
+// Diag is a structured diagnostic produced by the parser or semantic analyzer.
 type Diag struct {
 	Code       DiagCode
+	Severity   Severity // default zero value = SeverityError
 	Message    string
 	Span       ast.Span
 	Expected   []string // human-readable set of expected tokens/productions

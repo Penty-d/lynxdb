@@ -1,0 +1,3 @@
+query: | stats count() by sevice
+error S008 [19:25] unknown field 'sevice' in group-by clause
+  suggestion: did you mean 'service'?

@@ -1,0 +1,3 @@
+query: | extend x = avf(duration_ms)
+error S006 [13:29] unknown function 'avf'
+  suggestion: did you mean 'avg'?

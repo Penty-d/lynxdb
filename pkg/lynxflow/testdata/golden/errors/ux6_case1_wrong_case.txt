@@ -1,0 +1,3 @@
+query: from logs | parse json into (status as int) | where Status == 500
+error S001 [52:58] unknown field 'Status'
+  suggestion: did you mean 'status'?

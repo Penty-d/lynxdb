@@ -1,0 +1,3 @@
+query: | where level > 5
+error S003 [8:17] cannot compare string > int
+  suggestion: did you mean level > "5"?
