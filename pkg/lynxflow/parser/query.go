@@ -356,6 +356,19 @@ func (p *parser) parseTimeRange() ast.TimeRange {
 
 	tr := ast.TimeRange{Pos: ast.Span{Start: start}}
 
+	// Empty range brackets are an error, not a silent no-op.
+	if p.at(lexer.RBracket) {
+		p.diags = append(p.diags, Diag{
+			Code:       CodeStageError,
+			Message:    "empty time range",
+			Span:       ast.Span{Start: start, End: p.cur.End},
+			Suggestion: "write a range like [-1h], [-7d..-1d], or [@d]",
+		})
+		p.advance()
+		tr.Pos.End = p.prev.End
+		return tr
+	}
+
 	// Check for snap-only: [@d]
 	if p.at(lexer.At) {
 		snapStart := p.cur.Start
@@ -369,6 +382,13 @@ func (p *parser) parseTimeRange() ast.TimeRange {
 			tr.Snap = "@" + p.cur.Text
 			tr.SnapSpan = ast.Span{Start: snapStart, End: p.cur.End}
 			p.advance()
+		} else {
+			p.diags = append(p.diags, Diag{
+				Code:       CodeStageError,
+				Message:    "snap requires a unit, like [@d] or [@h]",
+				Span:       ast.Span{Start: snapStart, End: p.cur.End},
+				Suggestion: "[@d] snaps to the start of the day",
+			})
 		}
 		tr.Pos.End = p.cur.End
 		if _, ok := p.expect(lexer.RBracket); ok {
