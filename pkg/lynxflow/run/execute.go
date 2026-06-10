@@ -38,6 +38,11 @@ type Options struct {
 	// BatchSize controls the batch size for the pipeline iterator.
 	// Zero means pipeline.DefaultBatchSize.
 	BatchSize int
+
+	// ScanStats, when non-nil, collects scan-level statistics for
+	// observability and testing (e.g., events scanned, events filtered,
+	// parts skipped by inverted index).
+	ScanStats *physical.ScanStats
 }
 
 func (o *Options) defaultSource() string {
@@ -85,7 +90,7 @@ func Execute(ctx context.Context, query string, events map[string][]*event.Event
 		now = time.Now()
 	}
 
-	source := physical.NewStorageSourceFromMap(events, defaultSrc)
+	source := physical.NewStorageSourceFromMapWithStats(events, defaultSrc, opts.ScanStats)
 
 	iter, err := physical.Build(plan, physical.BuildOptions{
 		Source:    source,
@@ -103,6 +108,60 @@ func Execute(ctx context.Context, query string, events map[string][]*event.Event
 	rows, err := pipeline.CollectAll(ctx, iter)
 	if err != nil {
 		return nil, fmt.Errorf("lynxflow.Execute: execute: %w", err)
+	}
+
+	return rows, nil
+}
+
+// ExecuteWithSource is like Execute but uses a custom Source callback instead
+// of the default ephemeral store. This enables testing with disk-backed parts.
+func ExecuteWithSource(ctx context.Context, query string, source func(*logical.Scan) (pipeline.Iterator, error), opts Options) ([]map[string]event.Value, error) {
+	defaultSrc := opts.defaultSource()
+
+	// 1. Parse
+	q, diags := parser.Parse(query)
+	for _, d := range diags {
+		if d.Severity == parser.SeverityError {
+			return nil, fmt.Errorf("lynxflow.ExecuteWithSource: parse: %s", d.Message)
+		}
+	}
+
+	// 2. Desugar
+	desugared, _ := desugar.Desugar(q, desugar.Options{DefaultSource: defaultSrc})
+
+	// 3. Lower
+	plan, lowerDiags := logical.Lower(desugared, logical.Options{DefaultSource: defaultSrc})
+	for _, d := range lowerDiags {
+		if d.Severity == parser.SeverityError {
+			return nil, fmt.Errorf("lynxflow.ExecuteWithSource: lower: %s", d.Message)
+		}
+	}
+
+	// 4. Optimize
+	plan, _ = opt.Optimize(plan)
+
+	// 5. Build
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	iter, err := physical.Build(plan, physical.BuildOptions{
+		Source:    source,
+		BatchSize: opts.BatchSize,
+		Now:       now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("lynxflow.ExecuteWithSource: build: %w", err)
+	}
+
+	// 6. Drain
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rows, err := pipeline.CollectAll(ctx, iter)
+	if err != nil {
+		return nil, fmt.Errorf("lynxflow.ExecuteWithSource: execute: %w", err)
 	}
 
 	return rows, nil
