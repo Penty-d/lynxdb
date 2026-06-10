@@ -17,6 +17,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/ast"
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/lexer"
+	"github.com/lynxbase/lynxdb/pkg/lynxflow/registry"
 )
 
 // parser holds the mutable state for one expression parse.
@@ -29,6 +30,12 @@ type parser struct {
 	// inAggList is true while parsing a stats/eventstats/streamstats agg
 	// list; only there are `where <pred>` call arguments legal.
 	inAggList bool
+	// callDepth counts nested call-argument parsing; conditional-aggregate
+	// `where` args are legal only at depth 1 (the aggregate call itself).
+	callDepth int
+	// allowWhereArg is true only while parsing the direct arguments of a
+	// registered aggregate call at depth 1 inside an agg list.
+	allowWhereArg bool
 }
 
 // ParseExpr parses a single expression from the input string and returns the
@@ -537,6 +544,14 @@ func calleeFromExpr(e ast.Expr) (string, bool) {
 // method-call chains (a.b(x) or a?.b(x)); safeNav indicates ?. vs .
 func (p *parser) parseCallArgsNode(callee string, bang bool, receiver ast.Expr, safeNav bool, start int) *ast.Call {
 	p.advance() // consume (
+	p.callDepth++
+	savedAllow := p.allowWhereArg
+	_, isAgg := registry.LookupAggregate(callee)
+	p.allowWhereArg = p.inAggList && p.callDepth == 1 && isAgg
+	defer func() {
+		p.callDepth--
+		p.allowWhereArg = savedAllow
+	}()
 
 	var args []Expr
 	if !p.at(lexer.RParen) {
@@ -588,7 +603,7 @@ func (p *parser) parseArgList() []Expr {
 func (p *parser) parseArgExpr() ast.Expr {
 	// Conditional aggregate: where <predicate>
 	// count(where p) or sum(x, where p)
-	if p.at(lexer.KwWhere) && !p.inAggList {
+	if p.at(lexer.KwWhere) && !p.allowWhereArg {
 		p.errorf(p.cur, CodeUnexpectedToken, nil, "",
 			"where clauses are only valid inside aggregate calls")
 		p.advance()
