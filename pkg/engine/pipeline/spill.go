@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
 
@@ -61,54 +62,113 @@ type spillRow struct {
 }
 
 type spillValue struct {
-	Type uint8   `msgpack:"t"`
-	Str  string  `msgpack:"s,omitempty"`
-	Num  int64   `msgpack:"n,omitempty"`
-	Flt  float64 `msgpack:"f,omitempty"`
+	Type uint8                 `msgpack:"t"`
+	Str  string                `msgpack:"s,omitempty"`
+	Num  int64                 `msgpack:"n,omitempty"`
+	Flt  float64               `msgpack:"f,omitempty"`
+	Arr  []spillValue          `msgpack:"a,omitempty"`
+	Obj  map[string]spillValue `msgpack:"o,omitempty"`
 }
+
+// Spill wire type tags — stable, append-only. Flt remains the wire field for
+// floats even though event.Value stores float bits in the num slot internally.
+//
+//	0 = null, 1 = string, 2 = int, 3 = float (uses Flt wire field),
+//	4 = bool, 5 = timestamp, 6 = duration, 7 = array, 8 = object
+const (
+	spillTypeNull      uint8 = 0
+	spillTypeString    uint8 = 1
+	spillTypeInt       uint8 = 2
+	spillTypeFloat     uint8 = 3
+	spillTypeBool      uint8 = 4
+	spillTypeTimestamp uint8 = 5
+	spillTypeDuration  uint8 = 6
+	spillTypeArray     uint8 = 7
+	spillTypeObject    uint8 = 8
+)
 
 func toSpillValue(v event.Value) spillValue {
 	if v.IsNull() {
-		return spillValue{Type: 0}
+		return spillValue{Type: spillTypeNull}
 	}
 	switch v.Type() {
 	case event.FieldTypeString:
 		s, _ := v.TryAsString()
-		return spillValue{Type: 1, Str: s}
+		return spillValue{Type: spillTypeString, Str: s}
 	case event.FieldTypeInt:
 		n, _ := v.TryAsInt()
-		return spillValue{Type: 2, Num: n}
+		return spillValue{Type: spillTypeInt, Num: n}
 	case event.FieldTypeFloat:
 		f, _ := v.TryAsFloat()
-		return spillValue{Type: 3, Flt: f}
+		return spillValue{Type: spillTypeFloat, Flt: f}
 	case event.FieldTypeBool:
 		b, _ := v.TryAsBool()
 		if b {
-			return spillValue{Type: 4, Num: 1}
+			return spillValue{Type: spillTypeBool, Num: 1}
 		}
 
-		return spillValue{Type: 4, Num: 0}
+		return spillValue{Type: spillTypeBool, Num: 0}
+	case event.FieldTypeTimestamp:
+		t, _ := v.TryAsTimestamp()
+		return spillValue{Type: spillTypeTimestamp, Num: t.UnixNano()}
+	case event.FieldTypeDuration:
+		d, _ := v.TryAsDuration()
+		return spillValue{Type: spillTypeDuration, Num: int64(d)}
+	case event.FieldTypeArray:
+		elems := v.AsArray()
+		arr := make([]spillValue, len(elems))
+		for i, e := range elems {
+			arr[i] = toSpillValue(e)
+		}
+
+		return spillValue{Type: spillTypeArray, Arr: arr}
+	case event.FieldTypeObject:
+		fields := v.AsObject()
+		obj := make(map[string]spillValue, len(fields))
+		for k, e := range fields {
+			obj[k] = toSpillValue(e)
+		}
+
+		return spillValue{Type: spillTypeObject, Obj: obj}
 	default:
-		return spillValue{Type: 1, Str: v.String()}
+		return spillValue{Type: spillTypeString, Str: v.String()}
 	}
 }
 
 func fromSpillValue(sv spillValue) event.Value {
 	switch sv.Type {
-	case 0:
+	case spillTypeNull:
 		return event.NullValue()
-	case 1:
+	case spillTypeString:
 		return event.StringValue(sv.Str)
-	case 2:
+	case spillTypeInt:
 		return event.IntValue(sv.Num)
-	case 3:
+	case spillTypeFloat:
 		return event.FloatValue(sv.Flt)
-	case 4:
+	case spillTypeBool:
 		if sv.Num != 0 {
 			return event.BoolValue(true)
 		}
 
 		return event.BoolValue(false)
+	case spillTypeTimestamp:
+		return event.TimestampValue(time.Unix(0, sv.Num))
+	case spillTypeDuration:
+		return event.DurationValue(time.Duration(sv.Num))
+	case spillTypeArray:
+		elems := make([]event.Value, len(sv.Arr))
+		for i, e := range sv.Arr {
+			elems[i] = fromSpillValue(e)
+		}
+
+		return event.ArrayValue(elems)
+	case spillTypeObject:
+		fields := make(map[string]event.Value, len(sv.Obj))
+		for k, e := range sv.Obj {
+			fields[k] = fromSpillValue(e)
+		}
+
+		return event.ObjectValue(fields)
 	default:
 		return event.NullValue()
 	}

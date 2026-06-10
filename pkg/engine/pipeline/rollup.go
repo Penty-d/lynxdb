@@ -514,7 +514,11 @@ func rollupValueKey(v event.Value) string {
 	case event.FieldTypeBool:
 		return fmt.Sprintf("b:%t", v.AsBool())
 	case event.FieldTypeTimestamp:
-		return fmt.Sprintf("t:%d", v.AsInt())
+		return fmt.Sprintf("t:%d", v.AsTimestamp().UnixNano())
+	case event.FieldTypeDuration:
+		return fmt.Sprintf("d:%d", v.AsDuration())
+	case event.FieldTypeArray, event.FieldTypeObject:
+		return "c:" + v.String()
 	default:
 		return "n:"
 	}

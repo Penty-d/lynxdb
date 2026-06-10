@@ -439,6 +439,15 @@ func (a *AggregateIterator) groupKeyHash(row map[string]event.Value) uint64 {
 				binary.LittleEndian.PutUint64(buf[:], uint64(t.UnixNano()))
 				h.Write(buf[:])
 			}
+		case event.FieldTypeDuration:
+			h.Write([]byte{6})
+			if d, ok := v.TryAsDuration(); ok {
+				binary.LittleEndian.PutUint64(buf[:], uint64(d))
+				h.Write(buf[:])
+			}
+		case event.FieldTypeArray, event.FieldTypeObject:
+			h.Write([]byte{7})
+			h.Write([]byte(v.String()))
 		default:
 			h.Write([]byte{0})
 		}

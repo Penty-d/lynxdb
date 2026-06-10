@@ -148,6 +148,15 @@ func packValueToInterface(v event.Value) interface{} {
 	case event.FieldTypeString:
 		s, _ := v.TryAsString()
 		return s
+	case event.FieldTypeTimestamp:
+		s, _ := v.TryAsString()
+		return s
+	case event.FieldTypeDuration:
+		return v.String()
+	case event.FieldTypeArray:
+		return v.Interface()
+	case event.FieldTypeObject:
+		return v.Interface()
 	default:
 		return v.String()
 	}

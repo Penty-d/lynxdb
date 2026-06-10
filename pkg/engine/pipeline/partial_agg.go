@@ -533,6 +533,16 @@ func hashValue(h hash.Hash64, v event.Value, buf []byte) {
 		t, _ := v.TryAsTimestamp()
 		binary.LittleEndian.PutUint64(buf, uint64(t.UnixNano()))
 		h.Write(buf)
+	case event.FieldTypeDuration:
+		h.Write([]byte{6})
+		d, _ := v.TryAsDuration()
+		binary.LittleEndian.PutUint64(buf, uint64(d))
+		h.Write(buf)
+	case event.FieldTypeArray, event.FieldTypeObject:
+		// Use deterministic String() rendering as the hash input.
+		// Objects have sorted keys so equal values produce equal strings.
+		h.Write([]byte{7})
+		h.Write([]byte(v.String()))
 	default:
 		h.Write([]byte{0})
 	}

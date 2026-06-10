@@ -12,6 +12,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/vmihailenco/msgpack/v5"
+
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment/column"
 )
@@ -715,8 +717,12 @@ func isNullBit(bitmap []byte, i int) bool {
 // detectDominantType determines the most common non-null type in a slice of values.
 // Returns the dominant FieldType. If mixed types are present, returns FieldTypeString
 // (all values will be string-converted).
+//
+// Duration values use the int64 (delta) encoding path like timestamps. Array and
+// object values use the string encoding path (JSON-like serialization per value).
 func detectDominantType(values []event.Value) event.FieldType {
-	var counts [6]int // indexed by FieldType
+	// 9 field types: null(0) through object(8).
+	var counts [9]int
 
 	for _, v := range values {
 		if v.IsNull() {
@@ -731,7 +737,7 @@ func detectDominantType(values []event.Value) event.FieldType {
 	// Find the type with the most values.
 	bestType := event.FieldTypeNull
 	bestCount := 0
-	for t := event.FieldTypeString; t <= event.FieldTypeTimestamp; t++ {
+	for t := event.FieldTypeString; t <= event.FieldTypeObject; t++ {
 		if counts[t] > bestCount {
 			bestCount = counts[t]
 			bestType = t
@@ -744,7 +750,7 @@ func detectDominantType(values []event.Value) event.FieldType {
 
 	// Check if there are mixed types (more than one non-null type).
 	nonNullTypes := 0
-	for t := event.FieldTypeString; t <= event.FieldTypeTimestamp; t++ {
+	for t := event.FieldTypeString; t <= event.FieldTypeObject; t++ {
 		if counts[t] > 0 {
 			nonNullTypes++
 		}
@@ -766,7 +772,7 @@ func encodeColumnValues(values []event.Value, _ bool) (fieldType, encoding uint8
 	case event.FieldTypeNull:
 		return uint8(event.FieldTypeNull), encodingNone, nil, nil
 
-	case event.FieldTypeInt, event.FieldTypeTimestamp, event.FieldTypeBool:
+	case event.FieldTypeInt, event.FieldTypeTimestamp, event.FieldTypeBool, event.FieldTypeDuration:
 		ints := make([]int64, len(values))
 		for i, v := range values {
 			if v.IsNull() {
@@ -786,6 +792,9 @@ func encodeColumnValues(values []event.Value, _ bool) (fieldType, encoding uint8
 				if b {
 					ints[i] = 1
 				}
+			case event.FieldTypeDuration:
+				d, _ := v.TryAsDuration()
+				ints[i] = int64(d)
 			default:
 				ints[i] = 0
 			}
@@ -796,6 +805,44 @@ func encodeColumnValues(values []event.Value, _ bool) (fieldType, encoding uint8
 		}
 
 		return uint8(domType), uint8(column.EncodingDelta), data, nil
+
+	// Arrays and objects are serialized as msgpack blobs per value, stored as
+	// strings in a string column. This preserves full type fidelity (int vs float,
+	// nested arrays/objects) at the cost of poor compression. Acceptable for v1
+	// since these are per-query temp files. The fieldType tag distinguishes them
+	// from plain string columns on decode.
+	case event.FieldTypeArray, event.FieldTypeObject:
+		strs := make([]string, len(values))
+		for i, v := range values {
+			if v.IsNull() {
+				strs[i] = ""
+
+				continue
+			}
+			sv := toSpillValue(v)
+			blob, mErr := msgpack.Marshal(&sv)
+			if mErr != nil {
+				return 0, 0, nil, fmt.Errorf("msgpack encode array/object: %w", mErr)
+			}
+			strs[i] = string(blob)
+		}
+
+		data, err = column.NewDictEncoder().EncodeStrings(strs)
+		if err != nil {
+			if errors.Is(err, column.ErrTooManyUnique) {
+				data, err = column.NewLZ4Encoder().EncodeStrings(strs)
+				if err != nil {
+					return 0, 0, nil, fmt.Errorf("lz4 encode: %w", err)
+				}
+
+				return uint8(domType), uint8(column.EncodingLZ4), data, nil
+			}
+
+			return 0, 0, nil, fmt.Errorf("dict encode: %w", err)
+		}
+		enc := column.EncodingType(data[0])
+
+		return uint8(domType), uint8(enc), data, nil
 
 	case event.FieldTypeFloat:
 		floats := make([]float64, len(values))
@@ -890,6 +937,8 @@ func decodeColumnValues(fieldType, encoding uint8, data, nullBitmap []byte, rowC
 				values[i] = event.TimestampValue(time.Unix(0, ints[i]))
 			case event.FieldTypeBool:
 				values[i] = event.BoolValue(ints[i] != 0)
+			case event.FieldTypeDuration:
+				values[i] = event.DurationValue(time.Duration(ints[i]))
 			default:
 				values[i] = event.IntValue(ints[i])
 			}
@@ -916,7 +965,7 @@ func decodeColumnValues(fieldType, encoding uint8, data, nullBitmap []byte, rowC
 			if isNullBit(nullBitmap, i) {
 				continue
 			}
-			values[i] = event.StringValue(strs[i])
+			values[i] = stringToTypedValue(strs[i], ft)
 		}
 
 	case column.EncodingLZ4:
@@ -928,7 +977,7 @@ func decodeColumnValues(fieldType, encoding uint8, data, nullBitmap []byte, rowC
 			if isNullBit(nullBitmap, i) {
 				continue
 			}
-			values[i] = event.StringValue(strs[i])
+			values[i] = stringToTypedValue(strs[i], ft)
 		}
 
 	default:
@@ -936,6 +985,30 @@ func decodeColumnValues(fieldType, encoding uint8, data, nullBitmap []byte, rowC
 	}
 
 	return values, nil
+}
+
+// stringToTypedValue converts a decoded string back to the appropriate Value
+// type based on the column's declared FieldType. For FieldTypeString (the common
+// case) this is a zero-cost identity conversion.
+//
+// For FieldTypeArray/FieldTypeObject, the string is a msgpack-encoded spillValue
+// blob. We decode it via fromSpillValue to restore full type fidelity (int vs
+// float, nested structures). On decode failure, we fall back to StringValue.
+func stringToTypedValue(s string, ft event.FieldType) event.Value {
+	switch ft {
+	case event.FieldTypeArray, event.FieldTypeObject:
+		if len(s) == 0 {
+			return event.NullValue()
+		}
+		var sv spillValue
+		if err := msgpack.Unmarshal([]byte(s), &sv); err == nil {
+			return fromSpillValue(sv)
+		}
+		// Fallback: return as string so downstream still works via String() comparison.
+		return event.StringValue(s)
+	default:
+		return event.StringValue(s)
+	}
 }
 
 // countWriter wraps an io.Writer and counts bytes written.
