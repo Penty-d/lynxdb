@@ -293,10 +293,28 @@ func (a *AggregateIterator) Schema() []FieldInfo {
 		schema = append(schema, FieldInfo{Name: g, Type: "any"})
 	}
 	for _, agg := range a.aggs {
-		schema = append(schema, FieldInfo{Name: agg.Alias, Type: "any"})
+		schema = append(schema, FieldInfo{Name: agg.Alias, Type: aggResultType(agg.Name)})
 	}
 
 	return schema
+}
+
+// aggResultType returns the output type of an aggregate function. Group keys
+// and input-dependent aggregates (sum, min, max, first, last, ...) stay "any"
+// until typed scan schemas land with the logical-IR physical builder.
+func aggResultType(name string) string {
+	switch name {
+	case aggCount, aggDC:
+		return "int"
+	case aggAvg, aggRate, aggPerSec, aggPerMin, aggPerHr, aggPerDay,
+		aggStdev, aggStdevP, aggVar, aggVarP, aggEstDCE,
+		aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
+		return "float"
+	case aggEarT, aggLatT:
+		return "timestamp"
+	default:
+		return "any"
+	}
 }
 
 func (a *AggregateIterator) processBatch(batch *Batch) error {
