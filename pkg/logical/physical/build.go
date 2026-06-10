@@ -38,6 +38,11 @@ type BuildOptions struct {
 
 	// BatchSize is the number of rows per batch. Zero means DefaultBatchSize.
 	BatchSize int
+
+	// Now is the reference time for resolving relative time bounds in Scan
+	// nodes (e.g. -1h, -7d). Injected for testability. Zero means time.Now()
+	// at build time (resolved lazily in the Source callback).
+	Now time.Time
 }
 
 func (o *BuildOptions) batchSize() int {
@@ -68,7 +73,7 @@ func Build(plan *logical.Plan, opts BuildOptions) (pipeline.Iterator, error) {
 		if err != nil {
 			return nil, fmt.Errorf("physical.Build: CTE $%s: %w", name, err)
 		}
-		rows, err := pipeline.CollectAll(nil, iter)
+		rows, err := pipeline.CollectAll(context.Background(), iter)
 		if err != nil {
 			return nil, fmt.Errorf("physical.Build: CTE $%s collect: %w", name, err)
 		}
