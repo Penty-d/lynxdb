@@ -589,13 +589,13 @@ func formatSearchPrimary(b *strings.Builder, se ast.SearchExpr) {
 	case *ast.SearchPhrase:
 		b.WriteString(s.Raw)
 	case *ast.SearchKeyValue:
-		b.WriteString(s.Key)
+		writeFieldName(b, s.Key)
 		b.WriteString(s.Op)
 		if s.Value != nil {
 			formatExpr(b, s.Value, precTop)
 		}
 	case *ast.SearchIn:
-		b.WriteString(s.Key)
+		writeFieldName(b, s.Key)
 		b.WriteString(" in (")
 		for i, v := range s.Values {
 			if i > 0 {
@@ -1221,4 +1221,17 @@ func formatGenericPayload(b *strings.Builder, p *ast.GenericOptionsPayload) {
 		b.WriteByte('=')
 		formatExpr(b, opt.Value, precTop)
 	}
+}
+
+// writeFieldName renders a field name, backtick-quoting it when it is not a
+// bare-safe token (re-derived; the AST does not retain quotedness for search
+// keys).
+func writeFieldName(b *strings.Builder, name string) {
+	if needsQuoting(name) {
+		b.WriteByte('`')
+		b.WriteString(name)
+		b.WriteByte('`')
+		return
+	}
+	b.WriteString(name)
 }
