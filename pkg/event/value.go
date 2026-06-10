@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -21,6 +24,12 @@ const (
 	FieldTypeFloat
 	FieldTypeBool
 	FieldTypeTimestamp
+	// The constants below were added by RFC-002; the tag value is persisted
+	// in spill and segment encodings, so existing constants must never be
+	// renumbered and new ones are append-only.
+	FieldTypeDuration
+	FieldTypeArray
+	FieldTypeObject
 )
 
 func (ft FieldType) String() string {
@@ -37,17 +46,35 @@ func (ft FieldType) String() string {
 		return "bool"
 	case FieldTypeTimestamp:
 		return "timestamp"
+	case FieldTypeDuration:
+		return "duration"
+	case FieldTypeArray:
+		return "array"
+	case FieldTypeObject:
+		return "object"
 	default:
 		return fmt.Sprintf("unknown(%d)", ft)
 	}
 }
 
 // Value is a tagged union representing a field value.
+//
+// num holds ints, bools (0/1), timestamps (UnixNano), durations (nanoseconds),
+// and float bits (math.Float64bits) - one shared 8-byte slot keyed by typ.
+// Arrays and objects live behind the single ref pointer. The struct is 40
+// bytes, the same size it had before RFC-002 added duration/array/object.
 type Value struct {
 	typ FieldType
 	str string
 	num int64
-	flt float64
+	ref *refPayload
+}
+
+// refPayload holds the heap-allocated part of array and object values.
+// Exactly one of arr/obj is set, matching the Value's FieldType.
+type refPayload struct {
+	arr []Value
+	obj map[string]Value
 }
 
 // NullValue returns a null Value.
@@ -67,7 +94,7 @@ func IntValue(n int64) Value {
 
 // FloatValue returns a float Value.
 func FloatValue(f float64) Value {
-	return Value{typ: FieldTypeFloat, flt: f}
+	return Value{typ: FieldTypeFloat, num: int64(math.Float64bits(f))}
 }
 
 // BoolValue returns a bool Value.
@@ -82,6 +109,21 @@ func BoolValue(b bool) Value {
 // TimestampValue returns a timestamp Value (stored as UnixNano).
 func TimestampValue(t time.Time) Value {
 	return Value{typ: FieldTypeTimestamp, num: t.UnixNano()}
+}
+
+// DurationValue returns a duration Value (stored as nanoseconds).
+func DurationValue(d time.Duration) Value {
+	return Value{typ: FieldTypeDuration, num: int64(d)}
+}
+
+// ArrayValue returns an array Value. The slice is retained, not copied.
+func ArrayValue(elems []Value) Value {
+	return Value{typ: FieldTypeArray, ref: &refPayload{arr: elems}}
+}
+
+// ObjectValue returns an object Value. The map is retained, not copied.
+func ObjectValue(fields map[string]Value) Value {
+	return Value{typ: FieldTypeObject, ref: &refPayload{obj: fields}}
 }
 
 // Type returns the FieldType of this Value.
@@ -144,7 +186,7 @@ func (v Value) AsFloat() float64 {
 		return 0
 	}
 
-	return v.flt
+	return math.Float64frombits(uint64(v.num))
 }
 
 // AsFloatE returns the float value or an error if not a float.
@@ -153,7 +195,7 @@ func (v Value) AsFloatE() (float64, error) {
 		return 0, fmt.Errorf("%w: got %s, want float", ErrTypeMismatch, v.typ)
 	}
 
-	return v.flt, nil
+	return math.Float64frombits(uint64(v.num)), nil
 }
 
 // AsBool returns the bool value or the zero value if not a bool.
@@ -200,6 +242,72 @@ func (v Value) AsTimestampE() (time.Time, error) {
 	return time.Unix(0, v.num), nil
 }
 
+// AsDuration returns the duration value or the zero value if not a duration.
+// This method does not panic on type mismatch; it logs a warning and returns 0.
+// Prefer AsDurationE or TryAsDuration for explicit error handling.
+func (v Value) AsDuration() time.Duration {
+	if v.typ != FieldTypeDuration {
+		slog.Warn("AsDuration called on non-duration value", "type", v.typ.String())
+
+		return 0
+	}
+
+	return time.Duration(v.num)
+}
+
+// AsDurationE returns the duration value or an error if not a duration.
+func (v Value) AsDurationE() (time.Duration, error) {
+	if v.typ != FieldTypeDuration {
+		return 0, fmt.Errorf("%w: got %s, want duration", ErrTypeMismatch, v.typ)
+	}
+
+	return time.Duration(v.num), nil
+}
+
+// AsArray returns the array elements or nil if not an array.
+// This method does not panic on type mismatch; it logs a warning and returns nil.
+// Prefer AsArrayE or TryAsArray for explicit error handling.
+func (v Value) AsArray() []Value {
+	if v.typ != FieldTypeArray {
+		slog.Warn("AsArray called on non-array value", "type", v.typ.String())
+
+		return nil
+	}
+
+	return v.ref.arr
+}
+
+// AsArrayE returns the array elements or an error if not an array.
+func (v Value) AsArrayE() ([]Value, error) {
+	if v.typ != FieldTypeArray {
+		return nil, fmt.Errorf("%w: got %s, want array", ErrTypeMismatch, v.typ)
+	}
+
+	return v.ref.arr, nil
+}
+
+// AsObject returns the object fields or nil if not an object.
+// This method does not panic on type mismatch; it logs a warning and returns nil.
+// Prefer AsObjectE or TryAsObject for explicit error handling.
+func (v Value) AsObject() map[string]Value {
+	if v.typ != FieldTypeObject {
+		slog.Warn("AsObject called on non-object value", "type", v.typ.String())
+
+		return nil
+	}
+
+	return v.ref.obj
+}
+
+// AsObjectE returns the object fields or an error if not an object.
+func (v Value) AsObjectE() (map[string]Value, error) {
+	if v.typ != FieldTypeObject {
+		return nil, fmt.Errorf("%w: got %s, want object", ErrTypeMismatch, v.typ)
+	}
+
+	return v.ref.obj, nil
+}
+
 // TryAsString returns the string value and true, or zero value and false if not a string.
 func (v Value) TryAsString() (string, bool) {
 	if v.typ != FieldTypeString {
@@ -224,7 +332,7 @@ func (v Value) TryAsFloat() (float64, bool) {
 		return 0, false
 	}
 
-	return v.flt, true
+	return math.Float64frombits(uint64(v.num)), true
 }
 
 // TryAsBool returns the bool value and true, or zero value and false if not a bool.
@@ -245,6 +353,33 @@ func (v Value) TryAsTimestamp() (time.Time, bool) {
 	return time.Unix(0, v.num), true
 }
 
+// TryAsDuration returns the duration value and true, or zero value and false if not a duration.
+func (v Value) TryAsDuration() (time.Duration, bool) {
+	if v.typ != FieldTypeDuration {
+		return 0, false
+	}
+
+	return time.Duration(v.num), true
+}
+
+// TryAsArray returns the array elements and true, or nil and false if not an array.
+func (v Value) TryAsArray() ([]Value, bool) {
+	if v.typ != FieldTypeArray {
+		return nil, false
+	}
+
+	return v.ref.arr, true
+}
+
+// TryAsObject returns the object fields and true, or nil and false if not an object.
+func (v Value) TryAsObject() (map[string]Value, bool) {
+	if v.typ != FieldTypeObject {
+		return nil, false
+	}
+
+	return v.ref.obj, true
+}
+
 // Interface returns the value as a plain Go interface{}.
 func (v Value) Interface() interface{} {
 	switch v.typ {
@@ -253,11 +388,27 @@ func (v Value) Interface() interface{} {
 	case FieldTypeInt:
 		return v.num
 	case FieldTypeFloat:
-		return v.flt
+		return math.Float64frombits(uint64(v.num))
 	case FieldTypeBool:
 		return v.num != 0
 	case FieldTypeTimestamp:
 		return time.Unix(0, v.num).UTC()
+	case FieldTypeDuration:
+		return time.Duration(v.num)
+	case FieldTypeArray:
+		out := make([]interface{}, len(v.ref.arr))
+		for i, e := range v.ref.arr {
+			out[i] = e.Interface()
+		}
+
+		return out
+	case FieldTypeObject:
+		out := make(map[string]interface{}, len(v.ref.obj))
+		for k, e := range v.ref.obj {
+			out[k] = e.Interface()
+		}
+
+		return out
 	default:
 		return nil
 	}
@@ -278,6 +429,26 @@ func ValueFromInterface(v interface{}) Value {
 		return BoolValue(val)
 	case time.Time:
 		return TimestampValue(val)
+	case time.Duration:
+		return DurationValue(val)
+	case []Value:
+		return ArrayValue(val)
+	case map[string]Value:
+		return ObjectValue(val)
+	case []interface{}:
+		elems := make([]Value, len(val))
+		for i, e := range val {
+			elems[i] = ValueFromInterface(e)
+		}
+
+		return ArrayValue(elems)
+	case map[string]interface{}:
+		fields := make(map[string]Value, len(val))
+		for k, e := range val {
+			fields[k] = ValueFromInterface(e)
+		}
+
+		return ObjectValue(fields)
 	case Value:
 		return val
 	case nil:
@@ -297,7 +468,7 @@ func (v Value) String() string {
 	case FieldTypeInt:
 		return strconv.FormatInt(v.num, 10)
 	case FieldTypeFloat:
-		return strconv.FormatFloat(v.flt, 'g', -1, 64)
+		return strconv.FormatFloat(math.Float64frombits(uint64(v.num)), 'g', -1, 64)
 	case FieldTypeBool:
 		if v.num != 0 {
 			return "true"
@@ -306,7 +477,56 @@ func (v Value) String() string {
 		return "false"
 	case FieldTypeTimestamp:
 		return time.Unix(0, v.num).UTC().Format(time.RFC3339Nano)
+	case FieldTypeDuration:
+		return time.Duration(v.num).String()
+	case FieldTypeArray, FieldTypeObject:
+		var sb strings.Builder
+		v.appendJSONLike(&sb)
+
+		return sb.String()
 	default:
 		return "<unknown>"
+	}
+}
+
+// appendJSONLike renders the value in compact JSON-like form. Object keys are
+// sorted so the rendering is deterministic: group and dedup keys render
+// through String, and equal objects must produce equal strings.
+func (v Value) appendJSONLike(sb *strings.Builder) {
+	switch v.typ {
+	case FieldTypeNull:
+		sb.WriteString("null")
+	case FieldTypeString:
+		sb.WriteString(strconv.Quote(v.str))
+	case FieldTypeTimestamp, FieldTypeDuration:
+		sb.WriteString(strconv.Quote(v.String()))
+	case FieldTypeArray:
+		sb.WriteByte('[')
+		for i, e := range v.ref.arr {
+			if i > 0 {
+				sb.WriteByte(',')
+			}
+			e.appendJSONLike(sb)
+		}
+		sb.WriteByte(']')
+	case FieldTypeObject:
+		keys := make([]string, 0, len(v.ref.obj))
+		for k := range v.ref.obj {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		sb.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				sb.WriteByte(',')
+			}
+			sb.WriteString(strconv.Quote(k))
+			sb.WriteByte(':')
+			e := v.ref.obj[k]
+			e.appendJSONLike(sb)
+		}
+		sb.WriteByte('}')
+	default:
+		sb.WriteString(v.String())
 	}
 }
