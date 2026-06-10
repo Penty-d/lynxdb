@@ -903,6 +903,13 @@ func exprFieldName(e lfast.Expr) string {
 	return e.String()
 }
 
+// ExprToDuration extracts a time.Duration from a LynxFlow expression node.
+// Exported for use by the MV dispatcher which needs to resolve TimeBin
+// durations outside the physical builder.
+func ExprToDuration(e lfast.Expr) (time.Duration, error) {
+	return exprToDuration(e)
+}
+
 // exprToDuration extracts a time.Duration from a LynxFlow expression node.
 func exprToDuration(e lfast.Expr) (time.Duration, error) {
 	if lit, ok := e.(*lfast.Literal); ok && lit.Kind == lfast.LitDuration {

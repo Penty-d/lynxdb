@@ -17,6 +17,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/logical/physical"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/storage"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
@@ -53,10 +54,15 @@ type activeView struct {
 	mu        sync.RWMutex
 	closed    atomic.Bool
 
-	// analysis holds the pipeline splitting result from AnalyzeQuery.
-	// Non-nil when def.Query is non-empty. For aggregation views, contains
-	// the AggSpec and streaming commands used at insert time.
+	// analysis holds the pipeline splitting result from AnalyzeQuery (SPL2 path).
+	// Non-nil when def.Query is non-empty and language is SPL2. For aggregation
+	// views, contains the AggSpec and streaming commands used at insert time.
 	analysis *QueryAnalysis
+
+	// mvAnalysis holds the language-neutral MV analysis (LynxFlow path).
+	// Non-nil when def.Query is non-empty and language is lynxflow.
+	// Contains the optimized logical plan for insert-time dispatch.
+	mvAnalysis *MVAnalysis
 
 	// events holds unflushed events (replaces the old memtable dependency).
 	// Protected by mu. Sorted by timestamp on read (deferred sort).
@@ -317,10 +323,9 @@ func (d *Dispatcher) activateView(def ViewDefinition) error {
 	// (for state column deserialization).
 	//
 	// Language-aware activation:
-	//  - lynxflow views: not yet supported for insert-time dispatch (the
-	//    streaming pipeline runs through the SPL2 pipeline builder). Mark
-	//    as needs-migration so the user gets a clear error. This will be
-	//    lifted when the LynxFlow physical builder gains MV insert support.
+	//  - lynxflow views: parse with AnalyzeLynxFlow, which produces the same
+	//    MVAnalysis/AggSpec as the SPL2 path. On parse failure, mark the
+	//    view as needs-migration instead of blocking startup.
 	//  - spl2 views (including legacy empty LanguageVersion): parse with
 	//    the SPL2 AnalyzeQuery path. On parse failure, mark the view as
 	//    needs-migration instead of blocking startup.
@@ -328,16 +333,19 @@ func (d *Dispatcher) activateView(def ViewDefinition) error {
 		lang := def.EffectiveLanguage()
 		switch lang {
 		case "lynxflow":
-			// LynxFlow MVs are not yet supported for insert-time dispatch.
-			// They load without error but cannot execute the streaming
-			// pipeline. Mark as needs-migration so queries return a clear
-			// error directing the user to wait or migrate back.
-			//
-			// NOTE: We still register the view so it appears in `mv list`
-			// and `mv status`. Queries against it will check the status
-			// and return ErrViewNeedsMigration.
-			d.logger.Warn("views: lynxflow MV insert-time dispatch not yet supported; view registered but inactive",
-				"name", def.Name)
+			// LynxFlow path: parse, lower, optimize, validate plan shape,
+			// and extract AggSpec from the IR.
+			mvAn, err := AnalyzeLynxFlow(def.Query)
+			if err != nil {
+				d.logger.Warn("views: failed to analyze LynxFlow query; marking as needs-migration",
+					"name", def.Name, "err", err)
+				av.def.Status = ViewStatusNeedsMigration
+			} else {
+				av.mvAnalysis = mvAn
+				if def.AggSpec == nil && mvAn.AggSpec != nil {
+					av.def.AggSpec = mvAn.AggSpec
+				}
+			}
 		default:
 			// SPL2 path (existing behavior).
 			analysis, err := AnalyzeQuery(def.Query)
@@ -428,7 +436,10 @@ func (d *Dispatcher) dispatch(events []*event.Event, adapter *memgov.BudgetAdapt
 			continue
 		}
 
-		if vb.av.analysis != nil && vb.av.analysis.IsAggregation && vb.av.analysis.AggSpec != nil {
+		isSPL2Agg := vb.av.analysis != nil && vb.av.analysis.IsAggregation && vb.av.analysis.AggSpec != nil
+		isLynxFlowAgg := vb.av.mvAnalysis != nil && vb.av.mvAnalysis.IsAggregation && vb.av.mvAnalysis.AggSpec != nil
+
+		if isSPL2Agg || isLynxFlowAgg {
 			// Aggregation view: run streaming pipeline + compute partial agg + serialize.
 			budget := adapter
 			closeBudget := false
@@ -438,7 +449,13 @@ func (d *Dispatcher) dispatch(events []*event.Event, adapter *memgov.BudgetAdapt
 					closeBudget = true
 				}
 			}
-			results, err := d.processInsertBatch(vb.av, vb.events, budget)
+			var results []*event.Event
+			var err error
+			if isLynxFlowAgg {
+				results, err = d.processInsertBatchLynxFlow(vb.av, vb.events, budget)
+			} else {
+				results, err = d.processInsertBatch(vb.av, vb.events, budget)
+			}
 			if closeBudget {
 				budget.Close()
 			}
@@ -535,6 +552,90 @@ func (d *Dispatcher) processInsertBatch(av *activeView, events []*event.Event, a
 
 	// Serialize partial state to events for storage.
 	return PartialGroupsToEvents(partialGroups, av.analysis.AggSpec, av.def.Name), nil
+}
+
+// processInsertBatchLynxFlow runs the insert-time pipeline for a LynxFlow
+// aggregation view. It builds a physical pipeline from the streaming sub-plan
+// (everything before the Aggregate) with a slice source over the incoming batch,
+// collects the output, then runs ComputePartialAgg with the same PartialAggSpec
+// as the SPL2 path.
+//
+// Storage format compatibility: this method uses the same PartialGroupsToEvents
+// serialization as processInsertBatch, so partial state from LynxFlow dispatch
+// is byte-identical to SPL2 dispatch. A migrated view's old SPL2-written
+// segments merge correctly with new LynxFlow-written segments.
+func (d *Dispatcher) processInsertBatchLynxFlow(av *activeView, events []*event.Event, adapter *memgov.BudgetAdapter) ([]*event.Event, error) {
+	mvAn := av.mvAnalysis
+	var transformed []*event.Event
+
+	if mvAn.StreamingPlan != nil {
+		// Run the streaming sub-plan (Scan -> Filter -> Extend -> Parse) with
+		// a slice source over the incoming batch.
+		ctx, cancel := context.WithTimeout(context.Background(), processInsertTimeout)
+		defer cancel()
+
+		srcIdx := "main"
+		if mvAn.SourceIndex != "" {
+			srcIdx = mvAn.SourceIndex
+		}
+
+		source := physical.NewStorageSourceFromMap(
+			map[string][]*event.Event{srcIdx: events},
+			srcIdx,
+		)
+
+		iter, err := physical.Build(mvAn.StreamingPlan, physical.BuildOptions{
+			Source:    source,
+			BatchSize: pipeline.DefaultBatchSize,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("views.processInsertBatchLynxFlow: build pipeline: %w", err)
+		}
+
+		// If the aggregate has a TimeBin, wrap with a BinIterator so _time
+		// is bucketed before partial aggregation (same as SPL2's timechart
+		// injecting BinCommand into StreamingCmds).
+		if mvAn.TimeBin != nil {
+			dur, durErr := physical.ExprToDuration(mvAn.TimeBin.Duration)
+			if durErr == nil && dur > 0 {
+				iter = pipeline.NewBinIterator(iter, "_time", "_time", dur)
+			}
+		}
+
+		rows, err := pipeline.CollectAll(ctx, iter)
+		if err != nil {
+			return nil, fmt.Errorf("views.processInsertBatchLynxFlow: collect: %w", err)
+		}
+		transformed = batchRowsToEvents(rows, av.def.Name)
+	} else {
+		transformed = events
+	}
+
+	if len(transformed) == 0 {
+		return nil, nil
+	}
+
+	// Use the PERSISTED AggSpec from the view definition, not the freshly
+	// derived one from mvAnalysis. For migrated views, the persisted AggSpec
+	// has the original SPL2 aliases (e.g., "count" not "count()"), so the
+	// _pa_ column names match the existing materialized data. This is the
+	// key storage compatibility invariant for migration.
+	spec := av.def.AggSpec
+
+	// Compute partial aggregates — same code path as SPL2 processInsertBatch.
+	partialAcct := memgov.NopAccount()
+	if adapter != nil {
+		partialAcct = adapter.NewAccount("mv-insert-partial-agg")
+	}
+	defer partialAcct.Close()
+
+	partialGroups, err := pipeline.ComputePartialAggWithBudget(transformed, spec, partialAcct)
+	if err != nil {
+		return nil, fmt.Errorf("views.processInsertBatchLynxFlow: partial agg: %w", err)
+	}
+
+	// Serialize partial state to events — identical format to SPL2 path.
+	return PartialGroupsToEvents(partialGroups, spec, av.def.Name), nil
 }
 
 func collectPipelineRowsWithBudget(ctx context.Context, iter pipeline.Iterator, acct memgov.MemoryAccount) ([]map[string]event.Value, error) {
@@ -788,8 +889,12 @@ func (d *Dispatcher) ViewAllEvents(name string) ([]*event.Event, error) {
 	all = append(all, memEvents...)
 
 	// For aggregation views: deserialize → merge → finalize → events.
+	// Works identically for both SPL2 and LynxFlow views because they share
+	// the same AggSpec and _pa_ serialization format.
 	spec := av.def.AggSpec
-	if av.analysis != nil && av.analysis.IsAggregation && spec != nil {
+	isSPL2Agg := av.analysis != nil && av.analysis.IsAggregation && spec != nil
+	isLFAgg := av.mvAnalysis != nil && av.mvAnalysis.IsAggregation && spec != nil
+	if (isSPL2Agg || isLFAgg) && spec != nil {
 		groups := EventsToPartialGroups(all, spec)
 		finalRows := pipeline.MergePartialAggs([][]*pipeline.PartialAggGroup{groups}, spec)
 

@@ -55,12 +55,22 @@ func (s *ViewService) Create(req CreateViewRequest) error {
 	if req.Query != "" {
 		switch lang.Language {
 		case langdetect.LangLynxFlow:
-			// LynxFlow MVs: the insert-time streaming pipeline currently
-			// requires SPL2 AST types (spl2.Command). Until the LynxFlow
-			// physical builder supports MV insert-time dispatch, reject
-			// creation with a clear message.
-			return fmt.Errorf("usecases.CreateView: LynxFlow materialized views are not yet supported for insert-time dispatch; " +
-				"the query was detected as LynxFlow — use language=spl2 to create an SPL2 view, or wait for LynxFlow MV support")
+			// LynxFlow path: parse, lower, optimize, validate plan shape,
+			// and extract AggSpec from the IR.
+			mvAn, err := views.AnalyzeLynxFlow(req.Query)
+			if err != nil {
+				return fmt.Errorf("usecases.CreateView: %w", err)
+			}
+
+			if mvAn.SourceIndex != "" {
+				def.SourceIndex = mvAn.SourceIndex
+			}
+
+			if mvAn.IsAggregation {
+				def.Type = views.ViewTypeAggregation
+				def.AggSpec = mvAn.AggSpec
+				def.GroupBy = mvAn.GroupBy
+			}
 		default:
 			// SPL2 path (existing behavior).
 			analysis, err := views.AnalyzeQuery(req.Query)
