@@ -252,12 +252,12 @@ func (p *parser) parseSourceAtom() ast.SourceAtom {
 	// !-prefixed exclude
 	if p.at(lexer.Bang) {
 		p.advance()
-		name, pattern := p.parseSourceName()
+		name, pattern, quoted := p.parseSourceName()
 		end := p.prev.End
-		if strings.Contains(pattern, "*") || strings.Contains(pattern, "?") {
+		if !quoted && (strings.Contains(pattern, "*") || strings.Contains(pattern, "?")) {
 			return ast.SourceAtom{Kind: ast.SourceNegated, Name: name, Pattern: pattern, Pos: ast.Span{Start: start, End: end}}
 		}
-		return ast.SourceAtom{Kind: ast.SourceNegated, Name: pattern, Pos: ast.Span{Start: start, End: end}}
+		return ast.SourceAtom{Kind: ast.SourceNegated, Name: pattern, Quoted: quoted, Pos: ast.Span{Start: start, End: end}}
 	}
 
 	// Backtick-quoted source
@@ -286,14 +286,24 @@ func (p *parser) parseSourceAtom() ast.SourceAtom {
 	return ast.SourceAtom{Kind: SourceAtomEmpty}
 }
 
-func (p *parser) parseSourceName() (name, pattern string) {
+func (p *parser) parseSourceName() (name, pattern string, quoted bool) {
+	// Backtick names are exact: their content is never glob-interpreted.
+	if p.at(lexer.BacktickIdent) {
+		raw := p.cur.Text
+		n := raw
+		if len(raw) >= 2 && raw[0] == '`' && raw[len(raw)-1] == '`' {
+			n = raw[1 : len(raw)-1]
+		}
+		p.advance()
+		return n, n, true
+	}
 	if n, ok := p.identLike(); ok {
 		nameEnd := p.cur.End
 		p.advance()
 		pattern, nameEnd, _ = p.readAdjacentRun(n, nameEnd)
-		return n, pattern
+		return n, pattern, false
 	}
-	return "", ""
+	return "", "", false
 }
 
 // runTokenOK reports whether the current token may extend a bare-word/glob
