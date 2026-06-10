@@ -93,7 +93,15 @@ func (p *parser) parseLet() ast.Let {
 
 	name := ""
 	nameSpan := p.curSpan()
-	if n, ok := p.identLike(); ok {
+	if p.at(lexer.BacktickIdent) {
+		p.diags = append(p.diags, Diag{
+			Code:       CodeStageError,
+			Message:    "CTE names are plain identifiers and cannot be backtick-quoted",
+			Span:       p.curSpan(),
+			Suggestion: "let $name = ...; from $name",
+		})
+		p.advance()
+	} else if n, ok := p.identLike(); ok {
 		name = n
 		nameSpan = p.curSpan()
 		p.advance()
@@ -241,20 +249,8 @@ func (p *parser) parseSourceAtom() ast.SourceAtom {
 	// $cte reference
 	if p.at(lexer.Dollar) {
 		p.advance() // consume $
-		if p.at(lexer.BacktickIdent) {
-			p.diags = append(p.diags, Diag{
-				Code:       CodeStageError,
-				Message:    "CTE names are plain identifiers and cannot be backtick-quoted",
-				Span:       p.curSpan(),
-				Suggestion: "let $name = ...; from $name",
-			})
-			p.advance()
-			return ast.SourceAtom{Kind: SourceAtomEmpty}
-		}
-		if n, ok := p.identLike(); ok {
-			end := p.cur.End
-			p.advance()
-			return ast.SourceAtom{Kind: ast.SourceCTE, Name: n, Pos: ast.Span{Start: start, End: end}}
+		if n, ok := p.parseCTEName(); ok {
+			return ast.SourceAtom{Kind: ast.SourceCTE, Name: n, Pos: ast.Span{Start: start, End: p.prev.End}}
 		}
 		return ast.SourceAtom{Kind: SourceAtomEmpty}
 	}
@@ -1302,11 +1298,7 @@ func (p *parser) parseSubPipeline() ast.SubPipeline {
 	// $cte reference
 	if p.at(lexer.Dollar) {
 		p.advance()
-		name := ""
-		if n, ok := p.identLike(); ok {
-			name = n
-			p.advance()
-		}
+		name, _ := p.parseCTEName()
 		return ast.SubPipeline{CTERef: name, Pos: ast.Span{Start: start, End: p.prev.End}}
 	}
 
@@ -2434,4 +2426,24 @@ func (p *parser) checkParseFormatArgs(payload *ast.ParsePayload) {
 			diag(fmt.Sprintf("parse %s takes no arguments", payload.Format), "parse "+payload.Format)
 		}
 	}
+}
+
+// parseCTEName reads the identifier after a consumed '$'. CTE names are
+// plain identifiers; backtick names are rejected with a diagnostic.
+func (p *parser) parseCTEName() (string, bool) {
+	if p.at(lexer.BacktickIdent) {
+		p.diags = append(p.diags, Diag{
+			Code:       CodeStageError,
+			Message:    "CTE names are plain identifiers and cannot be backtick-quoted",
+			Span:       p.curSpan(),
+			Suggestion: "let $name = ...; from $name",
+		})
+		p.advance()
+		return "", false
+	}
+	if n, ok := p.identLike(); ok {
+		p.advance()
+		return n, true
+	}
+	return "", false
 }
