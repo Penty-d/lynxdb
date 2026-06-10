@@ -66,6 +66,11 @@ type VM struct {
 	jsonCache jsonParseCache
 
 	predicateCtx *PredicateContext
+
+	// Warnings tracks RFC-002 runtime warning counters (incompatible
+	// comparisons, not-on-non-bool, etc.). Nil for SPL2 programs; set
+	// explicitly by the caller when running LynxFlow programs.
+	Warnings *WarningCounters
 }
 
 // PredicateContext carries per-row scan metadata used by predicate opcodes.
@@ -1355,6 +1360,273 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 		case OpLen:
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = lenValue(a)
+
+		// --- RFC-002 LynxFlow strict comparison opcodes ---
+
+		case OpEqStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			eq, isNull := strictEq(a, b, vm.Warnings)
+			if isNull {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(eq)
+			}
+
+		case OpNeqStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			eq, isNull := strictEq(a, b, vm.Warnings)
+			if isNull {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(!eq)
+			}
+
+		case OpLtStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			cmp, isNull := strictCompare(a, b, vm.Warnings)
+			if isNull {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(cmp < 0)
+			}
+
+		case OpLteStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			cmp, isNull := strictCompare(a, b, vm.Warnings)
+			if isNull {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(cmp <= 0)
+			}
+
+		case OpGtStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			cmp, isNull := strictCompare(a, b, vm.Warnings)
+			if isNull {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(cmp > 0)
+			}
+
+		case OpGteStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			cmp, isNull := strictCompare(a, b, vm.Warnings)
+			if isNull {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(cmp >= 0)
+			}
+
+		// --- RFC-002 3VL logic opcodes ---
+
+		case OpNot3VL:
+			a := vm.stack[vm.sp-1]
+			if a.IsNull() {
+				// not(null) = null
+			} else if a.Type() == event.FieldTypeBool {
+				vm.stack[vm.sp-1] = event.BoolValue(!a.AsBool())
+			} else {
+				// not on non-bool → null + warning
+				vm.stack[vm.sp-1] = event.NullValue()
+				if vm.Warnings != nil {
+					vm.Warnings.Increment(warnNotOnNonBool)
+				}
+			}
+
+		case OpJumpIfNull3VL:
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			target := int(operand)
+			ip += 2
+			a := vm.stack[vm.sp-1]
+			if a.IsNull() {
+				vm.sp-- // pop
+				ip = target
+			}
+			// else leave on stack (not popped) — the caller will use JumpIfFalse/JumpIfTrue next
+
+		case OpAnd3VLNull:
+			// Left was null; right is on stack.
+			// If right is false → result is false (null AND false = false)
+			// If right is true or null → result is null
+			right := vm.stack[vm.sp-1]
+			if right.Type() == event.FieldTypeBool && !right.AsBool() {
+				vm.stack[vm.sp-1] = event.BoolValue(false)
+			} else {
+				vm.stack[vm.sp-1] = event.NullValue()
+			}
+
+		case OpOr3VLNull:
+			// Left was null; right is on stack.
+			// If right is true → result is true (null OR true = true)
+			// If right is false or null → result is null
+			right := vm.stack[vm.sp-1]
+			if right.Type() == event.FieldTypeBool && right.AsBool() {
+				vm.stack[vm.sp-1] = event.BoolValue(true)
+			} else {
+				vm.stack[vm.sp-1] = event.NullValue()
+			}
+
+		// --- RFC-002 strict arithmetic opcodes ---
+
+		case OpAddStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = addStrict(a, b, vm.Warnings)
+
+		case OpSubStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = subStrict(a, b, vm.Warnings)
+
+		case OpMulStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = mulStrict(a, b, vm.Warnings)
+
+		case OpDivStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = divStrict(a, b, vm.Warnings)
+
+		case OpModStrict:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = modStrict(a, b, vm.Warnings)
+
+		// --- RFC-002 field/path opcodes ---
+
+		case OpLoadPath:
+			if vm.sp >= StackSize {
+				return event.NullValue(), ErrStackOverflow
+			}
+			constIdx, pathErr := readIndexSafe(ins, ip, len(prog.Constants), "constant")
+			if pathErr != nil {
+				return event.NullValue(), pathErr
+			}
+			ip += 2
+			path := valueToString(prog.Constants[constIdx])
+			vm.stack[vm.sp] = execLoadPath(fields, path)
+			vm.sp++
+
+		case OpFieldMissing:
+			if vm.sp >= StackSize {
+				return event.NullValue(), ErrStackOverflow
+			}
+			fieldIdx, fmErr := readIndexSafe(ins, ip, len(prog.FieldNames), "field")
+			if fmErr != nil {
+				return event.NullValue(), fmErr
+			}
+			ip += 2
+			name := prog.FieldNames[fieldIdx]
+			_, present := fields[name]
+			vm.stack[vm.sp] = event.BoolValue(!present)
+			vm.sp++
+
+		case OpNegStrict:
+			a := vm.stack[vm.sp-1]
+			vm.stack[vm.sp-1] = negStrict(a, vm.Warnings)
+
+		case OpInStrict:
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			count := int(operand)
+			ip += 2
+			val := vm.stack[vm.sp-count-1]
+			items := make([]event.Value, count)
+			copy(items, vm.stack[vm.sp-count:vm.sp])
+			vm.sp -= count
+			vm.stack[vm.sp-1] = inStrict(val, items, vm.Warnings)
+
+		// --- RFC-002 function opcodes ---
+
+		case OpHasToken:
+			b := vm.stack[vm.sp-1] // term
+			a := vm.stack[vm.sp-2] // field value
+			vm.sp--
+			if a.IsNull() || b.IsNull() {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(hasToken(valueToString(a), valueToString(b)))
+			}
+
+		case OpContainsCI:
+			b := vm.stack[vm.sp-1] // substr
+			a := vm.stack[vm.sp-2] // field value
+			vm.sp--
+			if a.IsNull() || b.IsNull() {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(
+					strings.Contains(strings.ToLower(valueToString(a)), strings.ToLower(valueToString(b))),
+				)
+			}
+
+		case OpExtract:
+			regIdx, reErr := readIndexSafe(ins, ip, len(vm.regexCache), "regex")
+			if reErr != nil {
+				return event.NullValue(), reErr
+			}
+			ip += 2
+			a := vm.stack[vm.sp-1]
+			if a.IsNull() {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = extractFirst(vm.regexCache[regIdx], valueToString(a))
+			}
+
+		case OpExtractAll:
+			regIdx, reErr := readIndexSafe(ins, ip, len(vm.regexCache), "regex")
+			if reErr != nil {
+				return event.NullValue(), reErr
+			}
+			ip += 2
+			a := vm.stack[vm.sp-1]
+			if a.IsNull() {
+				vm.stack[vm.sp-1] = event.NullValue()
+			} else {
+				vm.stack[vm.sp-1] = extractAllMatches(vm.regexCache[regIdx], valueToString(a))
+			}
+
+		case OpSubstr0Based:
+			length := vm.stack[vm.sp-1]
+			start := vm.stack[vm.sp-2]
+			str := vm.stack[vm.sp-3]
+			vm.sp -= 2
+			vm.stack[vm.sp-1] = substr0Based(str, start, length)
+
+		case OpStrictCastFail:
+			constIdx, scErr := readIndexSafe(ins, ip, len(prog.Constants), "constant")
+			if scErr != nil {
+				return event.NullValue(), scErr
+			}
+			funcName := valueToString(prog.Constants[constIdx])
+			return event.NullValue(), &ErrStrictCast{
+				Func:  funcName,
+				Value: "<null>",
+				Type:  "null",
+			}
 
 		case OpReturn:
 			if vm.sp > 0 {

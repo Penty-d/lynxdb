@@ -158,6 +158,45 @@ const (
 	OpLen           Opcode = 0xE5 // pop value; string → rune count, array → element count; else null
 	OpConstDuration Opcode = 0xE6 // 2-byte operand: constant-pool index; pushes duration value
 
+	// RFC-002 LynxFlow strict-comparison opcodes.
+	// Same-type: typed comparison. int vs float: cross-promote (both are "number").
+	// Null/missing operand → null. Incompatible types → null + warning counter.
+	OpEqStrict  Opcode = 0xE7 // pop 2, push bool/null; strict == (CS strings, no coercion)
+	OpNeqStrict Opcode = 0xE8 // pop 2, push bool/null; strict !=
+	OpLtStrict  Opcode = 0xE9 // pop 2, push bool/null; strict <
+	OpLteStrict Opcode = 0xEA // pop 2, push bool/null; strict <=
+	OpGtStrict  Opcode = 0xEB // pop 2, push bool/null; strict >
+	OpGteStrict Opcode = 0xEC // pop 2, push bool/null; strict >=
+
+	// RFC-002 LynxFlow 3VL logic opcodes.
+	OpNot3VL        Opcode = 0xED // pop 1, push bool/null; not(true)=false, not(false)=true, not(null)=null, not(non-bool)=null+warn
+	OpJumpIfNull3VL Opcode = 0xEE // 2-byte operand: target; if TOS is null, pop and jump; else leave on stack
+	OpAnd3VLNull    Opcode = 0xEF // pop 1 (right); left was null: if right=false→false, else→null
+	OpOr3VLNull     Opcode = 0xF0 // pop 1 (right); left was null: if right=true→true, else→null
+
+	// RFC-002 LynxFlow strict arithmetic opcodes.
+	// These follow §5.4 exactly: int+int→int, int+float→float, string+string→concat
+	// (+ only), division by zero→null, no string-to-number promotion.
+	// Timestamp/duration algebra same as existing opcodes.
+	OpAddStrict Opcode = 0xF1 // string+string=concat, int+int=int, int+float=float, ts/dur algebra; string+num→null+warn
+	OpSubStrict Opcode = 0xF2 // no string sub; int-int=int, int-float=float, ts/dur algebra
+	OpMulStrict Opcode = 0xF3 // int*int=int, int*float=float, dur*num, no string
+	OpDivStrict Opcode = 0xF4 // int/int=TRUNCATING int, int/float=float, dur/dur=float, dur/num=dur, /0→null
+	OpModStrict Opcode = 0xF5 // int%int only; non-int→null+warn; %0→null
+
+	// RFC-002 LynxFlow field-path and search opcodes.
+	OpLoadPath     Opcode = 0xF6 // 2-byte operand: constant-pool index of dotted path string; flat column first, then object walk, no _raw fallback
+	OpFieldMissing Opcode = 0xF7 // 2-byte operand: field name index; pushes true if field absent from row
+	OpNegStrict    Opcode = 0xF8 // pop 1; negate int/float/duration; non-numeric→null+warn
+	OpInStrict     Opcode = 0xF9 // 2-byte operand: count N; pop N items + 1 value; strict equality check; null-aware
+
+	// RFC-002 LynxFlow function opcodes.
+	OpHasToken     Opcode = 0xFA // pop 2 (field, term); case-insensitive token match per §6.1
+	OpContainsCI   Opcode = 0xFB // pop 2 (field, substr); case-insensitive substring
+	OpExtract      Opcode = 0xFC // 2-byte operand: regex pool index; pop string, push first capture group or null
+	OpExtractAll   Opcode = 0xFD // 2-byte operand: regex pool index; pop string, push array of all matches
+	OpSubstr0Based Opcode = 0xFE // pop 3 (str, start, len); 0-based start per RFC-002
+
 	// JSON Functions.
 	OpJsonExtract  Opcode = 0xD0 // pop path, pop field, push extracted value
 	OpJsonValid    Opcode = 0xD1 // pop field, push bool
@@ -321,6 +360,40 @@ var definitions = map[Opcode]*Definition{
 	OpMember:        {"OpMember", []int{2}},
 	OpLen:           {"OpLen", nil},
 	OpConstDuration: {"OpConstDuration", []int{2}},
+
+	// RFC-002 strict comparison
+	OpEqStrict:  {"OpEqStrict", nil},
+	OpNeqStrict: {"OpNeqStrict", nil},
+	OpLtStrict:  {"OpLtStrict", nil},
+	OpLteStrict: {"OpLteStrict", nil},
+	OpGtStrict:  {"OpGtStrict", nil},
+	OpGteStrict: {"OpGteStrict", nil},
+
+	// RFC-002 3VL logic
+	OpNot3VL:        {"OpNot3VL", nil},
+	OpJumpIfNull3VL: {"OpJumpIfNull3VL", []int{2}},
+	OpAnd3VLNull:    {"OpAnd3VLNull", nil},
+	OpOr3VLNull:     {"OpOr3VLNull", nil},
+
+	// RFC-002 strict arithmetic
+	OpAddStrict: {"OpAddStrict", nil},
+	OpSubStrict: {"OpSubStrict", nil},
+	OpMulStrict: {"OpMulStrict", nil},
+	OpDivStrict: {"OpDivStrict", nil},
+	OpModStrict: {"OpModStrict", nil},
+
+	// RFC-002 field/search
+	OpLoadPath:     {"OpLoadPath", []int{2}},
+	OpFieldMissing: {"OpFieldMissing", []int{2}},
+	OpNegStrict:    {"OpNegStrict", nil},
+	OpInStrict:     {"OpInStrict", []int{2}},
+
+	// RFC-002 function opcodes
+	OpHasToken:     {"OpHasToken", nil},
+	OpContainsCI:   {"OpContainsCI", nil},
+	OpExtract:      {"OpExtract", []int{2}},
+	OpExtractAll:   {"OpExtractAll", []int{2}},
+	OpSubstr0Based: {"OpSubstr0Based", nil},
 
 	OpJsonExtract:  {"OpJsonExtract", nil},
 	OpJsonValid:    {"OpJsonValid", nil},
