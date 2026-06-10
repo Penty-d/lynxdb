@@ -259,17 +259,6 @@ func classifySkip(e corpusEntry) *skipReason {
 
 	// Sugar stages that desugar in LynxFlow but the SPL2 side may not have
 	// equivalents in the ephemeral engine.
-	for _, f := range e.Features {
-		switch f {
-		case "latency":
-			return &skipReason{Reason: "latency sugar desugar not yet implemented in LynxFlow lowering"}
-		case "rate":
-			return &skipReason{Reason: "rate sugar desugar not yet implemented in LynxFlow lowering"}
-		case "percentiles-sugar":
-			return &skipReason{Reason: "percentiles sugar desugar not yet implemented in LynxFlow lowering"}
-		}
-	}
-
 	return nil
 }
 
