@@ -546,6 +546,7 @@ func (p *parser) parseSearchPrimary() ast.SearchExpr {
 	if name, ok := p.identLike(); ok {
 		start := p.cur.Start
 		nameEnd := p.cur.End
+		wasBacktick := p.at(lexer.BacktickIdent)
 		p.advance()
 
 		// Check for comparison operators: =, !=, <, <=, >, >=
@@ -596,6 +597,18 @@ func (p *parser) parseSearchPrimary() ast.SearchExpr {
 				p.expect(lexer.RParen)
 				return &ast.SearchIn{Key: name, Values: vals, Pos: ast.Span{Start: start, End: end}}
 			}
+		}
+
+		// A backtick identifier is a field reference; without a comparison
+		// it is not a valid search term (RFC-002 §3.1).
+		if wasBacktick {
+			p.diags = append(p.diags, Diag{
+				Code:       "E016",
+				Message:    fmt.Sprintf("backtick identifier `%s` is not a valid bare search term", name),
+				Span:       ast.Span{Start: start, End: nameEnd},
+				Suggestion: fmt.Sprintf("compare it (`%s` == ...) or search the text with a quoted string", name),
+			})
+			return &ast.SearchBareWord{Word: name, Pos: ast.Span{Start: start, End: nameEnd}}
 		}
 
 		// Bare word — check for adjacent glob/dash run (span-adjacent)
