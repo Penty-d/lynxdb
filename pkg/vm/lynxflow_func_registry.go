@@ -915,19 +915,19 @@ func lfEmitNow(c *lfCompiler, _ *lfast.Call) error {
 }
 
 func lfEmitBin(c *lfCompiler, call *lfast.Call) error {
-	// bin(ts, dur) → snap timestamp to duration boundary
-	// bin(t, 5m) = timestamp((t.unix_nanos / dur) * dur)
-	// For now, compile both args. The actual bin logic needs a dedicated opcode
-	// or runtime function. Use the existing approach.
+	// bin(ts, dur) → snap timestamp to duration boundary.
+	// Coercion rule (RFC-002 §10):
+	//   - timestamp input → snap directly
+	//   - string input parseable as RFC3339 → parse, snap, return timestamp
+	//   - int input → treat as Unix nanoseconds, snap, return timestamp
+	//   - anything else → null
 	if err := c.compile(call.Args[0]); err != nil {
 		return err
 	}
 	if err := c.compile(call.Args[1]); err != nil {
 		return err
 	}
-	// Emit a simple sequence: we don't have a dedicated bin opcode yet.
-	// For this PR, just pass through (the physical builder will handle this).
-	// TODO: add OpBin opcode
+	c.prog.EmitOp(OpBin)
 	return nil
 }
 

@@ -185,6 +185,22 @@ func ParseCommandForFormat(format DetectedFormat) string {
 	}
 }
 
+// LynxFlowParseCommandForFormat returns the LynxFlow-syntax parse command
+// for a detected log format. LynxFlow uses bare `parse combined` (no
+// parenthesized _raw argument), unlike SPL2's `parse combined(_raw)`.
+func LynxFlowParseCommandForFormat(format DetectedFormat) string {
+	switch format {
+	case FormatCombined:
+		return "parse combined"
+	case FormatSyslog:
+		return "parse syslog"
+	case FormatDocker:
+		return "parse docker"
+	default:
+		return ""
+	}
+}
+
 // DetectFormatWithRatio analyzes lines and returns the detected format plus
 // the fraction of lines matching that format (0.0 to 1.0).
 func DetectFormatWithRatio(sampleLines []string) (DetectedFormat, float64) {

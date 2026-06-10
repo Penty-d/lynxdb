@@ -1062,6 +1062,19 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			vm.sp--
 			vm.stack[vm.sp-1] = strptimeValue(ts, format)
 
+		case OpBin:
+			// bin(ts, dur): pop duration (TOS), pop timestamp; snap ts to dur boundary.
+			// Coercion rule (RFC-002 §10):
+			//   - FieldTypeTimestamp → snap directly
+			//   - FieldTypeString parseable as RFC3339 → parse, snap, return timestamp
+			//   - FieldTypeInt → treat as Unix nanoseconds, snap, return timestamp
+			//   - FieldTypeDuration → treat as nanoseconds (e.g. from another bin), snap
+			//   - anything else → null
+			durVal := vm.stack[vm.sp-1]
+			tsVal := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = binTimestampValue(tsVal, durVal)
+
 		case OpMD5:
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = hashValue(a, "md5")
@@ -2731,6 +2744,77 @@ func strptimeValue(ts, format event.Value) event.Value {
 	}
 
 	return event.IntValue(t.Unix())
+}
+
+// binTimestampValue implements bin(ts, dur): snap a timestamp to a duration boundary.
+// Coercion rules (RFC-002 §10):
+//   - timestamp input → snap directly
+//   - string input parseable as RFC3339 → parse, snap, return timestamp
+//   - int input → treat as Unix nanoseconds, snap, return timestamp
+//   - duration input → treat as nanosecond count, snap, return timestamp
+//   - anything else → null
+func binTimestampValue(tsVal, durVal event.Value) event.Value {
+	if tsVal.IsNull() || durVal.IsNull() {
+		return event.NullValue()
+	}
+
+	// Extract the span duration in nanoseconds.
+	var spanNanos int64
+	switch durVal.Type() {
+	case event.FieldTypeDuration:
+		d, _ := durVal.TryAsDuration()
+		spanNanos = d.Nanoseconds()
+	case event.FieldTypeInt:
+		spanNanos = durVal.AsInt()
+	default:
+		return event.NullValue()
+	}
+	if spanNanos <= 0 {
+		return event.NullValue()
+	}
+
+	// Extract the timestamp to snap.
+	var tsNanos int64
+	switch tsVal.Type() {
+	case event.FieldTypeTimestamp:
+		ts, _ := tsVal.TryAsTimestamp()
+		tsNanos = ts.UnixNano()
+	case event.FieldTypeInt:
+		tsNanos = tsVal.AsInt()
+	case event.FieldTypeString:
+		s, _ := tsVal.TryAsString()
+		parsed, ok := tryParseTimestampVM(s)
+		if !ok {
+			return event.NullValue()
+		}
+		tsNanos = parsed.UnixNano()
+	case event.FieldTypeDuration:
+		d, _ := tsVal.TryAsDuration()
+		tsNanos = d.Nanoseconds()
+	default:
+		return event.NullValue()
+	}
+
+	bucketNano := (tsNanos / spanNanos) * spanNanos
+	return event.TimestampValue(time.Unix(0, bucketNano).UTC())
+}
+
+// tryParseTimestampVM tries to parse s as a timestamp using common formats.
+func tryParseTimestampVM(s string) (time.Time, bool) {
+	for _, fmt := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.000-0700",
+		"2006-01-02T15:04:05-0700",
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02 15:04:05",
+	} {
+		t, err := time.Parse(fmt, s)
+		if err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func hashValue(v event.Value, algorithm string) event.Value {

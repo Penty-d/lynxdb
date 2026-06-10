@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -86,11 +87,40 @@ func (p *KeyValueParser) Process(events []*event.Event) ([]*event.Event, error) 
 			if setBuiltinTagField(e, k, v) {
 				continue
 			}
-			e.SetField(k, event.StringValue(v))
+			e.SetField(k, kvTypedValue(v))
 		}
 	}
 
 	return events, nil
+}
+
+// kvTypedValue attempts to interpret a KV string value as a typed event.Value.
+// Integer-looking strings become IntValue, float-looking strings become
+// FloatValue, boolean "true"/"false" become BoolValue, everything else stays
+// StringValue. This ensures that downstream strict-typed comparisons (e.g.
+// LynxFlow status >= 500) work without explicit casts, matching the behaviour
+// of JSON-parsed events.
+func kvTypedValue(s string) event.Value {
+	// Fast path: empty string stays string.
+	if s == "" {
+		return event.StringValue(s)
+	}
+	// Try integer first (most common for log fields like status, bytes, etc.).
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return event.IntValue(n)
+	}
+	// Try float.
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return event.FloatValue(f)
+	}
+	// Try bool.
+	if s == "true" {
+		return event.BoolValue(true)
+	}
+	if s == "false" {
+		return event.BoolValue(false)
+	}
+	return event.StringValue(s)
 }
 
 // setBuiltinTagField writes v to the event's built-in tag slot (host, source,

@@ -460,17 +460,20 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 	start := time.Now()
 	totalEvents := 0
 
+	// Language detection FIRST: must happen before auto-detect so the injected
+	// parse command uses the correct syntax for the target language. CLI file
+	// mode uses DetectStrict (spl2 default for ambiguous queries) to preserve
+	// backward compatibility with golden tests.
+	lang := langdetect.DetectStrict(query, language)
+
 	// Auto-detect format from first file unless --raw is set.
+	// Use language-appropriate parse command syntax.
 	if !rawMode {
-		detectedQuery, detectErr := autoDetectFromFirstFile(query, matches[0])
+		detectedQuery, detectErr := autoDetectFromFirstFileForLang(query, matches[0], lang.Language)
 		if detectErr == nil && detectedQuery != query {
 			query = detectedQuery
 		}
 	}
-
-	// Language detection: CLI file mode uses DetectStrict (spl2 default for
-	// ambiguous queries) to preserve backward compatibility with golden tests.
-	lang := langdetect.DetectStrict(query, language)
 
 	if lang.Language == langdetect.LangLynxFlow {
 		// LynxFlow file-mode execution path.
@@ -583,19 +586,19 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 		src = "stdin"
 	}
 
+	// Language detection FIRST: must happen before auto-detect so the injected
+	// parse command uses the correct syntax for the target language.
+	lang := langdetect.DetectStrict(query, language)
+
 	// Auto-detect format unless --raw is set.
 	var reader io.Reader = os.Stdin
 	if !rawMode {
-		detectedQuery, combinedReader, detectErr := autoDetectAndRewrite(query, os.Stdin)
+		detectedQuery, combinedReader, detectErr := autoDetectAndRewriteForLang(query, os.Stdin, lang.Language)
 		if detectErr == nil && combinedReader != nil {
 			query = detectedQuery
 			reader = combinedReader
 		}
 	}
-
-	// Language detection: CLI stdin mode uses DetectStrict (spl2 default for
-	// ambiguous queries) to preserve backward compatibility with golden tests.
-	lang := langdetect.DetectStrict(query, language)
 
 	if lang.Language == langdetect.LangLynxFlow {
 		// LynxFlow stdin-mode execution path.
@@ -1253,12 +1256,22 @@ func suggestGlimpse(query string) string {
 	return "Try: " + query + " | glimpse — to see available fields, types, and values"
 }
 
+// autoDetectAndRewriteForLang is like autoDetectAndRewrite but emits the
+// language-appropriate parse command syntax.
+func autoDetectAndRewriteForLang(query string, r io.Reader, lang langdetect.Language) (string, io.Reader, error) {
+	return autoDetectAndRewriteImpl(query, r, lang)
+}
+
 // autoDetectAndRewrite peeks at the first lines of a reader, detects the log
 // format, and rewrites the query to include a parse command if needed.
 // Returns the rewritten query and a new reader that includes the peeked data.
 // If detection fails or the query already has explicit parse commands, returns
 // the original query and a nil reader (caller should use original stdin).
 func autoDetectAndRewrite(query string, r io.Reader) (string, io.Reader, error) {
+	return autoDetectAndRewriteImpl(query, r, langdetect.LangSPL2)
+}
+
+func autoDetectAndRewriteImpl(query string, r io.Reader, lang langdetect.Language) (string, io.Reader, error) {
 	// If the query already contains a parse command, don't auto-detect.
 	lower := strings.ToLower(query)
 	if strings.Contains(lower, "parse ") || strings.Contains(lower, "unpack_") ||
@@ -1291,7 +1304,12 @@ func autoDetectAndRewrite(query string, r io.Reader) (string, io.Reader, error) 
 
 	// Detect format.
 	format := ingestpipeline.DetectFormat(lines)
-	parseCmd := ingestpipeline.ParseCommandForFormat(format)
+	var parseCmd string
+	if lang == langdetect.LangLynxFlow {
+		parseCmd = ingestpipeline.LynxFlowParseCommandForFormat(format)
+	} else {
+		parseCmd = ingestpipeline.ParseCommandForFormat(format)
+	}
 	if parseCmd == "" {
 		// Plain text — no auto-parse needed.
 		combined := io.MultiReader(bytes.NewReader(peekBuf.Bytes()), bufReader)
@@ -1337,7 +1355,15 @@ func prependParseToQuery(query, parseCmd string) string {
 
 // autoDetectFromFirstFile peeks at the first file's content and detects format.
 // Returns the rewritten query if auto-parse is needed.
+// Kept for backward compatibility; new callers should use autoDetectFromFirstFileForLang.
 func autoDetectFromFirstFile(query, filePath string) (string, error) {
+	return autoDetectFromFirstFileForLang(query, filePath, langdetect.LangSPL2)
+}
+
+// autoDetectFromFirstFileForLang is like autoDetectFromFirstFile but emits the
+// language-appropriate parse command syntax. LynxFlow uses `parse combined`
+// while SPL2 uses `parse combined(_raw)`.
+func autoDetectFromFirstFileForLang(query, filePath string, lang langdetect.Language) (string, error) {
 	// If the query already contains a parse command, don't auto-detect.
 	lower := strings.ToLower(query)
 	if strings.Contains(lower, "parse ") || strings.Contains(lower, "unpack_") ||
@@ -1365,7 +1391,12 @@ func autoDetectFromFirstFile(query, filePath string) (string, error) {
 	}
 
 	format, ratio := ingestpipeline.DetectFormatWithRatio(lines)
-	parseCmd := ingestpipeline.ParseCommandForFormat(format)
+	var parseCmd string
+	if lang == langdetect.LangLynxFlow {
+		parseCmd = ingestpipeline.LynxFlowParseCommandForFormat(format)
+	} else {
+		parseCmd = ingestpipeline.ParseCommandForFormat(format)
+	}
 	if parseCmd == "" {
 		return query, nil
 	}

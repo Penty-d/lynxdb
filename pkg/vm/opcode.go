@@ -215,6 +215,7 @@ const (
 	OpURLParse        Opcode = 0x27 // pop string, push object {scheme, host, port, path, query, fragment}
 	OpIPParseObj      Opcode = 0x28 // pop string, push object {version, private, loopback}
 	OpFromJSONNative  Opcode = 0x29 // pop string, push native Value (recursive arrays/objects)
+	OpBin             Opcode = 0x2A // pop 2 (ts, dur); snap ts to dur boundary; coercion: string→parse RFC3339, int→unix-nanos; push timestamp
 
 	// JSON Functions.
 	OpJsonExtract  Opcode = 0xD0 // pop path, pop field, push extracted value
@@ -443,6 +444,7 @@ var definitions = map[Opcode]*Definition{
 	OpURLParse:        {"OpURLParse", nil},
 	OpIPParseObj:      {"OpIPParseObj", nil},
 	OpFromJSONNative:  {"OpFromJSONNative", nil},
+	OpBin:             {"OpBin", nil},
 
 	OpReturn: {"OpReturn", nil},
 }
