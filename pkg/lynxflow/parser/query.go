@@ -305,6 +305,10 @@ func (p *parser) runTokenOK() bool {
 	switch p.cur.Kind {
 	case lexer.Star, lexer.Minus, lexer.Question, lexer.Int, lexer.Float, lexer.Duration:
 		return true
+	case lexer.BacktickIdent:
+		// Backtick idents carry their quotes and can never be glued into a
+		// bare run; a backtick token after a bare word is a separate name.
+		return false
 	}
 	_, ok := p.identLike()
 	return ok
