@@ -870,7 +870,11 @@ func formatFieldPatternsPayload(b *strings.Builder, p *ast.FieldPatternsPayload)
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(pat.Name)
+		if pat.Glob {
+			b.WriteString(pat.Name)
+		} else {
+			writeFieldName(b, pat.Name)
+		}
 	}
 }
 
