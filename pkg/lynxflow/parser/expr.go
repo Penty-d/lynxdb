@@ -574,8 +574,45 @@ func (p *parser) parseArgList() []Expr {
 }
 
 // parseArgExpr parses a single argument expression. If the current position
-// is an identifier followed by ->, it parses a lambda.
+// is an identifier followed by ->, it parses a lambda. If it starts with
+// 'where', it parses a conditional aggregate argument (RFC-002 §4.2: arg ::= expr | 'where' expr).
 func (p *parser) parseArgExpr() ast.Expr {
+	// Conditional aggregate: where <predicate>
+	// count(where p) or sum(x, where p)
+	if p.at(lexer.KwWhere) {
+		// Produce a special marker node: an Ident with Name="where" followed
+		// by the predicate as the next arg. We use a synthetic approach:
+		// emit Ident{where}, then the caller will handle it.
+		// Actually, to keep the AST clean, we wrap the where keyword and
+		// predicate into a single WhereArg node. But since we want minimal
+		// AST changes, let's use an Ident("where") as the arg, and the
+		// predicate as the next comma-separated arg.
+		// BUT: the grammar says `where expr` is a single arg, not two.
+		// count(where status >= 500) — 'where' and 'status >= 500' form ONE arg.
+		//
+		// Solution: parse 'where' as a marker, then parse the predicate, and
+		// wrap them into a Call-like structure. We'll use a synthetic approach:
+		// return an Ident("where") and then the aggregate parser will look for it.
+		// Actually, let's just produce an Ident("where") and then return the
+		// predicate. The arg list will have two entries: Ident{where}, expr.
+		// The aggregate parser in parseAggExpr/extractWhereFromCall will handle it.
+		span := p.curSpan()
+		p.advance() // consume 'where'
+		pred := p.parseExpr()
+		// Return a synthetic node that wraps both. We'll use a convention:
+		// return the Ident{where} as the first arg, and then... no, parseArgExpr
+		// returns a single expression.
+		// Best approach: return the predicate, but tag it via a wrapper that
+		// the aggregate parser can detect. Since we can't add new Expr types
+		// without AST changes, use a simple approach: return a Call node
+		// with callee="where" and the predicate as arg. This is NOT a real
+		// function call — the aggregate parser will extract it.
+		return &ast.Call{
+			Callee: "where",
+			Args:   []ast.Expr{pred},
+			Pos:    ast.Span{Start: span.Start, End: pred.ExprSpan().End},
+		}
+	}
 	// Lambda lookahead: ident -> expr
 	if name, ok := p.identLike(); ok && p.peekIsArrow() {
 		return p.parseLambda(name)
