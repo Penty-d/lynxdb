@@ -1,12 +1,7 @@
 package logical
 
 import (
-	"bufio"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,50 +10,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/parser"
 )
 
-var update = flag.Bool("update", false, "update golden files")
-
-// ---------------------------------------------------------------------------
-// Corpus golden plan tests
-// ---------------------------------------------------------------------------
-
-type corpusEntry struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Source   string   `json:"source"`
-	SPL2     string   `json:"spl2"`
-	LynxFlow string   `json:"lynxflow"`
-	Features []string `json:"features"`
-	Notes    string   `json:"notes"`
-}
-
-func loadCorpus(t *testing.T) []corpusEntry {
-	t.Helper()
-	f, err := os.Open(filepath.Join("..", "lynxflow", "testdata", "corpus", "corpus.jsonl"))
-	if err != nil {
-		t.Fatalf("open corpus: %v", err)
-	}
-	defer f.Close()
-
-	var entries []corpusEntry
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
-	for sc.Scan() {
-		text := strings.TrimSpace(sc.Text())
-		if text == "" {
-			continue
-		}
-		var e corpusEntry
-		if err := json.Unmarshal([]byte(text), &e); err != nil {
-			t.Fatalf("invalid JSON: %v", err)
-		}
-		entries = append(entries, e)
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatalf("scan corpus: %v", err)
-	}
-	return entries
-}
-
+// parseDesugarLower parses a full query, desugars, and lowers it.
 func parseDesugarLower(t *testing.T, query string) (*Plan, []Diag) {
 	t.Helper()
 	q, pDiags := parser.Parse(query)
@@ -77,57 +29,11 @@ func formatDiags(ds []parser.Diag) string {
 	return strings.Join(parts, "; ")
 }
 
-const goldenDir = "testdata/golden/plans"
-
-func TestCorpus_GoldenPlans(t *testing.T) {
-	entries := loadCorpus(t)
-	if len(entries) < 50 {
-		t.Fatalf("corpus has %d entries, want at least 50", len(entries))
-	}
-
-	if *update {
-		if err := os.MkdirAll(goldenDir, 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-	}
-
-	for _, e := range entries {
-		t.Run(e.ID, func(t *testing.T) {
-			plan, diags := parseDesugarLower(t, e.LynxFlow)
-
-			// Assert zero error-severity diags.
-			var errors []string
-			for _, d := range diags {
-				if d.Severity == parser.SeverityError {
-					errors = append(errors, fmt.Sprintf("%s: %s", d.Code, d.Message))
-				}
-			}
-			if len(errors) > 0 {
-				t.Errorf("error diags for %q:\n  %s\n  query: %s",
-					e.ID, strings.Join(errors, "\n  "), e.LynxFlow)
-			}
-
-			got := plan.Dump()
-			goldenFile := filepath.Join(goldenDir, e.ID+".txt")
-
-			if *update {
-				if err := os.WriteFile(goldenFile, []byte(got), 0o644); err != nil {
-					t.Fatalf("write golden: %v", err)
-				}
-				return
-			}
-
-			want, err := os.ReadFile(goldenFile)
-			if err != nil {
-				t.Fatalf("read golden %s: %v\n  (run with -update to generate)", goldenFile, err)
-			}
-			if got != string(want) {
-				t.Errorf("plan mismatch for %s\n--- want ---\n%s--- got ---\n%s",
-					e.ID, string(want), got)
-			}
-		})
-	}
-}
+// Corpus golden plan tests have been moved to pkg/logical/opt/opt_test.go
+// (TestCorpus_OptimizedGoldenPlans) so that golden plans show the optimized
+// plan (expression simplification + plan-level rules). The import cycle
+// (logical -> opt -> logical) prevents importing opt from this package's
+// internal tests.
 
 // ---------------------------------------------------------------------------
 // Fusion tests

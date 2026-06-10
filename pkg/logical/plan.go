@@ -42,6 +42,11 @@ func dumpNode(b *strings.Builder, n Node, depth int) {
 	b.WriteString(n.String())
 	b.WriteByte('\n')
 
+	// For Scan, render non-empty Pushdown fields as indented annotations.
+	if s, ok := n.(*Scan); ok {
+		dumpPushdown(b, &s.Pushdown, depth+1)
+	}
+
 	// For Join, print right sub-plan under a "Right:" label.
 	if j, ok := n.(*Join); ok {
 		// Print left child (from Children).
@@ -57,6 +62,26 @@ func dumpNode(b *strings.Builder, n Node, depth int) {
 	// For Union, print all inputs.
 	for _, c := range n.Children() {
 		dumpNode(b, c, depth+1)
+	}
+}
+
+// dumpPushdown renders non-empty Pushdown fields as indented annotations.
+func dumpPushdown(b *strings.Builder, pd *Pushdown, depth int) {
+	if pd.TimeBounds != nil {
+		indent(b, depth)
+		fmt.Fprintf(b, "pushdown.time_bounds: %s\n", timeBoundsString(pd.TimeBounds))
+	}
+	for _, fp := range pd.FieldPredicates {
+		indent(b, depth)
+		fmt.Fprintf(b, "pushdown.field_predicate: %s\n", fp.String())
+	}
+	for _, bt := range pd.BloomTerms {
+		indent(b, depth)
+		fmt.Fprintf(b, "pushdown.bloom_term: %q\n", bt)
+	}
+	for _, rt := range pd.RawTerms {
+		indent(b, depth)
+		fmt.Fprintf(b, "pushdown.raw_term: %q\n", rt)
 	}
 }
 

@@ -1,6 +1,11 @@
 package opt
 
 import (
+	"bufio"
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +15,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/format"
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/parser"
 )
+
+var update = flag.Bool("update", false, "update golden files")
 
 // ---------------------------------------------------------------------------
 // Helper: parse expression, optimize, format
@@ -28,6 +35,8 @@ func optimizeExpr(t *testing.T, input string) string {
 	t.Helper()
 	e := parseExpr(t, input)
 	// Wrap in a Filter node so Optimize can visit it.
+	// No input child — plan rules (filter-elim, filter-false-to-empty)
+	// require a non-nil input and will skip this synthetic wrapper.
 	plan := &logical.Plan{
 		Root: &logical.Filter{Expr: e},
 	}
@@ -382,14 +391,14 @@ func TestPlanLevel(t *testing.T) {
 		contains string // substring expected in Dump output
 	}{
 		{
-			name:     "filter_true_stays",
+			name:     "filter_true_eliminated",
 			query:    "from main | where 1 == 1",
-			contains: "Filter(true)", // expr simplifies to true; filter-true elim is batch 2
+			contains: "Scan(main)", // expr simplifies to true; filter-elim removes it
 		},
 		{
-			name:     "filter_false",
+			name:     "filter_false_empty",
 			query:    "from main | where 1 == 2",
-			contains: "Filter(false)",
+			contains: "Empty()", // expr simplifies to false; filter-false-to-empty
 		},
 		{
 			name:     "extend_folded",
@@ -566,5 +575,93 @@ func TestWalkExprsSort(t *testing.T) {
 	dump := optimized.Dump()
 	if !strings.Contains(dump, "Sort(+2)") {
 		t.Errorf("expected folded sort key, got:\n%s", dump)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Corpus golden plan tests (optimized plans)
+// ---------------------------------------------------------------------------
+
+type corpusEntry struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Source   string   `json:"source"`
+	SPL2     string   `json:"spl2"`
+	LynxFlow string   `json:"lynxflow"`
+	Features []string `json:"features"`
+	Notes    string   `json:"notes"`
+}
+
+func loadCorpus(t *testing.T) []corpusEntry {
+	t.Helper()
+	f, err := os.Open(filepath.Join("..", "..", "lynxflow", "testdata", "corpus", "corpus.jsonl"))
+	if err != nil {
+		t.Fatalf("open corpus: %v", err)
+	}
+	defer f.Close()
+
+	var entries []corpusEntry
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		text := strings.TrimSpace(sc.Text())
+		if text == "" {
+			continue
+		}
+		var e corpusEntry
+		if err := json.Unmarshal([]byte(text), &e); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		entries = append(entries, e)
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("scan corpus: %v", err)
+	}
+	return entries
+}
+
+const goldenDir = "../testdata/golden/plans"
+
+// TestCorpus_OptimizedGoldenPlans runs all 63 corpus entries through
+// parse -> desugar -> Lower -> Optimize -> Dump and compares against
+// golden plan files. Run with -update to regenerate.
+func TestCorpus_OptimizedGoldenPlans(t *testing.T) {
+	entries := loadCorpus(t)
+	if len(entries) < 50 {
+		t.Fatalf("corpus has %d entries, want at least 50", len(entries))
+	}
+
+	if *update {
+		if err := os.MkdirAll(goldenDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	for _, e := range entries {
+		t.Run(e.ID, func(t *testing.T) {
+			plan := parseDesugarLower(t, e.LynxFlow)
+
+			// Apply optimization — golden plans show the optimized plan.
+			plan, _ = Optimize(plan)
+
+			got := plan.Dump()
+			goldenFile := filepath.Join(goldenDir, e.ID+".txt")
+
+			if *update {
+				if err := os.WriteFile(goldenFile, []byte(got), 0o644); err != nil {
+					t.Fatalf("write golden: %v", err)
+				}
+				return
+			}
+
+			want, err := os.ReadFile(goldenFile)
+			if err != nil {
+				t.Fatalf("read golden %s: %v\n  (run with -update to generate)", goldenFile, err)
+			}
+			if got != string(want) {
+				t.Errorf("plan mismatch for %s\n--- want ---\n%s--- got ---\n%s",
+					e.ID, string(want), got)
+			}
+		})
 	}
 }

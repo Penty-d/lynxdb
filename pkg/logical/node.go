@@ -161,6 +161,25 @@ func timeBoundsString(tb *TimeBounds) string {
 }
 
 // ---------------------------------------------------------------------------
+// Empty
+// ---------------------------------------------------------------------------
+
+// Empty is a leaf node that produces zero rows. It is introduced by the
+// optimizer when a Filter is provably unsatisfiable (e.g. WHERE false or
+// WHERE null). Empty preserves the schema of the child it replaced so that
+// downstream operators see the expected column set.
+type Empty struct {
+	// OutputSchema is the schema of the original child pipeline that was
+	// replaced by this Empty. Populated by the optimizer rule.
+	OutputSchema []sema.Field
+}
+
+func (n *Empty) Children() []Node      { return nil }
+func (n *Empty) SetChildren(cs []Node) { mustEmpty(cs) }
+func (n *Empty) Schema() []sema.Field  { return n.OutputSchema }
+func (n *Empty) String() string        { return "Empty()" }
+
+// ---------------------------------------------------------------------------
 // Filter
 // ---------------------------------------------------------------------------
 

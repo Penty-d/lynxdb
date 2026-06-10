@@ -80,7 +80,7 @@ func walkExprs(n logical.Node, f func(ast.Expr) ast.Expr) bool {
 		}
 
 		// Scan, Project, Limit, Dedup, Describe, Join, Union, Explode,
-		// Materialize, Tee, Parse — no expression positions to walk.
+		// Materialize, Tee, Parse, Empty — no expression positions to walk.
 	}
 
 	return changed

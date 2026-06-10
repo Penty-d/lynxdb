@@ -1,3 +1,4 @@
 Aggregate(count())
   Filter((status == 500))
     Scan(main)
+      pushdown.field_predicate: (status == 500)

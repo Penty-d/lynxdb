@@ -24,32 +24,50 @@ type Applied struct {
 	Count int
 }
 
-// Optimize runs expression-simplification rules on every expression position
-// in p. It applies rules in a fixed-point loop (deterministic rule order,
-// maximum [maxPasses] passes) until no rule fires.
+// Optimize runs expression-simplification rules and plan-level rules on p.
+// It applies rules in a fixed-point loop (deterministic rule order, maximum
+// [maxPasses] passes) until no rule fires.
+//
+// Each pass runs in two phases:
+//  1. Expression rules: visit every expression position in every plan node,
+//     applying each rule bottom-up.
+//  2. Plan rules: visit the plan tree bottom-up, applying each rule to the
+//     node structure (filter elimination, merge, predicate pushdown, etc.).
 //
 // Optimize does NOT modify the input Plan's expression AST nodes. It replaces
-// the Expr pointers on plan nodes with new trees (rebuild semantics). However,
-// it does mutate the Plan struct's fields (e.g., Filter.Expr) to point to new
-// expression trees.
+// the Expr pointers on plan nodes with new trees (rebuild semantics). Plan
+// rules rebuild plan Node pointers (same rebuild semantics).
 //
 // The returned Applied slice contains one entry per rule that fired at least
-// once, in the order the rules are defined.
+// once, in the order the rules are defined (expression rules first, then plan
+// rules).
 func Optimize(p *logical.Plan) (*logical.Plan, []Applied) {
-	rules := defaultRules()
-	counts := make([]int, len(rules))
+	exprRules := defaultRules()
+	planRules := defaultPlanRules()
+	exprCounts := make([]int, len(exprRules))
+	planCounts := make([]int, len(planRules))
 
 	for pass := 0; pass < maxPasses; pass++ {
 		anyChanged := false
 
-		for ri, rule := range rules {
+		// Phase 1: Expression rules.
+		for ri, rule := range exprRules {
 			ruleApply := rule.Apply
-			// Walk every node, applying this rule to every expression position.
 			nodeChanged := walkPlanExprs(p, func(e ast.Expr) (ast.Expr, bool) {
 				return ruleApply(e)
 			})
 			if nodeChanged {
-				counts[ri]++
+				exprCounts[ri]++
+				anyChanged = true
+			}
+		}
+
+		// Phase 2: Plan rules (run after expression rules each pass so
+		// they see simplified expressions, e.g. const-folded true/false).
+		for ri, rule := range planRules {
+			planChanged := applyPlanRule(p, rule)
+			if planChanged {
+				planCounts[ri]++
 				anyChanged = true
 			}
 		}
@@ -60,13 +78,42 @@ func Optimize(p *logical.Plan) (*logical.Plan, []Applied) {
 	}
 
 	var applied []Applied
-	for i, c := range counts {
+	for i, c := range exprCounts {
 		if c > 0 {
-			applied = append(applied, Applied{Rule: rules[i].Name, Count: c})
+			applied = append(applied, Applied{Rule: exprRules[i].Name, Count: c})
+		}
+	}
+	for i, c := range planCounts {
+		if c > 0 {
+			applied = append(applied, Applied{Rule: planRules[i].Name, Count: c})
 		}
 	}
 
 	return p, applied
+}
+
+// applyPlanRule applies a single plan rule to the entire plan (main root +
+// CTE sub-plans). Returns true if any change was made.
+func applyPlanRule(p *logical.Plan, rule PlanRule) bool {
+	changed := false
+
+	// Walk CTE sub-plans.
+	for name, letPlan := range p.Lets {
+		newRoot, c := rule.Apply(letPlan.Root)
+		if c {
+			p.Lets[name] = &logical.Plan{Root: newRoot, Lets: letPlan.Lets}
+			changed = true
+		}
+	}
+
+	// Walk main plan.
+	newRoot, c := rule.Apply(p.Root)
+	if c {
+		p.Root = newRoot
+		changed = true
+	}
+
+	return changed
 }
 
 // walkPlanExprs applies the rewrite function to every expression position in
