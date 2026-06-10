@@ -1248,11 +1248,11 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 
 		case OpIsArray:
 			a := vm.stack[vm.sp-1]
-			vm.stack[vm.sp-1] = event.BoolValue(isJSONKind(a, '['))
+			vm.stack[vm.sp-1] = event.BoolValue(a.Type() == event.FieldTypeArray || isJSONKind(a, '['))
 
 		case OpIsObject:
 			a := vm.stack[vm.sp-1]
-			vm.stack[vm.sp-1] = event.BoolValue(isJSONKind(a, '{'))
+			vm.stack[vm.sp-1] = event.BoolValue(a.Type() == event.FieldTypeObject || isJSONKind(a, '{'))
 
 		case OpTypeOf:
 			a := vm.stack[vm.sp-1]
@@ -1280,6 +1280,81 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 					vm.stack[vm.sp-1] = event.BoolValue(vm.cidrNets[idx].Contains(parsedIP))
 				}
 			}
+
+		// RFC-002 typed-value opcodes (duration, array, object).
+
+		case OpConstDuration:
+			newIP, err := vm.execConst(prog, ins, ip)
+			if err != nil {
+				return event.NullValue(), err
+			}
+			ip = newIP
+
+		case OpArrayBuild:
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			count := int(operand)
+			ip += 2
+			if count > vm.sp {
+				return event.NullValue(), fmt.Errorf("%w: ArrayBuild count %d exceeds stack depth %d", ErrInvalidBytecode, count, vm.sp)
+			}
+			elems := make([]event.Value, count)
+			copy(elems, vm.stack[vm.sp-count:vm.sp])
+			vm.sp -= count
+			if vm.sp >= StackSize {
+				return event.NullValue(), ErrStackOverflow
+			}
+			vm.stack[vm.sp] = event.ArrayValue(elems)
+			vm.sp++
+
+		case OpObjectBuild:
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			entryCount := int(operand)
+			ip += 2
+			pairCount := entryCount * 2
+			if pairCount > vm.sp {
+				return event.NullValue(), fmt.Errorf("%w: ObjectBuild entry count %d requires %d stack slots, have %d", ErrInvalidBytecode, entryCount, pairCount, vm.sp)
+			}
+			obj := make(map[string]event.Value, entryCount)
+			base := vm.sp - pairCount
+			for i := 0; i < entryCount; i++ {
+				key := vm.stack[base+i*2]
+				val := vm.stack[base+i*2+1]
+				obj[valueToString(key)] = val
+			}
+			vm.sp -= pairCount
+			if vm.sp >= StackSize {
+				return event.NullValue(), ErrStackOverflow
+			}
+			vm.stack[vm.sp] = event.ObjectValue(obj)
+			vm.sp++
+
+		case OpIndex:
+			// Stack: [..., container, index] → [..., result]
+			idx := vm.stack[vm.sp-1]
+			container := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = indexValue(container, idx)
+
+		case OpMember:
+			// Operand: constant-pool index of the key string.
+			constIdx, memErr := readIndexSafe(ins, ip, len(prog.Constants), "constant")
+			if memErr != nil {
+				return event.NullValue(), memErr
+			}
+			ip += 2
+			obj := vm.stack[vm.sp-1]
+			key := valueToString(prog.Constants[constIdx])
+			vm.stack[vm.sp-1] = memberValue(obj, key)
+
+		case OpLen:
+			a := vm.stack[vm.sp-1]
+			vm.stack[vm.sp-1] = lenValue(a)
 
 		case OpReturn:
 			if vm.sp > 0 {
@@ -1381,6 +1456,12 @@ func IsTruthy(v event.Value) bool {
 		return v.AsString() != ""
 	case event.FieldTypeTimestamp:
 		return true
+	case event.FieldTypeDuration:
+		return v.AsDuration() != 0
+	case event.FieldTypeArray:
+		return len(v.AsArray()) > 0
+	case event.FieldTypeObject:
+		return len(v.AsObject()) > 0
 	}
 
 	return false
@@ -1429,11 +1510,21 @@ func addValues(a, b event.Value) event.Value {
 	if a.Type() == event.FieldTypeFloat && b.Type() == event.FieldTypeFloat {
 		return event.FloatValue(a.AsFloat() + b.AsFloat())
 	}
-	// Mixed: promote to float
+	// Mixed: promote to float (int/float/string/bool scalars)
 	af, aok := ValueToFloat(a)
 	bf, bok := ValueToFloat(b)
 	if aok && bok {
 		return event.FloatValue(af + bf)
+	}
+	// RFC-002 §5.4: timestamp +/- duration, duration + duration
+	if a.Type() == event.FieldTypeTimestamp && b.Type() == event.FieldTypeDuration {
+		return event.TimestampValue(a.AsTimestamp().Add(b.AsDuration()))
+	}
+	if a.Type() == event.FieldTypeDuration && b.Type() == event.FieldTypeTimestamp {
+		return event.TimestampValue(b.AsTimestamp().Add(a.AsDuration()))
+	}
+	if a.Type() == event.FieldTypeDuration && b.Type() == event.FieldTypeDuration {
+		return event.DurationValue(a.AsDuration() + b.AsDuration())
 	}
 
 	return event.NullValue()
@@ -1454,6 +1545,17 @@ func subValues(a, b event.Value) event.Value {
 	if aok && bok {
 		return event.FloatValue(af - bf)
 	}
+	// RFC-002 §5.4: timestamp - timestamp → duration; timestamp - duration → timestamp;
+	// duration - duration → duration
+	if a.Type() == event.FieldTypeTimestamp && b.Type() == event.FieldTypeTimestamp {
+		return event.DurationValue(a.AsTimestamp().Sub(b.AsTimestamp()))
+	}
+	if a.Type() == event.FieldTypeTimestamp && b.Type() == event.FieldTypeDuration {
+		return event.TimestampValue(a.AsTimestamp().Add(-b.AsDuration()))
+	}
+	if a.Type() == event.FieldTypeDuration && b.Type() == event.FieldTypeDuration {
+		return event.DurationValue(a.AsDuration() - b.AsDuration())
+	}
 
 	return event.NullValue()
 }
@@ -1472,6 +1574,17 @@ func mulValues(a, b event.Value) event.Value {
 	bf, bok := ValueToFloat(b)
 	if aok && bok {
 		return event.FloatValue(af * bf)
+	}
+	// RFC-002 §5.4: duration * number → duration (commutative)
+	if a.Type() == event.FieldTypeDuration {
+		if bf, ok := ValueToFloat(b); ok {
+			return event.DurationValue(time.Duration(float64(a.AsDuration()) * bf))
+		}
+	}
+	if b.Type() == event.FieldTypeDuration {
+		if af, ok := ValueToFloat(a); ok {
+			return event.DurationValue(time.Duration(af * float64(b.AsDuration())))
+		}
 	}
 
 	return event.NullValue()
@@ -1498,6 +1611,22 @@ func divValues(a, b event.Value) event.Value {
 
 		return event.FloatValue(af / bf)
 	}
+	// RFC-002 §5.4: duration / number → duration; duration / duration → float
+	if a.Type() == event.FieldTypeDuration && b.Type() == event.FieldTypeDuration {
+		bd := b.AsDuration()
+		if bd == 0 {
+			return event.NullValue()
+		}
+		return event.FloatValue(float64(a.AsDuration()) / float64(bd))
+	}
+	if a.Type() == event.FieldTypeDuration {
+		if bf, ok := ValueToFloat(b); ok {
+			if bf == 0 {
+				return event.NullValue()
+			}
+			return event.DurationValue(time.Duration(float64(a.AsDuration()) / bf))
+		}
+	}
 
 	return event.NullValue()
 }
@@ -1513,6 +1642,14 @@ func modValues(a, b event.Value) event.Value {
 		}
 
 		return event.IntValue(a.AsInt() % bv)
+	}
+	// RFC-002 §5.4: duration % duration → duration
+	if a.Type() == event.FieldTypeDuration && b.Type() == event.FieldTypeDuration {
+		bd := b.AsDuration()
+		if bd == 0 {
+			return event.NullValue()
+		}
+		return event.DurationValue(a.AsDuration() % bd)
 	}
 
 	return event.NullValue()
@@ -1537,6 +1674,12 @@ func valuesEqual(a, b event.Value) bool {
 			return a.AsBool() == b.AsBool()
 		case event.FieldTypeTimestamp:
 			return a.AsTimestamp().Equal(b.AsTimestamp())
+		case event.FieldTypeDuration:
+			return a.AsDuration() == b.AsDuration()
+		case event.FieldTypeArray:
+			return arraysEqual(a.AsArray(), b.AsArray())
+		case event.FieldTypeObject:
+			return objectsEqual(a.AsObject(), b.AsObject())
 		}
 	}
 	// Cross-type numeric comparison
@@ -1547,6 +1690,54 @@ func valuesEqual(a, b event.Value) bool {
 	}
 	// Fall back to string comparison
 	return valueToString(a) == valueToString(b)
+}
+
+// arraysEqual performs deep, order-sensitive equality on two arrays.
+func arraysEqual(a, b []event.Value) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !valuesEqual(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// objectsEqual performs deep, key-wise equality on two objects.
+func objectsEqual(a, b map[string]event.Value) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok || !valuesEqual(av, bv) {
+			return false
+		}
+	}
+	return true
+}
+
+// compareArrays performs element-wise three-way comparison.
+// Shorter arrays are less than longer ones when elements are equal up to the shorter length.
+func compareArrays(a, b []event.Value) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		c := CompareValues(a[i], b[i])
+		if c != 0 {
+			return c
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	} else if len(a) > len(b) {
+		return 1
+	}
+	return 0
 }
 
 // CompareValues performs a three-way comparison of two event values.
@@ -1614,6 +1805,25 @@ func CompareValues(a, b event.Value) int {
 			}
 
 			return 0
+		case event.FieldTypeDuration:
+			ad, bd := a.AsDuration(), b.AsDuration()
+			if ad < bd {
+				return -1
+			} else if ad > bd {
+				return 1
+			}
+
+			return 0
+		case event.FieldTypeArray:
+			return compareArrays(a.AsArray(), b.AsArray())
+		case event.FieldTypeObject:
+			// Objects are only equal or not; no natural ordering.
+			// Return 0 for equal, -1 otherwise (consistent arbitrary order for sort stability).
+			if objectsEqual(a.AsObject(), b.AsObject()) {
+				return 0
+			}
+			// Deterministic tiebreak: compare their string renderings.
+			return strings.Compare(valueToString(a), valueToString(b))
 		}
 	}
 
@@ -2128,6 +2338,92 @@ func valueToInterface(v event.Value) any {
 		return v.AsTimestamp()
 	default:
 		return valueToString(v)
+	}
+}
+
+// indexValue implements arr[i] (with negative-from-end), obj["k"], and null propagation.
+func indexValue(container, idx event.Value) event.Value {
+	if container.IsNull() {
+		return event.NullValue()
+	}
+	switch container.Type() {
+	case event.FieldTypeArray:
+		arr := container.AsArray()
+		if idx.IsNull() {
+			return event.NullValue()
+		}
+		i, ok := valueToInt64(idx)
+		if !ok {
+			return event.NullValue()
+		}
+		n := int64(len(arr))
+		// Negative indexing: -1 = last element
+		if i < 0 {
+			i += n
+		}
+		if i < 0 || i >= n {
+			return event.NullValue()
+		}
+		return arr[i]
+	case event.FieldTypeObject:
+		obj := container.AsObject()
+		if idx.IsNull() {
+			return event.NullValue()
+		}
+		key := valueToString(idx)
+		if v, ok := obj[key]; ok {
+			return v
+		}
+		return event.NullValue()
+	default:
+		return event.NullValue()
+	}
+}
+
+// memberValue implements obj.key with null propagation.
+func memberValue(obj event.Value, key string) event.Value {
+	if obj.IsNull() {
+		return event.NullValue()
+	}
+	if obj.Type() != event.FieldTypeObject {
+		return event.NullValue()
+	}
+	m := obj.AsObject()
+	if v, ok := m[key]; ok {
+		return v
+	}
+	return event.NullValue()
+}
+
+// lenValue returns the length of a string (rune count) or array (element count).
+func lenValue(v event.Value) event.Value {
+	if v.IsNull() {
+		return event.NullValue()
+	}
+	switch v.Type() {
+	case event.FieldTypeString:
+		return event.IntValue(int64(len([]rune(v.AsString()))))
+	case event.FieldTypeArray:
+		return event.IntValue(int64(len(v.AsArray())))
+	default:
+		return event.NullValue()
+	}
+}
+
+// valueToInt64 converts a value to int64 for array indexing.
+func valueToInt64(v event.Value) (int64, bool) {
+	switch v.Type() {
+	case event.FieldTypeInt:
+		return v.AsInt(), true
+	case event.FieldTypeFloat:
+		f := v.AsFloat()
+		i := int64(f)
+		if float64(i) == f {
+			return i, true
+		}
+		return 0, false
+	default:
+		return 0, false
 	}
 }
 

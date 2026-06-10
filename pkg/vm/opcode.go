@@ -148,6 +148,16 @@ const (
 	// Network (operand: 2-byte CIDR pool index).
 	OpCIDRMatch Opcode = 0xE0 // net.IPNet.Contains
 
+	// RFC-002 typed-value opcodes (duration, array, object).
+	// These are additive plumbing for the LynxFlow frontend; the SPL2
+	// compiler does not emit them yet.
+	OpArrayBuild    Opcode = 0xE1 // 2-byte operand: element count N; pop N values, push array
+	OpObjectBuild   Opcode = 0xE2 // 2-byte operand: entry count N; pop 2N values (key,val pairs), push object
+	OpIndex         Opcode = 0xE3 // pop index, pop container; arr[i] / obj["k"]; OOB/missing/null → null
+	OpMember        Opcode = 0xE4 // 2-byte operand: constant-pool index of key string; pop object, push obj.key or null
+	OpLen           Opcode = 0xE5 // pop value; string → rune count, array → element count; else null
+	OpConstDuration Opcode = 0xE6 // 2-byte operand: constant-pool index; pushes duration value
+
 	// JSON Functions.
 	OpJsonExtract  Opcode = 0xD0 // pop path, pop field, push extracted value
 	OpJsonValid    Opcode = 0xD1 // pop field, push bool
@@ -304,6 +314,13 @@ var definitions = map[Opcode]*Definition{
 	OpSearchMatch: {"OpSearchMatch", nil},
 
 	OpCIDRMatch: {"OpCIDRMatch", []int{2}},
+
+	OpArrayBuild:    {"OpArrayBuild", []int{2}},
+	OpObjectBuild:   {"OpObjectBuild", []int{2}},
+	OpIndex:         {"OpIndex", nil},
+	OpMember:        {"OpMember", []int{2}},
+	OpLen:           {"OpLen", nil},
+	OpConstDuration: {"OpConstDuration", []int{2}},
 
 	OpJsonExtract:  {"OpJsonExtract", nil},
 	OpJsonValid:    {"OpJsonValid", nil},
