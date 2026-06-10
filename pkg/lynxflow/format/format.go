@@ -236,12 +236,12 @@ func formatExpr(b *strings.Builder, e ast.Expr, parentPrec prec) {
 	case *ast.Member:
 		formatExpr(b, n.Object, precAtom)
 		b.WriteByte('.')
-		b.WriteString(n.Field)
+		writeFieldName(b, n.Field)
 
 	case *ast.SafeMember:
 		formatExpr(b, n.Object, precAtom)
 		b.WriteString("?.")
-		b.WriteString(n.Field)
+		writeFieldName(b, n.Field)
 
 	case *ast.Index:
 		formatExpr(b, n.Object, precAtom)
