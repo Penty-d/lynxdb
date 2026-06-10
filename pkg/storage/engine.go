@@ -843,6 +843,14 @@ func queryAddsDefaultEventMetadata(q *spl2.Query) bool {
 	return true
 }
 
+// Events returns the full events map. This is intended for ephemeral engines
+// (CLI file/pipe mode) where the caller needs direct access to build a
+// LynxFlow StorageSource. The returned map is not a copy; do not modify
+// concurrently.
+func (e *Engine) Events() map[string][]*event.Event {
+	return e.events
+}
+
 // MaterializeEvents implements pipeline.IndexStore so Engine can be used directly.
 func (e *Engine) MaterializeEvents(_ context.Context, index string) ([]*event.Event, error) {
 	return e.events[index], nil

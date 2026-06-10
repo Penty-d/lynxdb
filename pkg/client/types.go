@@ -214,6 +214,7 @@ type QueryRequest struct {
 	Suggestions *bool    `json:"suggestions,omitempty"` // false disables advisory suggestions
 	LintLimit   int      `json:"lint_limit,omitempty"`  // max lints to return; default 5
 	LintFull    bool     `json:"lint_full,omitempty"`   // true returns all advisory lints
+	Language    string   `json:"language,omitempty"`    // "lynxflow" or "spl2"; absent = auto-detect
 }
 
 // QueryResult is the polymorphic response from Query().

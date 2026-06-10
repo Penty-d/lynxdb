@@ -504,8 +504,10 @@ func TestServerQuery_FILLNULL_NoError(t *testing.T) {
 func TestServerQuery_TOP_ReturnsTopN(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
+	// Pinned to spl2 during the dual-runtime window: the lynxflow top
+	// desugar has no percent column (RFC-002 §9.1).
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | top 3 level")
+		"--language", "spl2", "FROM idx_access | top 3 level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

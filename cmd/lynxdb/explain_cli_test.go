@@ -69,7 +69,9 @@ func TestExplain_InvalidQuery_ShowsErrors(t *testing.T) {
 func TestExplain_InvalidQuery_TableShowsDiagnostics(t *testing.T) {
 	baseURL := newTestServer(t)
 
-	stdout, _, _ := runCmd(t, "--server", baseURL, "explain", "--format", "table", "| where")
+	// Pinned to spl2 during the dual-runtime window: both languages reject
+	// this query and the table renderer asserts the spl2 diagnostic shape.
+	stdout, _, _ := runCmd(t, "--server", baseURL, "explain", "--format", "table", "--language", "spl2", "| where")
 
 	for _, section := range []string{"Query plan", "Diagnostics", "Hints"} {
 		if !strings.Contains(stdout, section) {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/lynxflow/registry"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
@@ -60,12 +61,12 @@ type Completer struct {
 	now         func() time.Time
 }
 
-// NewCompleter creates a completer with static SPL2 vocabulary.
+// NewCompleter creates a completer with static SPL2 + LynxFlow vocabulary.
 func NewCompleter() *Completer {
 	c := &Completer{
-		commands:  commandItems(spl2.KnownCommands()),
-		aggFuncs:  functionItems(spl2.KnownAggregateFunctions(), "aggregate function"),
-		evalFuncs: functionItems(appendCatalogs(spl2.KnownEvalFunctions(), spl2.KnownJSONFunctions()), "eval function"),
+		commands:  mergedCommandItems(),
+		aggFuncs:  mergedAggFuncItems(),
+		evalFuncs: mergedEvalFuncItems(),
 		clauses: completionItems([]string{
 			"by", "as", "compute", "using", "extract", "if_missing", "per", "on",
 			"into", "span", "window", "current", "maxspan", "startswith",
@@ -88,6 +89,127 @@ func NewCompleter() *Completer {
 	c.SetFields(nil)
 
 	return c
+}
+
+// LynxFlowOperatorNames returns operator names from the LynxFlow registry.
+// Exported for testing.
+func LynxFlowOperatorNames() []string {
+	ops := registry.Operators()
+	names := make([]string, len(ops))
+	for i, op := range ops {
+		names[i] = op.Name
+	}
+	return names
+}
+
+// LynxFlowFunctionNames returns function names from the LynxFlow registry.
+// Exported for testing.
+func LynxFlowFunctionNames() []string {
+	fns := registry.Functions()
+	names := make([]string, len(fns))
+	for i, fn := range fns {
+		names[i] = fn.Name
+	}
+	return names
+}
+
+// LynxFlowAggregateNames returns aggregate names from the LynxFlow registry.
+// Exported for testing.
+func LynxFlowAggregateNames() []string {
+	aggs := registry.Aggregates()
+	names := make([]string, len(aggs))
+	for i, ag := range aggs {
+		names[i] = ag.Name
+	}
+	return names
+}
+
+// mergedCommandItems builds the deduped command list from SPL2 + LynxFlow operators.
+func mergedCommandItems() []CompletionItem {
+	spl2Items := commandItems(spl2.KnownCommands())
+	lfNames := LynxFlowOperatorNames()
+
+	// Build set of existing command names (lowercase).
+	seen := make(map[string]struct{}, len(spl2Items))
+	for _, item := range spl2Items {
+		seen[strings.ToLower(item.Text)] = struct{}{}
+	}
+
+	// Add LynxFlow operators not already present.
+	for _, name := range lfNames {
+		lower := strings.ToLower(name)
+		if _, ok := seen[lower]; ok {
+			continue
+		}
+		detail := commandDocs[lower]
+		if detail == "" {
+			detail = "lynxflow operator"
+		}
+		spl2Items = append(spl2Items, CompletionItem{
+			Text:   lower,
+			Apply:  lower,
+			Kind:   KindCommand,
+			Detail: detail,
+			Boost:  2,
+		})
+		seen[lower] = struct{}{}
+	}
+
+	return spl2Items
+}
+
+// mergedAggFuncItems builds the deduped aggregate function list.
+func mergedAggFuncItems() []CompletionItem {
+	spl2Items := functionItems(spl2.KnownAggregateFunctions(), "aggregate function")
+	lfNames := LynxFlowAggregateNames()
+
+	seen := make(map[string]struct{}, len(spl2Items))
+	for _, item := range spl2Items {
+		seen[strings.ToLower(item.Text)] = struct{}{}
+	}
+
+	for _, name := range lfNames {
+		lower := strings.ToLower(name)
+		if _, ok := seen[lower]; ok {
+			continue
+		}
+		spl2Items = append(spl2Items, CompletionItem{
+			Text:   lower,
+			Apply:  lower,
+			Kind:   KindFunction,
+			Detail: "lynxflow aggregate",
+		})
+		seen[lower] = struct{}{}
+	}
+
+	return spl2Items
+}
+
+// mergedEvalFuncItems builds the deduped eval function list.
+func mergedEvalFuncItems() []CompletionItem {
+	spl2Items := functionItems(appendCatalogs(spl2.KnownEvalFunctions(), spl2.KnownJSONFunctions()), "eval function")
+	lfNames := LynxFlowFunctionNames()
+
+	seen := make(map[string]struct{}, len(spl2Items))
+	for _, item := range spl2Items {
+		seen[strings.ToLower(item.Text)] = struct{}{}
+	}
+
+	for _, name := range lfNames {
+		lower := strings.ToLower(name)
+		if _, ok := seen[lower]; ok {
+			continue
+		}
+		spl2Items = append(spl2Items, CompletionItem{
+			Text:   lower,
+			Apply:  lower,
+			Kind:   KindFunction,
+			Detail: "lynxflow function",
+		})
+		seen[lower] = struct{}{}
+	}
+
+	return spl2Items
 }
 
 func appendCatalogs(groups ...[]string) []string {

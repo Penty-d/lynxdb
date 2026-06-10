@@ -22,6 +22,7 @@ func init() {
 
 func newExplainCmd() *cobra.Command {
 	var analyze bool
+	var language string
 
 	cmd := &cobra.Command{
 		Use:   "explain [SPL2 query]",
@@ -35,12 +36,16 @@ func newExplainCmd() *cobra.Command {
 			if analyze {
 				return runExplainAnalyze(strings.Join(args, " "))
 			}
+			if language != "" {
+				return runExplainWithLanguage(strings.Join(args, " "), language)
+			}
 
 			return runExplain(strings.Join(args, " "))
 		},
 	}
 
 	cmd.Flags().BoolVar(&analyze, "analyze", false, "Execute query and show plan with actual execution stats")
+	cmd.Flags().StringVar(&language, "language", "", "Query language: lynxflow, spl2 (default: auto-detect)")
 
 	return cmd
 }
@@ -101,9 +106,13 @@ func runExplainAnalyze(query string) error {
 }
 
 func runExplain(query string) error {
+	return runExplainLang(query, "")
+}
+
+func runExplainLang(query, language string) error {
 	ctx := context.Background()
 
-	result, err := apiClient().Explain(ctx, query)
+	result, err := apiClient().ExplainLang(ctx, query, language)
 	if err != nil {
 		var apiErr *client.APIError
 		if errors.As(err, &apiErr) && apiErr.Code == client.ErrCodeInvalidQuery {

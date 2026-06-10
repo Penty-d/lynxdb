@@ -19,7 +19,12 @@ import (
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
 	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/event"
 	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/langdetect"
+	"github.com/lynxbase/lynxdb/pkg/lynxflow/desugar"
+	"github.com/lynxbase/lynxdb/pkg/lynxflow/parser"
+	"github.com/lynxbase/lynxdb/pkg/lynxflow/run"
 	"github.com/lynxbase/lynxdb/pkg/sigmaqueries"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/stats"
@@ -53,6 +58,7 @@ func newQueryCmd() *cobra.Command {
 		timeout       string
 		analyze       string
 		maxMemory     string
+		language      string
 		failEmpty     bool
 		copyFlag      bool
 		explain       bool
@@ -88,6 +94,9 @@ func newQueryCmd() *cobra.Command {
 			if queriesFile != "" && showRewritten {
 				return fmt.Errorf("--queries-file cannot be used with --show-rewritten")
 			}
+			if msg := langdetect.ValidateExplicitLanguage(language); msg != "" {
+				return fmt.Errorf("%s", msg)
+			}
 			query := strings.Join(args, " ")
 			if len(queryParams) > 0 {
 				query = spl2.SubstituteParams(query, spl2.ParseParamFlags(queryParams))
@@ -117,7 +126,7 @@ func newQueryCmd() *cobra.Command {
 			}
 
 			if explain {
-				return runExplain(query)
+				return runExplainWithLanguage(query, language)
 			}
 
 			if file != "" && stdinPiped {
@@ -127,15 +136,15 @@ func newQueryCmd() *cobra.Command {
 				return fmt.Errorf("--copy is only supported in server mode")
 			}
 			if file != "" {
-				return runQueryFile(query, file, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode, showRewritten)
+				return runQueryFile(query, file, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode, showRewritten, language)
 			}
 			if stdinPiped {
-				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode, showRewritten)
+				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode, showRewritten, language)
 			}
 
 			SaveLastQuery(query, since, from, to)
 
-			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze, noLint, noSuggestions, showRewritten)
+			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze, noLint, noSuggestions, showRewritten, language)
 			if err != nil {
 				return err
 			}
@@ -167,6 +176,7 @@ func newQueryCmd() *cobra.Command {
 	f.BoolVar(&noLint, "no-lint", false, "Disable advisory query lints in server mode")
 	f.BoolVar(&noSuggestions, "no-suggestions", false, "Disable advisory query suggestions in server mode")
 	f.BoolVar(&showRewritten, "show-rewritten", false, "Show normalized query rewrites")
+	f.StringVar(&language, "language", "", "Query language: lynxflow, spl2 (default: auto-detect)")
 	f.StringArrayVarP(&queryParams, "param", "D", nil, "Set query parameter: --param name=value")
 
 	// Allow bare --analyze (no value) to default to "basic".
@@ -427,7 +437,7 @@ func parseMaxMemory(maxMemory string) (int64, error) {
 	return int64(b), nil
 }
 
-func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode, showRewritten bool) error {
+func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode, showRewritten bool, language string) error {
 	matches, err := filepath.Glob(file)
 	if err != nil {
 		return fmt.Errorf("invalid file pattern: %w", err)
@@ -458,6 +468,43 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		}
 	}
 
+	// Language detection: CLI file mode uses DetectStrict (spl2 default for
+	// ambiguous queries) to preserve backward compatibility with golden tests.
+	lang := langdetect.DetectStrict(query, language)
+
+	if lang.Language == langdetect.LangLynxFlow {
+		// LynxFlow file-mode execution path.
+		// Ingest all files into the ephemeral engine first (reuse existing ingest).
+		ctx := context.Background()
+		for _, path := range matches {
+			src := source
+			if src == "" {
+				src = path
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				return fmt.Errorf("open %s: %w", path, err)
+			}
+			n, err := eng.IngestReader(ctx, f, storage.IngestOpts{
+				Source:     src,
+				SourceType: sourcetype,
+			})
+			if closeErr := f.Close(); closeErr != nil {
+				if err != nil {
+					return fmt.Errorf("ingest %s: %w (also failed to close: %v)", path, err, closeErr)
+				}
+				return fmt.Errorf("close %s: %w", path, closeErr)
+			}
+			if err != nil {
+				return fmt.Errorf("ingest %s: %w", path, err)
+			}
+			totalEvents += n
+		}
+
+		return runLynxFlowLocal(query, eng.Events(), outputFile, failEmpty, analyze, showRewritten, start, totalEvents)
+	}
+
+	// SPL2 file-mode execution path (existing behavior).
 	normalizedQuery, rewrites := spl2.NormalizeQueryWithRewrites(query)
 	printSPL2QueryRewrites(showRewritten, rewrites)
 
@@ -517,7 +564,7 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 	return printLocalResults(result.Rows, qstats, outputFile, analyze)
 }
 
-func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode, showRewritten bool) error {
+func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode, showRewritten bool, language string) error {
 	var memLimit int64
 	if maxMemory != "" {
 		b, err := config.ParseByteSize(maxMemory)
@@ -546,6 +593,25 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 		}
 	}
 
+	// Language detection: CLI stdin mode uses DetectStrict (spl2 default for
+	// ambiguous queries) to preserve backward compatibility with golden tests.
+	lang := langdetect.DetectStrict(query, language)
+
+	if lang.Language == langdetect.LangLynxFlow {
+		// LynxFlow stdin-mode execution path.
+		ctx := context.Background()
+		n, err := eng.IngestReader(ctx, reader, storage.IngestOpts{
+			Source:     src,
+			SourceType: sourcetype,
+		})
+		if err != nil {
+			return fmt.Errorf("ingest stdin: %w", err)
+		}
+
+		return runLynxFlowLocal(query, eng.Events(), outputFile, failEmpty, analyze, showRewritten, start, n)
+	}
+
+	// SPL2 stdin-mode execution path (existing behavior).
 	normalizedQuery, rewrites := spl2.NormalizeQueryWithRewrites(query)
 	printSPL2QueryRewrites(showRewritten, rewrites)
 
@@ -638,14 +704,19 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 	return nil
 }
 
-func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string, noLint, noSuggestions, showRewritten bool) error {
+func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string, noLint, noSuggestions, showRewritten bool, language string) error {
 	earliest, latest, err := queryTimeBoundsFromFlags(since, from, to)
 	if err != nil {
 		return err
 	}
 
-	if err := validateQueryBeforeServer(query); err != nil {
-		return err
+	// Skip client-side parse validation when language is explicitly set to
+	// lynxflow, since the SPL2 parser would reject valid LynxFlow queries.
+	lang := langdetect.DetectStrict(query, language)
+	if lang.Language != langdetect.LangLynxFlow {
+		if err := validateQueryBeforeServer(query); err != nil {
+			return err
+		}
 	}
 
 	ctx := context.Background()
@@ -663,7 +734,7 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 		defer cancel()
 	}
 
-	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten)
+	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten, language)
 }
 
 func queryTimeBoundsFromFlags(since, from, to string) (string, string, error) {
@@ -729,7 +800,7 @@ func validateQueryBeforeServer(query string) error {
 	return nil
 }
 
-func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint, noSuggestions, showRewritten bool) error {
+func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint, noSuggestions, showRewritten bool, language string) error {
 	start := time.Now()
 
 	result, err := apiClient().Query(ctx, client.QueryRequest{
@@ -739,6 +810,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 		Profile:     analyze,
 		Lint:        lintRequestValue(noLint),
 		Suggestions: suggestionsRequestValue(noSuggestions),
+		Language:    language,
 	})
 	if err != nil {
 		return &queryError{inner: err, query: query}
@@ -1302,4 +1374,104 @@ func autoDetectFromFirstFile(query, filePath string) (string, error) {
 		ingestpipeline.FormatDisplayName(format), int(ratio*100+0.5))
 
 	return prependParseToQuery(query, parseCmd), nil
+}
+
+// ---------------------------------------------------------------------------
+// LynxFlow local execution (file/stdin modes)
+// ---------------------------------------------------------------------------
+
+// runLynxFlowLocal executes a LynxFlow query against the ephemeral event store
+// and prints results. Shared by file and stdin modes.
+func runLynxFlowLocal(query string, events map[string][]*event.Event, outputFile string, failEmpty bool, analyze string, showRewritten bool, start time.Time, totalEvents int) error {
+	// 1. Parse (for diagnostics rendering before execution).
+	q, diags := parser.Parse(query)
+	for _, d := range diags {
+		if d.Severity == parser.SeverityError {
+			fmt.Fprint(os.Stderr, parser.RenderDiag(query, d))
+			return fmt.Errorf("lynxflow parse error")
+		}
+	}
+
+	// 2. Desugar (for --show-rewritten).
+	_, rewrites := desugar.Desugar(q, desugar.Options{DefaultSource: "main"})
+	printLynxFlowRewrites(showRewritten, rewrites)
+
+	// 3. Execute via the full pipeline.
+	ctx := context.Background()
+	rows, err := run.Execute(ctx, query, events, run.Options{DefaultSource: "main"})
+	if err != nil {
+		return fmt.Errorf("%s", err)
+	}
+
+	// Convert event.Value rows to map[string]interface{}.
+	iRows := lynxflowRowsToInterface(rows)
+
+	st := &stats.QueryStats{
+		Ephemeral:     true,
+		ScanType:      "ephemeral",
+		TotalDuration: time.Since(start),
+		ScannedRows:   int64(totalEvents),
+	}
+
+	if len(iRows) == 0 {
+		if failEmpty {
+			printMeta("No results found.")
+			return noResultsError{}
+		}
+		printHint("No results. Try a broader query.")
+	}
+
+	return printLocalResults(iRows, st, outputFile, analyze)
+}
+
+// lynxflowRowsToInterface converts []map[string]event.Value to []map[string]interface{}.
+func lynxflowRowsToInterface(rows []map[string]event.Value) []map[string]interface{} {
+	out := make([]map[string]interface{}, len(rows))
+	for i, row := range rows {
+		m := make(map[string]interface{}, len(row))
+		for k, v := range row {
+			m[k] = v.Interface()
+		}
+		out[i] = m
+	}
+	return out
+}
+
+// printLynxFlowRewrites prints desugar rewrites for --show-rewritten.
+func printLynxFlowRewrites(show bool, rewrites []desugar.Rewrite) {
+	if globalQuiet || !show || len(rewrites) == 0 {
+		return
+	}
+	fmt.Fprintln(os.Stderr)
+	for _, rw := range rewrites {
+		printQueryRewrite(rw.Before, rw.After, rw.Reason)
+	}
+}
+
+// runExplainWithLanguage dispatches to the appropriate explain path based on language.
+func runExplainWithLanguage(query, language string) error {
+	lang := langdetect.DetectStrict(query, language)
+	if lang.Language == langdetect.LangLynxFlow {
+		return runExplainLynxFlow(query)
+	}
+	return runExplainLang(query, "spl2")
+}
+
+// runExplainLynxFlow renders the LynxFlow EXPLAIN tree locally (no server needed).
+func runExplainLynxFlow(query string) error {
+	// Check for parse errors first with caret rendering.
+	_, diags := parser.Parse(query)
+	for _, d := range diags {
+		if d.Severity == parser.SeverityError {
+			fmt.Fprint(os.Stderr, parser.RenderDiag(query, d))
+			return fmt.Errorf("lynxflow parse error")
+		}
+	}
+
+	explainText, err := run.ExecuteExplain(query, run.Options{DefaultSource: "main"})
+	if err != nil {
+		return err
+	}
+	fmt.Println(explainText)
+	return nil
 }
