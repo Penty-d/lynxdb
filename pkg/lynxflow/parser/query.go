@@ -761,6 +761,23 @@ func (p *parser) parseStage() ast.Stage {
 	}
 
 	nameSpan := p.curSpan()
+
+	// from is only valid as the first stage of a pipeline (RFC-002 §8);
+	// materialized views are read by naming them as the source.
+	if name == "from" {
+		s := ast.Stage{Name: "from", NamePos: nameSpan, Pos: ast.Span{Start: start}, HasError: true}
+		p.diags = append(p.diags, Diag{
+			Code:       CodeStageError,
+			Message:    "from is only valid at the start of a pipeline",
+			Span:       nameSpan,
+			Suggestion: "move the source to the front: from <source> | ...",
+		})
+		p.advance()
+		p.skipToNextStage()
+		s.Pos.End = p.prev.End
+		return s
+	}
+
 	p.advance() // consume stage keyword
 
 	// Dispatch to typed parsers.
