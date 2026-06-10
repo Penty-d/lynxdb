@@ -26,6 +26,9 @@ type parser struct {
 	prev  lexer.Token // previous consumed token (for span building)
 	diags []Diag
 	src   string // original source (for span rendering)
+	// inAggList is true while parsing a stats/eventstats/streamstats agg
+	// list; only there are `where <pred>` call arguments legal.
+	inAggList bool
 }
 
 // ParseExpr parses a single expression from the input string and returns the
@@ -140,7 +143,9 @@ func (p *parser) identLike() (string, bool) {
 // keywords, plus as/by/with/on/except, are soft.
 func isSoftKeyword(k lexer.Kind) bool {
 	switch k {
-	case lexer.KwFrom, lexer.KwLet, lexer.KwWhere, lexer.KwParse,
+	// KwWhere is deliberately excluded: it marks conditional-aggregate
+	// arguments (count(where p)) and may not double as an identifier.
+	case lexer.KwFrom, lexer.KwLet, lexer.KwParse,
 		lexer.KwExtend, lexer.KwKeep, lexer.KwDrop, lexer.KwRename,
 		lexer.KwStats, lexer.KwEventstats, lexer.KwStreamstats,
 		lexer.KwSort, lexer.KwHead, lexer.KwTail, lexer.KwDedup,
@@ -583,6 +588,12 @@ func (p *parser) parseArgList() []Expr {
 func (p *parser) parseArgExpr() ast.Expr {
 	// Conditional aggregate: where <predicate>
 	// count(where p) or sum(x, where p)
+	if p.at(lexer.KwWhere) && !p.inAggList {
+		p.errorf(p.cur, CodeUnexpectedToken, nil, "",
+			"where clauses are only valid inside aggregate calls")
+		p.advance()
+		return p.parseExpr()
+	}
 	if p.at(lexer.KwWhere) {
 		// Produce a special marker node: an Ident with Name="where" followed
 		// by the predicate as the next arg. We use a synthetic approach:

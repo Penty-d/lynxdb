@@ -265,7 +265,8 @@ func TestSoftKeyword_AsIdent(t *testing.T) {
 	// All these soft keywords should parse as identifiers.
 	keywords := []string{
 		"stats", "sort", "head", "tail", "top", "rare", "rate", "latency",
-		"from", "where", "parse", "extend", "keep", "drop", "rename",
+		// "where" is excluded: it marks conditional-aggregate args.
+		"from", "parse", "extend", "keep", "drop", "rename",
 		"join", "union", "explode", "describe", "every", "dedup",
 		"as", "by", "with", "on", "except",
 	}

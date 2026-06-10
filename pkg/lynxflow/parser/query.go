@@ -1956,6 +1956,8 @@ func (p *parser) parseGenericOptionsBody(s *ast.Stage) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseAggList() []ast.AggExpr {
+	p.inAggList = true
+	defer func() { p.inAggList = false }()
 	var aggs []ast.AggExpr
 	for {
 		if p.at(lexer.Pipe) || p.at(lexer.EOF) || p.at(lexer.Semicolon) ||
