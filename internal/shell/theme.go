@@ -6,16 +6,18 @@ import (
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
-// ShellTheme holds SPL2 syntax highlighting styles for the shell scrollback.
+// ShellTheme holds syntax highlighting styles for LynxFlow queries.
 type ShellTheme struct {
-	Command  lipgloss.Style // cyan bold — SPL2 commands (FROM, WHERE, STATS)
-	Keyword  lipgloss.Style // magenta — clause keywords (BY, AS, AND, OR)
-	Function lipgloss.Style // yellow — aggregation/eval functions
+	Command  lipgloss.Style // cyan bold — stage operators (from, where, stats)
+	Keyword  lipgloss.Style // magenta — clause keywords (by, as, and, or)
+	Function lipgloss.Style // yellow — scalar/aggregate functions
 	String   lipgloss.Style // green — quoted strings
-	Number   lipgloss.Style // yellow — numeric literals
+	Number   lipgloss.Style // yellow — numeric literals and durations
 	Operator lipgloss.Style // white bold — comparison operators
 	Pipe     lipgloss.Style // bright white bold — |
 	Field    lipgloss.Style // default — identifiers/field names
+	Error    lipgloss.Style // red — lexer errors (unterminated strings etc.)
+	Comment  lipgloss.Style // dim — line/block comments
 }
 
 // NewShellTheme creates a ShellTheme derived from the centralized ui colors.
@@ -29,6 +31,8 @@ func NewShellTheme() *ShellTheme {
 		Operator: lipgloss.NewStyle().Foreground(ui.ColorWhite()).Bold(true),
 		Pipe:     lipgloss.NewStyle().Foreground(ui.ColorWhite()).Bold(true),
 		Field:    lipgloss.NewStyle(),
+		Error:    lipgloss.NewStyle().Foreground(ui.ColorError()),
+		Comment:  lipgloss.NewStyle().Foreground(ui.ColorDark()),
 	}
 }
 
@@ -44,5 +48,7 @@ func NewShellEditorTheme() *ShellTheme {
 		Operator: lipgloss.NewStyle().Foreground(ui.ColorAccent()).Bold(true),
 		Pipe:     lipgloss.NewStyle().Foreground(ui.ColorInfo()).Bold(true),
 		Field:    lipgloss.NewStyle().Foreground(ui.ColorWhite()),
+		Error:    lipgloss.NewStyle().Foreground(ui.ColorError()),
+		Comment:  lipgloss.NewStyle().Foreground(ui.ColorDark()).Italic(true),
 	}
 }
