@@ -77,10 +77,6 @@ func TestShippersList_WithServer_PrintsTable(t *testing.T) {
 }
 
 func TestShippersTest_Filebeat_RoundTrip(t *testing.T) {
-	// TODO(RFC-002): the lynxflow path's FROM * scope misses the
-	// filebeat-ingested marker event (suspect BuildEventStoreFromHints
-	// star-scope expansion); re-enable once star scope reads all indexes.
-	t.Skip("RFC-002: from * scope over freshly ingested filebeat index under investigation")
 
 	baseURL := newTestServer(t)
 	stdout, _, err := runCmd(t, "--server", baseURL, "shippers", "test", "filebeat")
