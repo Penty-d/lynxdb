@@ -96,11 +96,8 @@ func TestIntegration_Compaction_MixedV1V2Inputs_RangePredicateMatchesBruteForce(
 }
 
 func TestIntegration_Compaction_PartialMigrationQuery_UsesV2BSIAndV1Fallback(t *testing.T) {
-	// RFC-002 Phase 10: SegmentStreamIterator is stubbed (returns nil/nil from
-	// Next). This test exercises the streaming scan path with BSI range
-	// predicates, which requires the real iterator. Skip until the streaming
-	// scan infrastructure is ported to the LynxFlow physical builder.
-	t.Skip("SegmentStreamIterator is stubbed (RFC-002 Phase 10)")
+	// SegmentStreamIterator is restored: this test exercises the streaming scan
+	// path with BSI range predicates against mixed V1/V2 segments.
 	v1A := compactionSegmentInfoFromFixture(t, "v1-a", L0, "v1.lsg")
 	v1B := compactionSegmentInfoFromFixture(t, "v1-b", L0, "v1_with_primary.lsg")
 	base := time.Date(2030, 1, 2, 5, 30, 0, 0, time.UTC)

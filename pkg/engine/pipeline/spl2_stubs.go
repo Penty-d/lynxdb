@@ -11,8 +11,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/logical"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
-	"github.com/lynxbase/lynxdb/pkg/model"
-	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -257,129 +255,6 @@ func RowsToBatch(rows []map[string]event.Value) *Batch {
 	return &Batch{Columns: cols, Len: len(rows)}
 }
 
-// --- Segment stream types ---
-
-type SegmentStreamProgress struct {
-	Phase                string
-	SegmentsTotal        int
-	SegmentsScanned      int
-	SegmentsSkipped      int
-	SegmentsSkippedTime  int
-	SegmentsSkippedBloom int
-	SegmentsSkippedRange int
-	SegmentsSkippedIdx   int
-	SegmentsSkippedStat  int
-	SegmentsDispatched   int
-	RowGroupsScanned     int
-	EventsScanned        int64
-	EventsMatched        int64
-	BytesRead            int64
-	RowsReadSoFar        int64
-	CurrentSegmentID     string
-	CurrentRGIndex       int
-	CurrentRGTotal       int
-}
-
-type SegmentStreamStats struct {
-	SegmentsTotal            int
-	SegmentsScanned          int
-	SegmentsSkipped          int
-	RowGroupsTotal           int
-	RowGroupsScanned         int
-	RowGroupsSkipped         int
-	EventsScanned            int64
-	EventsMatched            int64
-	BytesRead                int64
-	BloomSkips               int
-	TimeSkips                int
-	BitmapHits               int64
-	BitmapTermErrors         int
-	PeakMemoryBytes          int64
-	RGConstSkips             int
-	RGPresenceSkips          int
-	RGZoneMapSkips           int
-	RGBloomSkips             int
-	RGBloomsChecked          int
-	RGRangeBSIChecks         int
-	RGRangeBSISkips          int
-	RGRangeBSIMaskBytes      int64
-	SegmentBloomSkips        int
-	SegmentTimeSkips         int
-	ScopeSkips               int
-	PrewhereUsed             bool
-	PrewhereSteps            int
-	PrewhereColumns          []string
-	PrewhereRowsIn           int64
-	PrewhereRowsOut          int64
-	PrewhereRowGroupsSkipped int
-	PrewhereBytesRead        int64
-	PrewhereBytesAvoided     int64
-	EmptyBitmapSkips         int
-}
-
-type SegmentStreamHints struct {
-	BloomTerms                 []string
-	InvertedTermTree           interface{}
-	BitmapThreshold            float64
-	BitmapSelectivityThreshold float64
-	SourceIndices              []string
-	SourceGlob                 string
-	IndexName                  string
-	SourceScopeType            string
-	SourceScopeSources         []string
-	SourceScopePattern         string
-	TimeBounds                 interface{}
-	SearchTerms                []string
-	FieldPredicates            interface{}
-	RangePredicates            interface{}
-	InPredicates               interface{}
-	InvertedIndexPredicates    interface{}
-	RequiredCols               []string
-	RexPreFilters              interface{}
-	Limit                      int
-	ReverseScan                bool
-	TailLimit                  int
-	SkipRaw                    bool
-	PrewherePlan               interface{}
-	SearchTermTree             interface{}
-	SortAscending              bool
-	FieldPreds                 []model.FieldPredicate
-	RangePreds                 []model.RangePredicate
-	InPreds                    []model.InPredicate
-	InvertedPreds              []model.InvertedIndexPredicate
-	SourceIncludeGlobs         []string
-	SourceExcludeGlobs         []string
-}
-
-type SegmentMeta struct {
-	ID         string
-	MinTime    time.Time
-	MaxTime    time.Time
-	SizeBytes  int64
-	EventCount int64
-}
-
-type SegmentSource struct {
-	Reader      *segment.Reader
-	Index       string
-	ID          string
-	InvertedIdx interface{}
-	Bloom       interface{}
-	Meta        SegmentMeta
-}
-
-type SegmentStreamIterator struct{}
-
-func (s *SegmentStreamIterator) Init(_ context.Context) error           { return nil }
-func (s *SegmentStreamIterator) Next(_ context.Context) (*Batch, error) { return nil, nil }
-func (s *SegmentStreamIterator) Close() error                           { return nil }
-func (s *SegmentStreamIterator) Schema() []FieldInfo                    { return nil }
-func (s *SegmentStreamIterator) SetOnProgress(_ interface{})            {}
-func (s *SegmentStreamIterator) Stats() *SegmentStreamStats             { return &SegmentStreamStats{} }
-func NewSegmentStreamIterator(_ []*SegmentSource, _ []*event.Event, _ *SegmentStreamHints, _ int, _ ...interface{}) *SegmentStreamIterator {
-	return &SegmentStreamIterator{}
-}
-
 func parseDuration(s string) time.Duration {
 	if s == "" {
 		return 0
@@ -543,5 +418,3 @@ func BuildFromSourceWithBudget(_ context.Context, _ interface{}, _ interface{}, 
 }
 
 func CheckVectorizedFilter(_ Iterator) bool { return false }
-
-var _ = (*segment.Reader)(nil)

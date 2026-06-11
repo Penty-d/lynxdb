@@ -1022,15 +1022,14 @@ func (e *Engine) buildProgramPipeline(
 
 // indexStoreToSource adapts an IndexStore to a physical.Source callback.
 //
-// For StreamingServerStore, which holds buffered events in allMemEvents and
-// segment data behind SegmentStreamIterator, this materializes events by
-// draining the store and converting them to pipeline rows.
+// For StreamingServerStore, this returns a SegmentStreamIterator that lazily
+// reads buffered events and flushed segment data on demand.
 //
 // For ColumnarBatchStore, which holds pre-materialized batches, this converts
 // the batches to rows.
 func indexStoreToSource(store enginepipeline.IndexStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
-	// Check if the store is a StreamingServerStore — use its allMemEvents
-	// directly to bypass the stubbed SegmentStreamIterator.
+	// Check if the store is a StreamingServerStore — use its GetEventIterator
+	// which returns a real SegmentStreamIterator reading both buffered and segment data.
 	if ss, ok := store.(*StreamingServerStore); ok {
 		return streamingStoreToSource(ss, defaultIndex)
 	}
@@ -1045,26 +1044,21 @@ func indexStoreToSource(store enginepipeline.IndexStore, defaultIndex string) fu
 }
 
 // streamingStoreToSource creates a Source from a StreamingServerStore by
-// accessing its buffered events directly and reading any available segment
-// data through the store's iterator.
+// returning a SegmentStreamIterator that reads both buffered events and
+// flushed segment data through the store's GetEventIterator.
 func streamingStoreToSource(ss *StreamingServerStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
 	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
 		targetIndex := resolveIndexFromScan(scan, defaultIndex)
 
-		// Collect buffered events for this index.
-		var events []*event.Event
-		for _, ev := range ss.allMemEvents {
-			idx := ev.Index
-			if idx == "" {
-				idx = defaultIndex
-			}
-			if targetIndex == "*" || idx == targetIndex {
-				events = append(events, ev)
-			}
+		// For wildcard queries, pass "" so GetEventIterator includes all indexes.
+		// The SegmentStreamIterator's matchesStreamSourceScope handles "*"
+		// when IndexName is empty (no filter -- scan everything).
+		iterIndex := targetIndex
+		if iterIndex == "*" {
+			iterIndex = ""
 		}
 
-		rows := eventsToValueRows(events)
-		return enginepipeline.NewRowScanIterator(rows, enginepipeline.DefaultBatchSize), nil
+		return ss.GetEventIterator(iterIndex), nil
 	}
 }
 
