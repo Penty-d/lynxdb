@@ -77,7 +77,7 @@ type ViewDefinition struct {
 	LanguageVersion string `json:"language_version,omitempty"`
 
 	// MigratedFrom holds the original query text before migration from
-	// SPL2 to LynxFlow (via `lynxdb mv migrate`). Empty when the view
+	// SPL2 to LynxFlow (via `lynxdb mv migrate --query`). Empty when the view
 	// was created directly in the target language.
 	MigratedFrom string `json:"migrated_from,omitempty"`
 }

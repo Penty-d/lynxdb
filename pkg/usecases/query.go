@@ -143,7 +143,7 @@ func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainR
 			OptimizerMessages: optMessages,
 			OptimizerWarnings: optWarnings,
 		},
-		HasMVAccel: false,
+		HasMVAccel: plan.Accel != nil,
 	}, nil
 }
 
@@ -271,6 +271,14 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 	}
 
 	// Concurrency limit is enforced atomically inside SubmitQuery (CAS loop).
+	// Propagate MV acceleration metadata from the planner if the optimizer
+	// rewrote the query to scan a materialized view.
+	var accelBy, mvStatus string
+	if plan.Accel != nil {
+		accelBy = plan.Accel.ViewName
+		mvStatus = plan.Accel.Status
+	}
+
 	job, err := s.engine.SubmitQuery(queryCtx, server.QueryParams{
 		Query:              plan.RawQuery,
 		Program:            plan.Program,
@@ -283,6 +291,8 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		OptimizeDuration:   plan.OptimizeDuration,
 		RuleDetails:        plan.RuleDetails,
 		TotalRules:         plan.TotalRules,
+		AcceleratedBy:      accelBy,
+		MVStatus:           mvStatus,
 	})
 	if err != nil {
 		return nil, err

@@ -589,6 +589,33 @@ func injectAutoCountIntoAST(_ *logical.Plan, _ interface{}) {
 	// RFC-002: spl2 AST injection removed.
 }
 
+// GetView implements planner.ViewCatalog for the engine.
+// Returns a pointer to the ViewDefinition and true if found, (nil, false) otherwise.
+func (e *Engine) GetView(name string) (*views.ViewDefinition, bool) {
+	if e.viewRegistry == nil {
+		return nil, false
+	}
+	def, err := e.viewRegistry.Get(name)
+	if err != nil {
+		return nil, false
+	}
+	return &def, true
+}
+
+// ListViewDefs implements planner.ViewCatalog for the engine.
+// Returns all view definitions as a slice of pointers.
+func (e *Engine) ListViewDefs() []*views.ViewDefinition {
+	if e.viewRegistry == nil {
+		return nil
+	}
+	defs := e.viewRegistry.List()
+	result := make([]*views.ViewDefinition, len(defs))
+	for i := range defs {
+		result[i] = &defs[i]
+	}
+	return result
+}
+
 // ListViews implements pipeline.ViewManager for the engine.
 func (e *Engine) ListViews() []enginepipeline.ViewInfo {
 	if e.viewRegistry == nil {

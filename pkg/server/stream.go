@@ -99,8 +99,13 @@ func (e *Engine) buildStreamingPipelineReal(ctx context.Context, prog *logical.P
 		gov:          e.governor,
 	}
 
-	// Build the pipeline.
-	source := indexStoreToSource(store, DefaultIndexName)
+	// Build the pipeline. Pass the view resolver so `from <viewname>` works
+	// in streaming mode too (e.g. live tail, streaming export).
+	var vr enginepipeline.ViewResolver
+	if e.viewRegistry != nil {
+		vr = e
+	}
+	source := indexStoreToSource(store, DefaultIndexName, vr)
 	iter, err := physical.Build(prog, physical.BuildOptions{
 		Source: source,
 		Now:    time.Now(),

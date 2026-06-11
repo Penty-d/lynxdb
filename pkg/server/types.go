@@ -568,4 +568,9 @@ type QueryParams struct {
 	OptimizeDuration time.Duration
 	RuleDetails      []opt.Applied
 	TotalRules       int
+
+	// AcceleratedBy is set when the optimizer rewrote the query to scan a
+	// materialized view. Propagated to SearchStats for REST response metadata.
+	AcceleratedBy string
+	MVStatus      string
 }

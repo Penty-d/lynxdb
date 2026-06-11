@@ -176,7 +176,7 @@ func (s *ViewService) Patch(name string, req PatchViewRequest) (*ViewDetail, err
 	}
 
 	// Migration fields: allow updating query, language version, and
-	// migrated-from in a single atomic PATCH (used by `lynxdb mv migrate`).
+	// migrated-from in a single atomic PATCH (used by `lynxdb mv migrate --query`).
 	if req.Query != nil {
 		def.Query = *req.Query
 	}

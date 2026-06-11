@@ -105,22 +105,21 @@ func newMVCmd() *cobra.Command {
 
 	var migrateAllFlag bool
 	var migrateDryRunFlag bool
+	var migrateQueryFlag string
 
 	migrateCmd := &cobra.Command{
 		Use:   "migrate [name]",
-		Short: "Translate materialized view queries from SPL2 to LynxFlow",
-		Long: `Translate materialized view queries from SPL2 to LynxFlow v2.
+		Short: "Migrate materialized view queries from SPL2 to LynxFlow",
+		Long: `Migrate materialized view queries from SPL2 to LynxFlow.
 
-With a name argument, migrates a single view. With --all, migrates all
-SPL2 views. Use --dry-run to preview translations without applying.
+Since the SPL2-to-LynxFlow auto-translator has been removed, you must
+provide the replacement LynxFlow query explicitly with --query.
 
-The translator supports the restricted MV grammar (filters, stats,
-eval, sort, head/tail, etc.). Unsupported constructs produce clear
-errors listing the unsupported element.`,
-		Example: `  lynxdb mv migrate mv_errors_5m
+With a name argument, migrates a single view. With --all --dry-run,
+lists all views that need migration along with their current queries.`,
+		Example: `  lynxdb mv migrate mv_errors_5m --query 'from main | where level == "error" | stats count() by service'
   lynxdb mv migrate mv_errors_5m --dry-run
-  lynxdb mv migrate --all --dry-run
-  lynxdb mv migrate --all`,
+  lynxdb mv migrate --all --dry-run`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeMVNames,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -128,11 +127,12 @@ errors listing the unsupported element.`,
 			if len(args) > 0 {
 				name = args[0]
 			}
-			return runMVMigrate(name, migrateAllFlag, migrateDryRunFlag)
+			return runMVMigrate(name, migrateAllFlag, migrateDryRunFlag, migrateQueryFlag)
 		},
 	}
 	migrateCmd.Flags().BoolVar(&migrateAllFlag, "all", false, "Migrate all SPL2 views")
 	migrateCmd.Flags().BoolVar(&migrateDryRunFlag, "dry-run", false, "Show translations without applying")
+	migrateCmd.Flags().StringVar(&migrateQueryFlag, "query", "", "LynxFlow replacement query for the view")
 
 	cmd.AddCommand(createCmd, listCmd, statusCmd, dropCmd, pauseCmd, resumeCmd, backfillCmd, migrateCmd)
 
@@ -392,14 +392,172 @@ func patchMVPaused(name string, paused bool) error {
 	return nil
 }
 
-// runMVMigrate is a stub retained for CLI compatibility. The SPL2-to-LynxFlow
-// translator was removed in RFC-002 Phase 10. Any remaining SPL2 views should
-// have been migrated during the transition window.
-func runMVMigrate(name string, all, dryRun bool) error {
-	_, _, _ = name, all, dryRun // suppress unused parameter warnings
-	return fmt.Errorf("the 'mv migrate' command is no longer available: the SPL2-to-LynxFlow " +
-		"translator was removed in RFC-002 Phase 10. If you have views that still use SPL2, " +
-		"re-create them with LynxFlow syntax using 'lynxdb mv create'")
+// runMVMigrate migrates materialized view queries from SPL2 to LynxFlow.
+// The auto-translator was removed in RFC-002 Phase 10, so the user must
+// supply the replacement LynxFlow query explicitly via --query.
+func runMVMigrate(name string, all, dryRun bool, query string) error {
+	ctx := context.Background()
+
+	// Neither name nor --all: error.
+	if name == "" && !all {
+		return fmt.Errorf("specify a view name or --all")
+	}
+
+	// --all mode: list views that need migration.
+	if all {
+		return runMVMigrateAll(ctx, dryRun)
+	}
+
+	// Single-view mode with --dry-run.
+	if dryRun {
+		return runMVMigrateDryRun(ctx, name, query)
+	}
+
+	// Single-view mode without --query: show current query and instruct.
+	if query == "" {
+		return runMVMigrateNoQuery(ctx, name)
+	}
+
+	// Single-view mode with --query: validate and apply.
+	return runMVMigrateApply(ctx, name, query)
+}
+
+// runMVMigrateAll lists all views that need migration.
+func runMVMigrateAll(ctx context.Context, dryRun bool) error {
+	views, err := apiClient().ListViews(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Filter to views that need migration (status "needs-migration" or
+	// any status where the query hasn't been converted to LynxFlow yet).
+	var pending []client.View
+	for _, v := range views {
+		if strings.ToLower(v.Status) == "needs-migration" {
+			pending = append(pending, v)
+		}
+	}
+
+	if len(pending) == 0 {
+		printSuccess("All materialized views are already using LynxFlow")
+		return nil
+	}
+
+	t := ui.Stdout
+	rows := make([][]any, 0, len(pending))
+	for _, v := range pending {
+		status := v.Status
+		if humanOutputActive() {
+			status = mvStatusColored(t, v.Status)
+		}
+		rows = append(rows, []any{v.Name, status, v.Query})
+	}
+
+	if err := renderTabular(os.Stdout, []string{"NAME", "STATUS", "CURRENT QUERY"}, rows, t); err != nil {
+		return err
+	}
+
+	if humanOutputActive() {
+		fmt.Printf("\n%s\n", t.Dim.Render(fmt.Sprintf("%d view(s) need migration", len(pending))))
+	}
+
+	if !dryRun {
+		fmt.Println()
+		printHint("Auto-translation has been removed. Migrate each view individually:")
+		printNextSteps(
+			"lynxdb mv migrate <name> --query '<lynxflow query>'",
+		)
+	}
+
+	return nil
+}
+
+// runMVMigrateDryRun shows a view's current state and what it would be changed to.
+func runMVMigrateDryRun(ctx context.Context, name, query string) error {
+	view, err := apiClient().GetView(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	t := ui.Stdout
+	fmt.Println()
+	fmt.Printf("  %s\n\n", t.Bold.Render(name))
+	fmt.Println(t.KeyValue("Status", mvStatusColored(t, view.Status)))
+	fmt.Println(t.KeyValue("Current query", view.Query))
+
+	if query != "" {
+		// Validate the proposed replacement query.
+		if _, err := apiClient().Explain(ctx, query); err != nil {
+			if client.IsInvalidQuery(err) {
+				fmt.Println()
+				fmt.Println(t.KeyValue("New query", query))
+				fmt.Printf("\n  %s\n", t.Error.Render("Replacement query has parse errors:"))
+				return &queryError{inner: err, query: query}
+			}
+		}
+		fmt.Println(t.KeyValue("New query", query))
+		fmt.Printf("\n  %s\n", t.Dim.Render("Run without --dry-run to apply."))
+	} else {
+		fmt.Printf("\n  %s\n", t.Dim.Render("Provide --query to preview the replacement."))
+	}
+	fmt.Println()
+
+	return nil
+}
+
+// runMVMigrateNoQuery prints an error explaining --query is required and
+// shows the view's current query so the user can hand-translate it.
+func runMVMigrateNoQuery(ctx context.Context, name string) error {
+	view, err := apiClient().GetView(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	return fmt.Errorf("--query is required (auto-translation has been removed)\n\n"+
+		"Current SPL2 query for '%s':\n"+
+		"  %s\n\n"+
+		"Translate this to LynxFlow and run:\n"+
+		"  lynxdb mv migrate %s --query '<lynxflow query>'",
+		name, view.Query, name)
+}
+
+// runMVMigrateApply validates the replacement query and patches the view.
+func runMVMigrateApply(ctx context.Context, name, query string) error {
+	// Fetch the current view to capture the old query.
+	view, err := apiClient().GetView(ctx, name)
+	if err != nil {
+		return err
+	}
+	oldQuery := view.Query
+
+	// Pre-validate the replacement query so parse errors get caret display.
+	if _, err := apiClient().Explain(ctx, query); err != nil {
+		if client.IsInvalidQuery(err) {
+			return &queryError{inner: err, query: query}
+		}
+		// Non-parse errors — proceed to patch and let the server report them.
+	}
+
+	langVersion := "lynxflow"
+	if _, err := apiClient().PatchView(ctx, name, client.ViewPatchInput{
+		Query:           &query,
+		LanguageVersion: &langVersion,
+		MigratedFrom:    &oldQuery,
+	}); err != nil {
+		return err
+	}
+
+	printSuccess("Migrated materialized view %q", name)
+	t := ui.Stdout
+	fmt.Println(t.KeyValue("Old query", oldQuery))
+	fmt.Println(t.KeyValue("New query", query))
+	fmt.Println()
+
+	printNextSteps(
+		fmt.Sprintf("lynxdb mv status %s   Check view status", name),
+	)
+
+	return nil
 }
 
 // mvStatusColored returns a colored status string for TTY display.

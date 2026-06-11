@@ -352,7 +352,7 @@ func (d *Dispatcher) activateView(def ViewDefinition) error {
 			if err != nil {
 				// Parse failure at startup: do NOT block. Mark the view
 				// as needs-migration so it is visible to `mv list` and
-				// `mv migrate` can fix it.
+				// `mv migrate --query` can fix it.
 				d.logger.Warn("views: failed to analyze SPL2 query; marking as needs-migration",
 					"name", def.Name, "err", err)
 				av.def.Status = ViewStatusNeedsMigration

@@ -1,12 +1,16 @@
 package views
 
-import enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+import (
+	"fmt"
 
-// AnalyzeQuery determines if a query can be answered by a materialized view.
-// RFC-002: spl2 AST analysis removed. Returns an empty analysis until logical
-// plan analysis is implemented. SPL2 views should be created via AnalyzeLynxFlow.
+	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+)
+
+// AnalyzeQuery is the legacy SPL2 analysis entry point. Since SPL2 has been
+// removed (RFC-002), this always returns an error directing users to migrate
+// their views to LynxFlow.
 func AnalyzeQuery(_ string) (*QueryAnalysis, error) {
-	return &QueryAnalysis{}, nil
+	return nil, fmt.Errorf("views.AnalyzeQuery: SPL2 query language has been removed; migrate this view to LynxFlow with `lynxdb mv migrate <name> --query '<lynxflow query>'`")
 }
 
 // QueryAnalysis holds the result of analyzing a query for MV matching.

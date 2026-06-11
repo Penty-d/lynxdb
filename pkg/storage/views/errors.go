@@ -13,6 +13,6 @@ var (
 	// ErrViewNeedsMigration is returned when a query is executed against a
 	// view whose status is needs-migration. The view's SPL2 query failed to
 	// parse at startup and must be translated to LynxFlow before it can serve
-	// queries. Callers should suggest `lynxdb mv migrate <name>`.
-	ErrViewNeedsMigration = errors.New("views: view needs migration to LynxFlow; run `lynxdb mv migrate <name>` to translate the query")
+	// queries. Callers should suggest `lynxdb mv migrate <name> --query '<lynxflow query>'`.
+	ErrViewNeedsMigration = errors.New("views: view needs migration to LynxFlow; run `lynxdb mv migrate <name> --query '<lynxflow query>'` to update the query")
 )

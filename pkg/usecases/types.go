@@ -257,8 +257,8 @@ type PatchViewRequest struct {
 	Retention *string
 	Paused    *bool
 
-	// Query, LanguageVersion, and MigratedFrom support the mv migrate
-	// workflow: the CLI translates the query locally and PATCHes the
+	// Query, LanguageVersion, and MigratedFrom support the mv migrate --query
+	// workflow: the CLI PATCHes the
 	// definition with the new query text and language version.
 	Query           *string
 	LanguageVersion *string

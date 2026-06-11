@@ -18,6 +18,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage/views"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
@@ -292,7 +293,10 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	// These relied on spl2 AST annotations which no longer exist.
 	var aggSpec *enginepipeline.PartialAggSpec
 
-	ann := queryAnnotations{} // RFC-002: extractAnnotations removed
+	ann := queryAnnotations{
+		acceleratedBy: params.AcceleratedBy,
+		mvStatus:      params.MVStatus,
+	}
 
 	// Governor handles memory enforcement. No per-query budget monitor needed.
 	cpuBefore := stats.TakeCPUSnapshot()
@@ -1020,13 +1024,23 @@ func (e *Engine) parallelConfig() *enginepipeline.ParallelConfig {
 // For StreamingServerStore, the buffered events and segment data are accessible
 // through this path. For ColumnarBatchStore, the pre-materialized batches are
 // used directly.
+//
+// When the Engine has a view registry, the Source callback first checks whether
+// a scan's source name matches a materialized view. If so, it returns the
+// view's finalized events via ResolveView instead of scanning an index.
 func (e *Engine) buildProgramPipeline(
 	_ context.Context,
 	prog *logical.Plan,
 	store enginepipeline.IndexStore,
 	_ string,
 ) (*enginepipeline.BuildResult, error) {
-	source := indexStoreToSource(store, DefaultIndexName)
+	// Build a view resolver from the engine's view registry when available.
+	// The resolver is a thin closure that delegates to Engine.ResolveView.
+	var vr enginepipeline.ViewResolver
+	if e.viewRegistry != nil {
+		vr = e
+	}
+	source := indexStoreToSource(store, DefaultIndexName, vr)
 
 	iter, err := physical.Build(prog, physical.BuildOptions{
 		Source: source,
@@ -1048,28 +1062,43 @@ func (e *Engine) buildProgramPipeline(
 //
 // For ColumnarBatchStore, which holds pre-materialized batches, this converts
 // the batches to rows.
-func indexStoreToSource(store enginepipeline.IndexStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
+//
+// When vr is non-nil, the returned Source checks whether a scan's source name
+// matches a materialized view BEFORE falling through to index-based scan.
+// This enables `from <viewname>` to query views directly.
+func indexStoreToSource(store enginepipeline.IndexStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
 	// Check if the store is a StreamingServerStore — use its GetEventIterator
 	// which returns a real SegmentStreamIterator reading both buffered and segment data.
 	if ss, ok := store.(*StreamingServerStore); ok {
-		return streamingStoreToSource(ss, defaultIndex)
+		return streamingStoreToSource(ss, defaultIndex, vr)
 	}
 
 	// Check if the store is a ColumnarBatchStore — convert batches to rows.
 	if bs, ok := store.(*enginepipeline.ColumnarBatchStore); ok {
-		return batchStoreToSource(bs, defaultIndex)
+		return batchStoreToSource(bs, defaultIndex, vr)
 	}
 
 	// Generic fallback: use MaterializeEvents.
-	return materializeStoreToSource(store, defaultIndex)
+	return materializeStoreToSource(store, defaultIndex, vr)
 }
 
 // streamingStoreToSource creates a Source from a StreamingServerStore by
 // returning a SegmentStreamIterator that reads both buffered events and
 // flushed segment data through the store's GetEventIterator.
-func streamingStoreToSource(ss *StreamingServerStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
+//
+// When vr is non-nil, the source first checks whether the scan's source name
+// matches a materialized view. If so, the view's finalized events are returned
+// via a FromIterator, bypassing the segment scan entirely.
+func streamingStoreToSource(ss *StreamingServerStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
 	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
 		targetIndex := resolveIndexFromScan(scan, defaultIndex)
+
+		// Check if the target names a materialized view.
+		if vr != nil && targetIndex != "*" && targetIndex != defaultIndex {
+			if iter, ok := tryResolveViewSource(vr, targetIndex); ok {
+				return iter, nil
+			}
+		}
 
 		// For wildcard queries, pass "" so GetEventIterator includes all indexes.
 		// The SegmentStreamIterator's matchesStreamSourceScope handles "*"
@@ -1084,9 +1113,16 @@ func streamingStoreToSource(ss *StreamingServerStore, defaultIndex string) func(
 }
 
 // batchStoreToSource creates a Source from a ColumnarBatchStore.
-func batchStoreToSource(bs *enginepipeline.ColumnarBatchStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
+func batchStoreToSource(bs *enginepipeline.ColumnarBatchStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
 	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
 		targetIndex := resolveIndexFromScan(scan, defaultIndex)
+
+		// Check if the target names a materialized view.
+		if vr != nil && targetIndex != "*" && targetIndex != defaultIndex {
+			if iter, ok := tryResolveViewSource(vr, targetIndex); ok {
+				return iter, nil
+			}
+		}
 
 		var allRows []map[string]event.Value
 		for idxName, batches := range bs.Batches {
@@ -1105,9 +1141,17 @@ func batchStoreToSource(bs *enginepipeline.ColumnarBatchStore, defaultIndex stri
 
 // materializeStoreToSource creates a Source from a generic IndexStore using
 // MaterializeEvents.
-func materializeStoreToSource(store enginepipeline.IndexStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
+func materializeStoreToSource(store enginepipeline.IndexStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
 	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
 		targetIndex := resolveIndexFromScan(scan, defaultIndex)
+
+		// Check if the target names a materialized view.
+		if vr != nil && targetIndex != "*" && targetIndex != defaultIndex {
+			if iter, ok := tryResolveViewSource(vr, targetIndex); ok {
+				return iter, nil
+			}
+		}
+
 		events, err := store.MaterializeEvents(context.Background(), targetIndex)
 		if err != nil {
 			return nil, fmt.Errorf("MaterializeEvents(%s): %w", targetIndex, err)
@@ -1116,6 +1160,45 @@ func materializeStoreToSource(store enginepipeline.IndexStore, defaultIndex stri
 		return enginepipeline.NewRowScanIterator(rows, enginepipeline.DefaultBatchSize), nil
 	}
 }
+
+// tryResolveViewSource checks whether targetName matches a materialized view
+// and, if so, returns a pipeline Iterator over the view's finalized events.
+// Returns (nil, false) when targetName is not a view — the caller should fall
+// through to index-based scan. Errors from ResolveView (e.g. view needs
+// migration) are propagated by returning (nil, true) — callers type-switch
+// to see whether the Iterator is nil *and* ok is true (indicating an error
+// case that should be raised).
+//
+// Design note: we try ResolveView unconditionally for non-default, non-star
+// names. If the name is not a known view, ResolveView returns ErrViewNotFound
+// and we fall through silently. This avoids needing a separate "view exists?"
+// API.
+func tryResolveViewSource(vr enginepipeline.ViewResolver, targetName string) (enginepipeline.Iterator, bool) {
+	events, err := vr.ResolveView(targetName)
+	if err != nil {
+		// ErrViewNotFound means this name isn't a view — fall through to index scan.
+		if errors.Is(err, views.ErrViewNotFound) {
+			return nil, false
+		}
+		// Other errors (e.g. ErrViewNeedsMigration) should surface to the user.
+		// Wrap the error in an errorIterator so the pipeline reports it.
+		return &viewErrorIterator{err: fmt.Errorf("from %s: %w", targetName, err)}, true
+	}
+	rows := eventsToValueRows(events)
+	return enginepipeline.NewRowScanIterator(rows, enginepipeline.DefaultBatchSize), true
+}
+
+// viewErrorIterator is a pipeline iterator that returns a stored error on Init.
+// Used to surface view resolution errors (e.g. needs-migration) through the
+// normal pipeline error path.
+type viewErrorIterator struct {
+	err error
+}
+
+func (v *viewErrorIterator) Init(_ context.Context) error                          { return v.err }
+func (v *viewErrorIterator) Next(_ context.Context) (*enginepipeline.Batch, error) { return nil, nil }
+func (v *viewErrorIterator) Close() error                                          { return nil }
+func (v *viewErrorIterator) Schema() []enginepipeline.FieldInfo                    { return nil }
 
 // resolveIndexFromScan extracts the target index name from a logical.Scan node.
 func resolveIndexFromScan(scan *logical.Scan, defaultIndex string) string {
