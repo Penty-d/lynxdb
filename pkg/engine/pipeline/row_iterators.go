@@ -1,27 +1,25 @@
 package pipeline
 
+// Row-level streaming iterators (filter, project, tail) consumed by the
+// LynxFlow physical builder, plus batch/row collection helpers and the
+// IndexStore abstractions used by the server execution paths.
+
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/logical"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
-
-// --- Iterator stubs for deleted spl2-AST iterators ---
 
 type FilterIterator struct {
 	child     Iterator
 	predicate *vm.Program
 	vmInst    vm.VM
-	vecRoot   vecNode
-	usedVec   bool
 	evalCount int64
 	passCount int64
 }
@@ -68,13 +66,6 @@ func (f *FilterIterator) VMStats() (int64, int64) {
 func NewFilterIterator(child Iterator, predicate *vm.Program) *FilterIterator {
 	return &FilterIterator{child: child, predicate: predicate}
 }
-
-type SearchExprIterator struct{ child Iterator }
-
-func (s *SearchExprIterator) Init(ctx context.Context) error         { return s.child.Init(ctx) }
-func (s *SearchExprIterator) Next(_ context.Context) (*Batch, error) { return nil, nil }
-func (s *SearchExprIterator) Close() error                           { return s.child.Close() }
-func (s *SearchExprIterator) Schema() []FieldInfo                    { return s.child.Schema() }
 
 type ProjectIterator struct {
 	child   Iterator
@@ -386,35 +377,10 @@ func (s *ColumnarBatchStore) MaterializeEvents(_ context.Context, _ string) ([]*
 	return nil, nil
 }
 
-type Option func(*queryContext)
-type queryContext struct {
-	defaultSource       string
-	systemTableResolver SystemTableResolver
-}
-
-func WithDefaultSource(index string) Option {
-	return func(qc *queryContext) { qc.defaultSource = index }
-}
-func WithSystemTables(r SystemTableResolver) Option {
-	return func(qc *queryContext) { qc.systemTableResolver = r }
-}
-
+// BuildResult bundles the root iterator of a built pipeline with its
+// optional memory coordinator and governor budget.
 type BuildResult struct {
 	Iterator    Iterator
 	Coordinator *MemoryCoordinator
 	GovBudget   *memgov.BudgetAdapter
 }
-
-func BuildProgramWithGovernor(_ context.Context, _ *logical.Plan, _ IndexStore, _ ViewResolver, _ ViewManager, _ int, _ string, _ memgov.Governor, _ int64, _ *SpillManager, _ bool, _ *ParallelConfig, _ ...Option) (*BuildResult, error) {
-	return nil, fmt.Errorf("spl2 pipeline builder removed (RFC-002)")
-}
-
-func BuildPipelineWithStats(_ context.Context, _ interface{}, _ interface{}, _ int) (Iterator, error) {
-	return nil, fmt.Errorf("spl2 pipeline builder removed (RFC-002)")
-}
-
-func BuildFromSourceWithBudget(_ context.Context, _ interface{}, _ interface{}, _ interface{}, _ int, _ *memgov.BudgetAdapter) (Iterator, error) {
-	return nil, fmt.Errorf("spl2 pipeline builder removed (RFC-002)")
-}
-
-func CheckVectorizedFilter(_ Iterator) bool { return false }

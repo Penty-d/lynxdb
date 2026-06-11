@@ -477,24 +477,3 @@ func (mc *MemoryCoordinator) HandleRevocation(target int64) int64 {
 	}
 	return totalFreed
 }
-
-// CountSpillableNodesIR counts the number of spillable operators in a
-// logical plan tree. Used by the LynxFlow physical builder to determine
-// whether a coordinator should be created (requires 2+).
-//
-// This replaces the deleted spl2-typed countSpillableOps. It accepts an
-// interface{} so that pkg/engine/pipeline need not import pkg/logical.
-// The caller (physical/build.go) passes logical.Node; this function
-// type-asserts on the Children() method.
-func CountSpillableNodesIR(root interface{}) int {
-	type childProvider interface {
-		Children() []interface{}
-	}
-	// The actual logical.Node has Children() []Node, not []interface{},
-	// so we use a simple reflection-free walker via the node's String name.
-	// For now this returns 0; the physical builder already counts externally.
-	// TODO(RFC-002): implement proper IR-based spill counting once the
-	// physical builder integrates coordinator creation.
-	_ = root
-	return 0
-}

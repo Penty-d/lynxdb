@@ -311,8 +311,6 @@ func iteratorChild(iter Iterator) Iterator {
 	// Filter operators.
 	case *FilterIterator:
 		return it.child
-	case *SearchExprIterator:
-		return it.child
 	// Aggregation operators.
 	case *AggregateIterator:
 		return it.child

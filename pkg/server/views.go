@@ -10,6 +10,7 @@ import (
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/logical"
+	lfAST "github.com/lynxbase/lynxdb/pkg/lynxflow/ast"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/storage/views"
@@ -225,26 +226,25 @@ func (e *Engine) RunQueryBackfill(ctx context.Context, viewName string) error {
 		return e.viewRegistry.Update(def)
 	}
 
-	// Parse and optimize the query so SubmitQuery receives a fully populated
-	// QueryParams (with Program and Hints). Without this, executeQuery will
-	// dereference nil Program.Main and panic.
-	query := def.Query // RFC-002: spl2 normalization removed
+	// Plan the query so SubmitQuery receives a fully populated QueryParams
+	// (Program for execution, Hints for segment pruning).
+	query := def.Query
 
-	prog, err := parseMVQuery(query)
+	planRes, err := parseMVQuery(query)
 	if err != nil {
 		return fmt.Errorf("backfill: parse query for %s: %w", viewName, err)
 	}
+	prog := planRes.Program
+	hints := planRes.Hints
 
-	// If the spec has an auto-injected hidden count (for avg merge correctness),
-	// inject a matching count aggregation into the AST so the backfill results
-	// contain the count column needed by finalizedResultsToPartialGroups.
+	// If the spec carries an auto-injected hidden count (added for weighted
+	// avg merge correctness), inject a matching count aggregation into the
+	// logical plan so the backfill results contain the count column that
+	// finalizedResultsToPartialGroups needs.
 	if def.AggSpec != nil {
-		injectAutoCountIntoAST(prog, def.AggSpec)
+		injectAutoCount(prog, def.AggSpec)
 	}
 
-	// RFC-002: optimizer call removed (handled by planner).
-
-	hints := extractMVHints(prog)
 	resultType := DetectResultType(prog)
 
 	// Submit the view's query through the normal engine pipeline.
@@ -580,13 +580,48 @@ func resultRowsToEvents(rows []model.ResultRow, viewName string) []*event.Event 
 	return events
 }
 
-// injectAutoCountIntoAST walks the parsed program's AST and injects a
-// "count as _mv_auto_count" aggregation into the first StatsCommand or
-// TimechartCommand if the spec contains the auto-injected hidden count.
-// This ensures the backfill query results include the count column that
-// finalizedResultsToPartialGroups needs for correct weighted avg merge.
-func injectAutoCountIntoAST(_ *logical.Plan, _ interface{}) {
-	// RFC-002: spl2 AST injection removed.
+// injectAutoCount appends a hidden "count() as __mv_auto_count" aggregation
+// to the plan's Aggregate node when the view's AggSpec carries the
+// auto-injected hidden count (added by AnalyzeLynxFlow for avg views).
+// Without it, backfill results lack the count column and
+// finalizedResultsToPartialGroups falls back to count=1 per group, which
+// corrupts the weighted avg merge with live partial state.
+func injectAutoCount(plan *logical.Plan, spec *enginepipeline.PartialAggSpec) {
+	if plan == nil || plan.Root == nil || spec == nil {
+		return
+	}
+	needsAutoCount := false
+	for _, fn := range spec.Funcs {
+		if fn.Alias == views.MVAutoCountAlias {
+			needsAutoCount = true
+			break
+		}
+	}
+	if !needsAutoCount {
+		return
+	}
+
+	// Find the first (lowest) Aggregate node in the main chain.
+	n := plan.Root
+	for n != nil {
+		if agg, ok := n.(*logical.Aggregate); ok {
+			for _, a := range agg.Aggs {
+				if a.Alias == views.MVAutoCountAlias {
+					return // already present
+				}
+			}
+			agg.Aggs = append(agg.Aggs, logical.Agg{
+				Func:  &lfAST.Call{Callee: "count"},
+				Alias: views.MVAutoCountAlias,
+			})
+			return
+		}
+		children := n.Children()
+		if len(children) == 0 {
+			return
+		}
+		n = children[0]
+	}
 }
 
 // GetView implements planner.ViewCatalog for the engine.
@@ -650,15 +685,7 @@ func (e *Engine) DropView(name string) error {
 	return e.viewRegistry.Drop(name)
 }
 
-func parseMVQuery(query string) (*logical.Plan, error) {
+func parseMVQuery(query string) (*planner.PlanResult, error) {
 	p := planner.New()
-	result, err := p.Plan(planner.PlanRequest{Query: query})
-	if err != nil {
-		return nil, err
-	}
-	return result.Program, nil
-}
-
-func extractMVHints(plan *logical.Plan) *model.QueryHints {
-	return &model.QueryHints{}
+	return p.Plan(planner.PlanRequest{Query: query})
 }

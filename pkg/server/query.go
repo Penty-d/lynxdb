@@ -395,7 +395,6 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		PrefetchUsed:         qr.ss.PrefetchUsed,
 		PartialAggUsed:       aggSpec != nil || hasTransformPartialAgg(prog),
 		TopKUsed:             qr.topKUsed,
-		VectorizedFilterUsed: qr.vectorizedFilterUsed,
 		DictFilterUsed:       qr.ss.DictFilterUsed,
 		JoinStrategy:         ann.joinStrategy,
 		AcceleratedBy:        ann.acceleratedBy,
@@ -618,22 +617,21 @@ func sampleRowsForPreview(rows []map[string]event.Value, maxN int) []map[string]
 
 // queryPipelineResult holds the output of runQueryPipeline.
 type queryPipelineResult struct {
-	rows                 []model.ResultRow
-	ss                   storeStats
-	rowsScanned          int64
-	matchedRows          int64
-	indexesUsed          []string
-	scanMS               float64
-	pipelineMS           float64
-	topKUsed             bool
-	vectorizedFilterUsed bool
-	pipelineStages       []PipelineStage
-	rangePredicates      []model.RangePredicate
-	warnings             []string
-	vmCalls              int64
-	vmTimeNS             int64
-	operatorBudgets      []stats.OperatorBudgetStats
-	govBudget            *memgov.BudgetAdapter // non-nil when governor v2 path was used
+	rows            []model.ResultRow
+	ss              storeStats
+	rowsScanned     int64
+	matchedRows     int64
+	indexesUsed     []string
+	scanMS          float64
+	pipelineMS      float64
+	topKUsed        bool
+	pipelineStages  []PipelineStage
+	rangePredicates []model.RangePredicate
+	warnings        []string
+	vmCalls         int64
+	vmTimeNS        int64
+	operatorBudgets []stats.OperatorBudgetStats
+	govBudget       *memgov.BudgetAdapter // non-nil when governor v2 path was used
 }
 
 // runQueryPipeline executes either the distributed or standard pipeline path.
@@ -770,7 +768,6 @@ func (e *Engine) runStandardPipeline(
 	if collectErr != nil {
 		return nil, collectErr
 	}
-	qr.vectorizedFilterUsed = enginepipeline.CheckVectorizedFilter(iter)
 	stages := enginepipeline.CollectStageStats(iter)
 	qr.pipelineStages = convertStageStats(stages)
 	qr.warnings = enginepipeline.CollectWarnings(iter)
@@ -871,12 +868,10 @@ func (e *Engine) runStreamingPipeline(
 	// rejected by matchesStreamSourceScope before IndexName is checked.
 	streamHints := buildStreamHints(segFilterHints, e.queryCfg.Load().BitmapSelectivityThreshold)
 	if isMultiIndex {
-		// RFC-002: field removed from SegmentStreamHints
-		// RFC-002: field removed from SegmentStreamHints
-		// RFC-002: field removed
-		// RFC-002: field removed from SegmentStreamHints
 		streamHints.SourceIndices = nil
 		streamHints.SourceGlob = ""
+		streamHints.SourceIncludeGlobs = nil
+		streamHints.SourceExcludeGlobs = nil
 	}
 
 	store := &StreamingServerStore{
@@ -960,7 +955,6 @@ func (e *Engine) runStreamingPipeline(
 	if hints != nil {
 		qr.rangePredicates = append([]model.RangePredicate(nil), hints.RangePredicates...)
 	}
-	qr.vectorizedFilterUsed = enginepipeline.CheckVectorizedFilter(streamIter)
 	stages := enginepipeline.CollectStageStats(streamIter)
 	qr.pipelineStages = convertStageStats(stages)
 	qr.warnings = enginepipeline.CollectWarnings(streamIter)
@@ -988,21 +982,6 @@ func (s segmentSourceSet) Segments() []*segment.Reader {
 	}
 
 	return readers
-}
-
-func applyLoweredRangePredicates(hints *model.QueryHints, q *logical.Plan) {
-	if hints == nil || q == nil {
-		return
-	}
-	ann, ok := (func(_ string) (interface{}, bool) { return nil, false })("rangePredicates")
-	if !ok {
-		return
-	}
-	preds, ok := ann.([]model.RangePredicate)
-	if !ok {
-		return
-	}
-	hints.RangePredicates = append(hints.RangePredicates[:0], preds...)
 }
 
 // parallelConfig constructs a ParallelConfig from the server's query config.

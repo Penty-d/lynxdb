@@ -255,17 +255,26 @@ All items below completed in a single pass:
 - [x] **docs/site**: deleted `docs/site/docs/lynx-flow/` directory; removed sidebar category; updated navbar link to `/docs/lynxflow/overview`
 - [x] **CI workflows**: updated `rsigma-drift.yml` to diff `.lynxflow` instead of `.spl2`; replaced spl2 fuzz steps with `go test ./pkg/lynxflow/parser/ -run '^$' -fuzz '^FuzzParse$' -fuzztime 10s`; kept lynxflow conformance
 
-### TODO(RFC-002) follow-ups remaining in code
+### TODO(RFC-002) follow-ups — RESOLVED (post-ship completion pass, 2026-06-11)
 
-| File | TODO |
-|------|------|
-| `pkg/cluster/query/coordinator.go:461` | implement via physical.Build on coordinator nodes |
-| `pkg/cluster/query/join_planner.go:12` | reimplement on logical.Join nodes |
-| `pkg/planner/planner.go:74` | implement tail validation on logical plan |
-| `pkg/planner/planner.go:100` | wire view catalog into logical optimizer |
-| `pkg/server/stream.go:35` | BuildStreamingPipeline should accept *model.QueryHints directly |
-| `pkg/vm/vm.go:2997` | remove OpSearchMatch from opcode table |
-| `pkg/engine/pipeline/memory_coordinator.go:496` | implement proper IR-based spill counting |
-| `pkg/usecases/query.go:189` | implement pipeline stage annotation from logical plan |
-| `internal/shell/highlight.go:5` | reimplement with lynxflow lexer |
-| `pkg/usecases/query_test.go:287` | re-enable field tracking test after annotatePipelineFields |
+All follow-ups left by the Phase 10 deletion were closed in a dedicated
+completion pass:
+
+| Item | Resolution |
+|------|------------|
+| Stubbed `SegmentStreamIterator` (silent segment data loss in tail catchup / EXPLAIN ANALYZE) | Real row-group streaming iterator restored from the pre-deletion tree on `pkg/model` types; server scan source reads segments + buffered events |
+| REST lynxflow shim (`BuildEventStoreFromHints`, sync-only, `wait` ignored) | REST routes through `usecases.QueryService.Submit`: async/hybrid modes, job polling/SSE, meta.explain, scan stats, result cache, broad-scope lints |
+| `coordinator.go` coordinator-node execution stub | `applyCoordCommands` executes coordinator stages via `physical.Build` over the merged rows (clone + rewire over a synthetic scan) |
+| `join_planner.go` stub | `PlanDistributedJoin` on `logical.Join` (broadcast for CTE-backed right sides, shuffle otherwise); strategy recorded for tracing |
+| Distributed dispatch removed from `executeQueryPipeline` | Restored; `runDistributedPipeline` consumes `ExecuteQueryIR` over resolved `model.QueryHints` |
+| `planner.go` view catalog TODO | MV acceleration rule in `pkg/logical/opt` (decision D31); `meta.stats.accelerated_by` flows end to end; `from <view>` resolves through the view registry |
+| `stream.go` hints TODO | `BuildStreamingPipeline` accepts `*model.QueryHints`, streams from segments with an epoch-unpinning iterator |
+| `vm.go` OpSearchMatch | dead handler removed (opcode number stays reserved, append-only) |
+| `memory_coordinator.go` spill-counting stub | uncalled `CountSpillableNodesIR` deleted (builder receives an explicit coordinator) |
+| `usecases/query.go` pipeline annotation stubs | `annotatePipelineFields` + `extractPhysicalPlan` implemented over the logical IR; 14 skipped tests re-enabled |
+| `internal/shell/highlight.go` | rewritten on the lynxflow lexer + operator/function registry |
+| `mv migrate` window-closed stub | explicit-query migration: `mv migrate <name> --query '<lynxflow>'`, `--all`/`--dry-run` listings; all suggestion strings aligned |
+| Skipped filebeat round-trip | passes on the engine execution path; skip removed |
+| Legacy SPL2 views activating with empty analysis | `AnalyzeQuery` errors; views marked needs-migration, excluded from dispatch |
+| `test/integration` sigma e2e on deleted `.spl2` goldens | ported to `.lynxflow` goldens |
+| Dead code | `vec_plan.go`/`vec_eval.go`, `SearchExprIterator`, spl2 Build* stubs, `applyLoweredRangePredicates`, `CheckVectorizedFilter` removed; `spl2_stubs.go` renamed `row_iterators.go` |
