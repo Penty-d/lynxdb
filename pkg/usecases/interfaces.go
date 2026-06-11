@@ -19,6 +19,7 @@ type QueryEngine interface {
 	ActiveJobCount() int64
 	MaxConcurrent() int32
 	BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
+		hints *model.QueryHints,
 		externalTB *model.TimeBounds) (enginepipeline.Iterator, server.StreamingStats, error)
 	BuildEventStoreFromHints(hints *model.QueryHints) map[string][]*event.Event
 
@@ -67,5 +68,6 @@ type EventBusProvider interface {
 type TailEngine interface {
 	EventBusProvider
 	BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
+		hints *model.QueryHints,
 		externalTB *model.TimeBounds) (enginepipeline.Iterator, server.StreamingStats, error)
 }

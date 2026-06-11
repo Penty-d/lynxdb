@@ -50,7 +50,6 @@ func (s *QueryService) currentQueryConfig() config.QueryConfig {
 // Explain parses and analyses a query without executing it.
 func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainResult, error) {
 	query := req.Query // RFC-002: spl2 normalization removed
-	var rewrites []model.QueryRewrite
 	plan, err := s.planner.Plan(planner.PlanRequest{
 		Query: query,
 		From:  req.From,
@@ -60,8 +59,7 @@ func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainR
 		var pe *planner.ParseError
 		if errors.As(err, &pe) {
 			return &ExplainResult{
-				IsValid:  false,
-				Rewrites: rewrites,
+				IsValid: false,
 				Errors: []ExplainError{{
 					Message:    pe.Message,
 					Suggestion: pe.Suggestion,
@@ -125,7 +123,7 @@ func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainR
 	return &ExplainResult{
 		IsValid:  true,
 		Errors:   nil,
-		Rewrites: rewrites,
+		Rewrites: plan.Rewrites,
 		Parsed: &ExplainParsed{
 			Pipeline:          stages,
 			ResultType:        string(plan.ResultType),
@@ -306,12 +304,8 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 	}
 	var analysisLints []model.QueryLint
 	if !req.NoLint || !req.NoSuggestions {
-		var lintErr error
-		// RFC-002: spl2 lint removed; lynxflow lint runs in the LynxFlow execution path.
-		if lintErr != nil {
-			// RFC-002: spl2 lint removed.
-		}
-		analysisLints = model.PrepareQueryLints(analysisLints)
+		// Lints come from the planner (sema + lint passes on the desugared AST).
+		analysisLints = model.PrepareQueryLints(plan.Lints)
 	}
 	var lints []model.QueryLint
 	if !req.NoLint {
@@ -321,7 +315,10 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 	if !req.NoSuggestions {
 		// RFC-002: spl2 suggestions removed.
 	}
-	job.SetAdvisoryMetadata(warnings, lints, suggestions, req.Rewrites)
+	// Merge planner rewrites (desugar) with request rewrites (user-facing normalizer).
+	allRewrites := append([]model.QueryRewrite(nil), plan.Rewrites...)
+	allRewrites = append(allRewrites, req.Rewrites...)
+	job.SetAdvisoryMetadata(warnings, lints, suggestions, allRewrites)
 
 	// buildSync builds an inline result from the (completed) job, attaching the
 	// advisory metadata consistently across every synchronous return path.
@@ -330,7 +327,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		r.Warnings = warnings
 		r.Lints = lints
 		r.Suggestions = suggestions
-		r.Rewrites = req.Rewrites
+		r.Rewrites = allRewrites
 
 		return r
 	}
@@ -399,7 +396,7 @@ func (s *QueryService) Stream(ctx context.Context, req StreamRequest) (enginepip
 		return nil, server.StreamingStats{}, err
 	}
 
-	return s.engine.BuildStreamingPipeline(ctx, plan.Program, plan.ExternalTimeBounds)
+	return s.engine.BuildStreamingPipeline(ctx, plan.Program, plan.Hints, plan.ExternalTimeBounds)
 }
 
 // Histogram computes event count buckets over a time range.

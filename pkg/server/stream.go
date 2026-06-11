@@ -6,7 +6,6 @@ import (
 	"time"
 
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
-	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/logical"
 	"github.com/lynxbase/lynxdb/pkg/logical/physical"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
@@ -28,14 +27,23 @@ type StreamingStats struct {
 
 // BuildStreamingPipeline builds the query pipeline and returns the raw Iterator
 // instead of collecting all results. The caller MUST call iter.Close().
-// The returned iterator holds a reference to a per-query memory budget (either
-// BudgetAdapter). The budget is released when the
-// caller closes the iterator; callers that abandon the iterator will leak.
+//
+// When hints is non-nil the streaming path uses them for segment pruning and
+// source-scope resolution, mirroring the runStreamingPipeline execution path.
+// When hints is nil, empty hints are used (no pruning).
+//
+// The returned iterator holds references to the pinned segment epoch and an
+// optional per-query memory budget. Both are released when the caller closes
+// the iterator; callers that abandon the iterator will leak the epoch pin.
 func (e *Engine) BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
+	hints *model.QueryHints,
 	externalTimeBounds *model.TimeBounds) (enginepipeline.Iterator, StreamingStats, error) {
-	// RFC-002: hints must be pre-extracted by caller.
-	// TODO(RFC-002): BuildStreamingPipeline should accept *model.QueryHints directly.
-	hints := &model.QueryHints{}
+
+	if hints == nil {
+		hints = &model.QueryHints{}
+	}
+
+	// Merge external time bounds into hints (intersect — tightest wins).
 	if externalTimeBounds != nil {
 		if hints.TimeBounds == nil {
 			hints.TimeBounds = externalTimeBounds
@@ -51,53 +59,111 @@ func (e *Engine) BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
 		}
 	}
 
-	return e.buildStreamingPipelineWithGovernor(ctx, prog, hints)
+	return e.buildStreamingPipelineReal(ctx, prog, hints)
 }
 
-// buildStreamingPipelineWithGovernor uses the governor v2 for memory accounting.
-func (e *Engine) buildStreamingPipelineWithGovernor(ctx context.Context, prog *logical.Plan,
+// buildStreamingPipelineReal mirrors runStreamingPipeline but returns the
+// raw Iterator instead of draining it. The epoch is pinned and unpinned
+// when the returned iterator is closed.
+func (e *Engine) buildStreamingPipelineReal(ctx context.Context, prog *logical.Plan,
 	hints *model.QueryHints) (enginepipeline.Iterator, StreamingStats, error) {
 
-	eventStore, ss, memErr := e.buildEventStore(ctx, hints, nil)
-	if memErr != nil {
-		return nil, StreamingStats{}, memErr
-	}
-	streamStats := buildStreamingStats(eventStore, ss)
+	// Resolve glob patterns against the source registry.
+	hints, _ = e.resolveSourceScope(hints)
 
-	// RFC-002 Phase 10: use physical.Build with an ephemeral source backed by
-	// the materialized event store, replacing the removed BuildProgramWithGovernor.
-	source := physical.NewStorageSourceFromMap(eventStore, DefaultIndexName)
+	memEvents := e.bufferedEventsForQuery()
+
+	// Pin the current epoch. The returned iterator's Close() will unpin it.
+	ep := e.pinEpoch()
+	segs := make([]*segmentHandle, len(ep.segments))
+	copy(segs, ep.segments)
+
+	// Sort segments newest first.
+	sort.Slice(segs, func(i, j int) bool {
+		return segs[i].meta.MaxTime.After(segs[j].meta.MaxTime)
+	})
+
+	// Build segment sources with pre-filtering.
+	var ss storeStats
+	ss.SegmentsTotal = len(segs)
+	ss.BufferedEvents = len(memEvents)
+	sources := e.buildSegmentSources(ctx, segs, hints, &ss)
+
+	streamHints := buildStreamHints(hints, e.queryCfg.Load().BitmapSelectivityThreshold)
+
+	store := &StreamingServerStore{
+		segments:     sources,
+		allMemEvents: memEvents,
+		baseHints:    streamHints,
+		batchSize:    0, // default
+		gov:          e.governor,
+	}
+
+	// Build the pipeline.
+	source := indexStoreToSource(store, DefaultIndexName)
 	iter, err := physical.Build(prog, physical.BuildOptions{
 		Source: source,
 		Now:    time.Now(),
 	})
 	if err != nil {
-		return nil, streamStats, err
+		ep.unpin()
+		return nil, StreamingStats{}, err
 	}
 
 	if err := iter.Init(ctx); err != nil {
 		_ = iter.Close()
-		return nil, streamStats, err
+		ep.unpin()
+		return nil, StreamingStats{}, err
 	}
 
-	return &govClosingIterator{Iterator: iter, budget: nil}, streamStats, nil
+	// Populate pre-drain stats.
+	streamStats := StreamingStats{
+		SegmentsTotal:       ss.SegmentsTotal,
+		SegmentsSkippedTime: ss.SegmentsSkippedTime,
+		SegmentsSkippedBF:   ss.SegmentsSkippedBF,
+		BufferedEvents:      ss.BufferedEvents,
+	}
+
+	// Wrap: Close() unpins epoch + releases governor budget.
+	wrapped := &epochClosingIterator{
+		Iterator: iter,
+		epoch:    ep,
+		store:    store,
+	}
+
+	return wrapped, streamStats, nil
 }
 
-// buildStreamingStats constructs StreamingStats from an event store and scan stats.
-func buildStreamingStats(eventStore map[string][]*event.Event, ss storeStats) StreamingStats {
-	var streamStats StreamingStats
-	for name, idxEvents := range eventStore {
-		streamStats.RowsScanned += int64(len(idxEvents))
-		streamStats.IndexesUsed = append(streamStats.IndexesUsed, name)
+// epochClosingIterator wraps an Iterator and unpins the segment epoch when
+// the iterator is closed. This ensures the epoch stays pinned for the entire
+// lifetime of the streaming iterator (which outlives the BuildStreamingPipeline
+// call), and segments remain mmapped until all reads complete.
+type epochClosingIterator struct {
+	enginepipeline.Iterator
+	epoch  *segmentEpoch
+	store  *StreamingServerStore
+	closed bool
+}
+
+// ScanStats returns the aggregated scan statistics from ALL streaming
+// iterators created by the underlying store. Must be called after the
+// iterator is fully drained.
+func (e *epochClosingIterator) ScanStats() *enginepipeline.SegmentStreamStats {
+	if e.store == nil {
+		return nil
 	}
-	sort.Strings(streamStats.IndexesUsed)
-	streamStats.SegmentsTotal = ss.SegmentsTotal
-	streamStats.SegmentsScanned = ss.SegmentsScanned
-	streamStats.SegmentsSkippedTime = ss.SegmentsSkippedTime
-	streamStats.SegmentsSkippedBF = ss.SegmentsSkippedBF
-	streamStats.BufferedEvents = ss.BufferedEvents
-	streamStats.ProcessedBytes = ss.TotalBytesRead
-	return streamStats
+	return e.store.AggregatedStats()
+}
+
+func (e *epochClosingIterator) Close() error {
+	err := e.Iterator.Close()
+	if !e.closed {
+		if e.epoch != nil {
+			e.epoch.unpin()
+		}
+		e.closed = true
+	}
+	return err
 }
 
 // govClosingIterator wraps an Iterator and closes the governor BudgetAdapter

@@ -24,6 +24,7 @@ type TailRequest struct {
 // TailPlan is a validated plan for tail streaming.
 type TailPlan struct {
 	Program    *logical.Plan
+	Hints      *model.QueryHints
 	ExternalTB *model.TimeBounds
 	Count      int
 	RawQuery   string
@@ -76,6 +77,7 @@ func (s *TailService) Plan(req TailRequest) (*TailPlan, error) {
 
 	return &TailPlan{
 		Program:    plan.Program,
+		Hints:      plan.Hints,
 		ExternalTB: plan.ExternalTimeBounds,
 		Count:      count,
 		RawQuery:   plan.RawQuery,
@@ -166,7 +168,7 @@ func (s *TailService) SubscribeAndCatchup(ctx context.Context, plan *TailPlan) (
 // keeps only the last N rows in memory, bounding peak allocation to O(count)
 // instead of O(total_matching_events).
 func (s *TailService) catchupRing(ctx context.Context, plan *TailPlan) ([]map[string]event.Value, error) {
-	iter, _, err := s.engine.BuildStreamingPipeline(ctx, plan.Program, plan.ExternalTB)
+	iter, _, err := s.engine.BuildStreamingPipeline(ctx, plan.Program, plan.Hints, plan.ExternalTB)
 	if err != nil {
 		return nil, err
 	}
