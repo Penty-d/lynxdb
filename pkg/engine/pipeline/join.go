@@ -35,12 +35,20 @@ type JoinIterator struct {
 	left      Iterator
 	right     Iterator
 	field     string
-	joinType  string // "inner" or "left"
+	joinType  string // "inner", "left", or "outer"
 	strategy  string // "hash" (default), "in_list", "bloom_semi"
 	hashMap   map[string][]map[string]event.Value
 	bloomKeys map[uint64]bool // for bloom_semi pre-filter
 	built     bool
 	acct      memgov.MemoryAccount // per-operator memory tracking
+
+	// Outer join tracking: which right-side keys were matched during probe.
+	// After the left side is exhausted, unmatched right rows are emitted in
+	// DefaultBatchSize chunks from outerPending.
+	rightMatched    map[string]bool
+	outerDone       bool
+	outerPending    []map[string]event.Value
+	outerPendingOff int
 
 	// Grace hash join state (populated only when in-memory build exceeds budget).
 	spillMgr         *SpillManager
@@ -54,6 +62,8 @@ type JoinIterator struct {
 	partLeftReader   *ColumnarSpillReader                // reader for current left partition
 	partBuffer       []map[string]event.Value            // buffered output rows for current partition
 	partBufferOffset int                                 // offset into partBuffer
+	gracePartMatched map[string]bool                     // outer join: tracks matched right keys in current grace partition
+	partOuterFlushed bool                                // outer join: unmatched right rows already flushed for current partition
 	spilledRows      int64                               // total rows spilled (for ResourceReporter)
 	spillBytesTotal  int64                               // persisted spill bytes (survives Close)
 
@@ -139,6 +149,9 @@ func (j *JoinIterator) Next(ctx context.Context) (*Batch, error) {
 		return j.nextGrace(ctx)
 	}
 
+	isLeftOrOuter := strings.EqualFold(j.joinType, "left") || strings.EqualFold(j.joinType, "outer")
+	isOuter := strings.EqualFold(j.joinType, "outer")
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -152,8 +165,32 @@ func (j *JoinIterator) Next(ctx context.Context) (*Batch, error) {
 		} else {
 			batch, err = j.left.Next(ctx)
 		}
-		if batch == nil || err != nil {
+		if err != nil {
 			return nil, err
+		}
+
+		// Left side exhausted: for outer join, emit unmatched right rows
+		// in DefaultBatchSize chunks.
+		if batch == nil {
+			if isOuter {
+				if !j.outerDone {
+					j.outerDone = true
+					j.collectUnmatchedRight()
+				}
+				if j.outerPendingOff < len(j.outerPending) {
+					end := j.outerPendingOff + DefaultBatchSize
+					if end > len(j.outerPending) {
+						end = len(j.outerPending)
+					}
+					out := BatchFromRows(j.outerPending[j.outerPendingOff:end])
+					j.outerPendingOff = end
+
+					return out, nil
+				}
+				j.outerPending = nil
+			}
+
+			return nil, nil
 		}
 
 		result := NewBatch(batch.Len)
@@ -169,7 +206,7 @@ func (j *JoinIterator) Next(ctx context.Context) (*Batch, error) {
 				h := fnv.New64a()
 				h.Write([]byte(key))
 				if !j.bloomKeys[h.Sum64()] {
-					if strings.EqualFold(j.joinType, "left") {
+					if isLeftOrOuter {
 						result.AddRow(row)
 					}
 
@@ -179,11 +216,14 @@ func (j *JoinIterator) Next(ctx context.Context) (*Batch, error) {
 
 			matches := j.hashMap[key]
 			if len(matches) > 0 {
+				if isOuter {
+					j.rightMatched[key] = true
+				}
 				for _, match := range matches {
 					merged := mergeRows(row, match)
 					result.AddRow(merged)
 				}
-			} else if strings.EqualFold(j.joinType, "left") {
+			} else if isLeftOrOuter {
 				result.AddRow(row)
 			}
 		}
@@ -363,6 +403,12 @@ func (j *JoinIterator) buildHashTable(ctx context.Context) error {
 		return j.finalizeGraceHashJoin(ctx)
 	}
 
+	// For outer join, initialize the matched-key tracker so we can later
+	// emit unmatched right rows.
+	if strings.EqualFold(j.joinType, "outer") {
+		j.rightMatched = make(map[string]bool, len(j.hashMap))
+	}
+
 	// For bloom_semi strategy, build a hash set of keys for pre-filtering.
 	if j.strategy == "bloom_semi" && len(j.hashMap) > 0 {
 		j.bloomKeys = make(map[uint64]bool, len(j.hashMap))
@@ -429,6 +475,20 @@ func (j *JoinIterator) nextPrefetched(_ context.Context) (*Batch, error) {
 	}
 
 	return res.batch, nil
+}
+
+// collectUnmatchedRight gathers right-side rows whose keys were never matched
+// during the left-side probe phase into outerPending. Used by full outer join
+// to ensure every right row appears in the output; emission is chunked by the
+// caller so a large build side cannot produce one unbounded batch.
+func (j *JoinIterator) collectUnmatchedRight() {
+	for key, rows := range j.hashMap {
+		if j.rightMatched[key] {
+			continue
+		}
+		j.outerPending = append(j.outerPending, rows...)
+	}
+	j.outerPendingOff = 0
 }
 
 // hashPartition computes a partition index for a join key using FNV-32a.
@@ -722,6 +782,13 @@ func (j *JoinIterator) nextGrace(ctx context.Context) (*Batch, error) {
 			if batch != nil {
 				return batch, nil
 			}
+			// Outer join: probePartition may have flushed unmatched right rows
+			// into partBuffer (e.g. when the left partition is empty). Drain
+			// them before tearing the partition down — loadPartition resets
+			// partBuffer, so advancing first would drop these rows.
+			if j.partBufferOffset < len(j.partBuffer) {
+				continue
+			}
 			// Partition exhausted — clean up and advance.
 			j.partLeftReader.Close()
 			j.partLeftReader = nil
@@ -779,13 +846,22 @@ func (j *JoinIterator) loadPartition(idx int) error {
 	}
 
 	if len(hashMap) == 0 {
-		// Empty right partition — for left join, we still need to emit left rows.
-		if !strings.EqualFold(j.joinType, "left") {
+		// Empty right partition — for left/outer join, we still need to emit left rows.
+		if !strings.EqualFold(j.joinType, "left") && !strings.EqualFold(j.joinType, "outer") {
 			return nil
 		}
 	}
 
 	j.partHashMap = hashMap
+
+	// For outer join, initialize per-partition matched-key tracker and reset
+	// the one-shot unmatched-rows flush flag.
+	if strings.EqualFold(j.joinType, "outer") && len(hashMap) > 0 {
+		j.gracePartMatched = make(map[string]bool, len(hashMap))
+	} else {
+		j.gracePartMatched = nil
+	}
+	j.partOuterFlushed = false
 
 	// Open left partition reader.
 	leftReader, err := NewColumnarSpillReader(j.leftPartPaths[idx])
@@ -801,13 +877,35 @@ func (j *JoinIterator) loadPartition(idx int) error {
 
 // probePartition reads rows from the left partition reader and probes them
 // against the partition hash table. Returns a batch of results or nil when
-// the partition is exhausted.
+// the partition is exhausted. For outer join, unmatched right rows are appended
+// after the left side of the partition is fully consumed.
 func (j *JoinIterator) probePartition() (*Batch, error) {
+	isLeftOrOuter := strings.EqualFold(j.joinType, "left") || strings.EqualFold(j.joinType, "outer")
+	isOuter := strings.EqualFold(j.joinType, "outer")
+
 	result := NewBatch(DefaultBatchSize)
 
 	for result.Len < DefaultBatchSize {
 		row, err := j.partLeftReader.ReadRow()
 		if errors.Is(err, io.EOF) || row == nil {
+			// Left side of this partition is exhausted. For outer join, flush
+			// unmatched right rows into partBuffer exactly once per partition;
+			// nextGrace drains partBuffer in DefaultBatchSize chunks. Flushing
+			// must be one-shot: probePartition is re-entered at EOF until it
+			// returns nil, and re-emitting here would loop forever.
+			if isOuter && !j.partOuterFlushed && j.partHashMap != nil {
+				j.partOuterFlushed = true
+				var pending []map[string]event.Value
+				for key, rows := range j.partHashMap {
+					if j.gracePartMatched[key] {
+						continue
+					}
+					pending = append(pending, rows...)
+				}
+				j.partBuffer = pending
+				j.partBufferOffset = 0
+			}
+
 			break
 		}
 		if err != nil {
@@ -821,11 +919,14 @@ func (j *JoinIterator) probePartition() (*Batch, error) {
 
 		matches := j.partHashMap[key]
 		if len(matches) > 0 {
+			if isOuter {
+				j.gracePartMatched[key] = true
+			}
 			for _, match := range matches {
 				merged := mergeRows(row, match)
 				result.AddRow(merged)
 			}
-		} else if strings.EqualFold(j.joinType, "left") {
+		} else if isLeftOrOuter {
 			result.AddRow(row)
 		}
 	}

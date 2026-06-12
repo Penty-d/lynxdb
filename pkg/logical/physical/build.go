@@ -13,6 +13,7 @@ package physical
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,6 +33,11 @@ type BuildOptions struct {
 	// Source turns a logical.Scan node into an iterator. Tests supply a
 	// slice-backed source; the server plugs the real storage scan path.
 	Source func(scan *logical.Scan) (pipeline.Iterator, error)
+
+	// TeeEnabled gates whether tee sinks are allowed. In CLI file/pipe mode
+	// this is true; in server mode it defaults to false to prevent
+	// server-side file writes via user-supplied queries.
+	TeeEnabled bool
 
 	// Coordinator is the optional per-query MemoryCoordinator for spillable
 	// operators. When nil, all memory accounts are nop.
@@ -140,7 +146,7 @@ func (b *builder) buildNode(n logical.Node) (pipeline.Iterator, error) {
 	case *logical.Materialize:
 		return nil, &NotYetImplementedError{Feature: "Materialize (Phase 8)"}
 	case *logical.Tee:
-		return nil, &NotYetImplementedError{Feature: "Tee (Phase 9)"}
+		iter, err = b.buildTee(nd)
 	default:
 		return nil, fmt.Errorf("physical.Build: unknown node type %T", n)
 	}
@@ -556,9 +562,6 @@ func (b *builder) buildJoin(nd *logical.Join) (pipeline.Iterator, error) {
 	}
 
 	joinType := nd.Type
-	if joinType == "outer" {
-		return nil, &NotYetImplementedError{Feature: "outer join"}
-	}
 
 	if nd.Right == nil {
 		return left, nil
@@ -877,6 +880,33 @@ func (b *builder) buildHelperSessionize(child pipeline.Iterator, nd *logical.Hel
 		groupBy = append(groupBy, exprFieldName(gb))
 	}
 	return pipeline.NewSessionizeIterator(child, maxPause, groupBy, b.opts.batchSize()), nil
+}
+
+// ---------------------------------------------------------------------------
+// Tee
+// ---------------------------------------------------------------------------
+
+func (b *builder) buildTee(nd *logical.Tee) (pipeline.Iterator, error) {
+	if !b.opts.TeeEnabled {
+		return nil, fmt.Errorf("physical.Build: tee sinks are not enabled in this execution context; tee is available in CLI file/pipe mode")
+	}
+
+	child, err := b.buildChild(nd)
+	if err != nil {
+		return nil, err
+	}
+
+	sink := nd.Sink
+	if sink == "" {
+		return nil, fmt.Errorf("physical.Build: tee requires a non-empty sink path")
+	}
+
+	// D-32: tee is restricted to CLI file/pipe mode. Validate absolute path.
+	if !filepath.IsAbs(sink) {
+		return nil, fmt.Errorf("physical.Build: tee sink path must be absolute, got %q", sink)
+	}
+
+	return pipeline.NewTeeIterator(child, sink, pipeline.TeeFormatJSON), nil
 }
 
 // ---------------------------------------------------------------------------

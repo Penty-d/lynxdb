@@ -3,6 +3,9 @@ package physical
 import (
 	"context"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -590,7 +593,7 @@ func TestBuild_Join_Left(t *testing.T) {
 	}
 }
 
-func TestBuild_Join_Outer_Error(t *testing.T) {
+func TestBuild_Join_Outer(t *testing.T) {
 	left := &logical.Scan{OutputSchema: nil}
 	right := &logical.Scan{OutputSchema: nil}
 	join := &logical.Join{
@@ -600,15 +603,65 @@ func TestBuild_Join_Outer_Error(t *testing.T) {
 	}
 	join.SetChildren([]logical.Node{left})
 
-	_, err := Build(&logical.Plan{Root: join}, BuildOptions{
-		Source:    sourceFromRows(nil),
+	leftRows := []map[string]event.Value{
+		{"key": strV("a"), "val": intV(1)},
+		{"key": strV("b"), "val": intV(2)},
+	}
+	rightRows := []map[string]event.Value{
+		{"key": strV("a"), "extra": strV("x")},
+		{"key": strV("c"), "extra": strV("z")},
+	}
+
+	callCount := 0
+	sourceFunc := func(scan *logical.Scan) (pipeline.Iterator, error) {
+		callCount++
+		if callCount == 1 {
+			return sliceSource(leftRows, 1024), nil
+		}
+		return sliceSource(rightRows, 1024), nil
+	}
+
+	iter, err := Build(&logical.Plan{Root: join}, BuildOptions{
+		Source:    sourceFunc,
 		BatchSize: 1024,
 	})
-	if err == nil {
-		t.Fatal("expected error for outer join, got nil")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
 	}
-	if _, ok := err.(*NotYetImplementedError); !ok {
-		t.Fatalf("expected NotYetImplementedError, got %T: %v", err, err)
+	result, err := pipeline.CollectAll(context.Background(), iter)
+	if err != nil {
+		t.Fatalf("CollectAll: %v", err)
+	}
+
+	// Full outer join: key=a (merged), key=b (left only), key=c (right only) -> 3 rows.
+	if len(result) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result))
+	}
+
+	// Verify all expected keys are present.
+	keys := make(map[string]bool, len(result))
+	for _, row := range result {
+		if v, ok := row["key"]; ok {
+			keys[v.String()] = true
+		}
+	}
+	for _, k := range []string{"a", "b", "c"} {
+		if !keys[k] {
+			t.Errorf("expected key %q in result, not found", k)
+		}
+	}
+
+	// Verify key=a has both val and extra (non-null: columnar batches pad
+	// missing columns with nulls).
+	for _, row := range result {
+		if v, ok := row["key"]; ok && v.String() == "a" {
+			if vv, hasVal := row["val"]; !hasVal || vv.IsNull() {
+				t.Error("key=a should have 'val' from left side")
+			}
+			if ev, hasExtra := row["extra"]; !hasExtra || ev.IsNull() {
+				t.Error("key=a should have 'extra' from right side")
+			}
+		}
 	}
 }
 
@@ -784,20 +837,78 @@ func TestBuild_Materialize_NotYetImplemented(t *testing.T) {
 	}
 }
 
-func TestBuild_Tee_NotYetImplemented(t *testing.T) {
+func TestBuild_Tee_Disabled(t *testing.T) {
+	sinkPath := filepath.Join(t.TempDir(), "tee.out")
 	plan := &logical.Plan{
-		Root: &logical.Tee{Sink: "test_sink"},
+		Root: &logical.Tee{Sink: sinkPath},
 	}
 	plan.Root.(*logical.Tee).SetChildren([]logical.Node{&logical.Scan{}})
 	_, err := Build(plan, BuildOptions{
-		Source:    sourceFromRows(nil),
-		BatchSize: 1024,
+		Source:     sourceFromRows(nil),
+		BatchSize:  1024,
+		TeeEnabled: false,
 	})
 	if err == nil {
-		t.Fatal("expected error for Tee, got nil")
+		t.Fatal("expected error for Tee with TeeEnabled=false, got nil")
 	}
-	if _, ok := err.(*NotYetImplementedError); !ok {
-		t.Fatalf("expected NotYetImplementedError, got %T: %v", err, err)
+	if !strings.Contains(err.Error(), "not enabled") {
+		t.Fatalf("expected 'not enabled' error, got: %v", err)
+	}
+}
+
+func TestBuild_Tee_RelativePath(t *testing.T) {
+	plan := &logical.Plan{
+		Root: &logical.Tee{Sink: "relative/path.out"},
+	}
+	plan.Root.(*logical.Tee).SetChildren([]logical.Node{&logical.Scan{}})
+	_, err := Build(plan, BuildOptions{
+		Source:     sourceFromRows(nil),
+		BatchSize:  1024,
+		TeeEnabled: true,
+	})
+	if err == nil {
+		t.Fatal("expected error for relative tee path, got nil")
+	}
+	if !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("expected absolute-path error, got: %v", err)
+	}
+}
+
+func TestBuild_Tee_Enabled(t *testing.T) {
+	sinkPath := filepath.Join(t.TempDir(), "tee.out")
+	rows := sampleRows()
+
+	scan := &logical.Scan{OutputSchema: nil}
+	tee := &logical.Tee{Sink: sinkPath}
+	tee.SetChildren([]logical.Node{scan})
+
+	iter, err := Build(&logical.Plan{Root: tee}, BuildOptions{
+		Source:     sourceFromRows(rows),
+		BatchSize:  1024,
+		TeeEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	result, err := pipeline.CollectAll(context.Background(), iter)
+	if err != nil {
+		t.Fatalf("CollectAll: %v", err)
+	}
+
+	// Tee is passthrough — all rows must appear in the output.
+	if len(result) != len(rows) {
+		t.Fatalf("expected %d rows, got %d", len(rows), len(result))
+	}
+
+	// The sink file must contain NDJSON with one line per row.
+	data, err := os.ReadFile(sinkPath)
+	if err != nil {
+		t.Fatalf("read sink file: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != len(rows) {
+		t.Fatalf("expected %d lines in sink file, got %d", len(rows), len(lines))
 	}
 }
 

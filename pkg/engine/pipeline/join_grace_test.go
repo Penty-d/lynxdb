@@ -304,6 +304,244 @@ func TestJoinEmptyLeftSide(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Tests: Full outer join
+// ---------------------------------------------------------------------------
+
+// hasNonNull reports whether the row carries a non-null value for the field.
+// Columnar batches pad missing columns with null values, so "absent" surfaces
+// as either a missing key or a present null.
+func hasNonNull(row map[string]event.Value, field string) bool {
+	v, ok := row[field]
+
+	return ok && !v.IsNull()
+}
+
+func TestJoinOuterInMemory(t *testing.T) {
+	// Left: keys a, b. Right: keys a, c.
+	// Expected: key=a (merged), key=b (left only), key=c (right only).
+	leftRows := []map[string]event.Value{
+		{"key": event.StringValue("a"), "lval": event.IntValue(1)},
+		{"key": event.StringValue("b"), "lval": event.IntValue(2)},
+	}
+	rightRows := []map[string]event.Value{
+		{"key": event.StringValue("a"), "rval": event.IntValue(10)},
+		{"key": event.StringValue("c"), "rval": event.IntValue(30)},
+	}
+
+	left := NewRowScanIterator(leftRows, DefaultBatchSize)
+	right := NewRowScanIterator(rightRows, DefaultBatchSize)
+
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
+	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, nil)
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result))
+	}
+
+	// Verify all keys present.
+	keys := make(map[string]bool, len(result))
+	for _, row := range result {
+		if v, ok := row["key"]; ok {
+			keys[v.String()] = true
+		}
+	}
+	for _, k := range []string{"a", "b", "c"} {
+		if !keys[k] {
+			t.Errorf("expected key %q in result, not found", k)
+		}
+	}
+
+	// Verify per-key field presence. Columnar batches pad missing columns
+	// with nulls, so absence is asserted as null-or-missing.
+	for _, row := range result {
+		v, ok := row["key"]
+		if !ok {
+			continue
+		}
+		switch v.String() {
+		case "a":
+			if !hasNonNull(row, "lval") {
+				t.Error("key=a should have 'lval' from left side")
+			}
+			if !hasNonNull(row, "rval") {
+				t.Error("key=a should have 'rval' from right side")
+			}
+		case "b":
+			if !hasNonNull(row, "lval") {
+				t.Error("key=b should have 'lval' from left side")
+			}
+			if hasNonNull(row, "rval") {
+				t.Error("key=b should NOT have a non-null 'rval'")
+			}
+		case "c":
+			if hasNonNull(row, "lval") {
+				t.Error("key=c should NOT have a non-null 'lval'")
+			}
+			if !hasNonNull(row, "rval") {
+				t.Error("key=c should have 'rval' from right side")
+			}
+		}
+	}
+}
+
+func TestJoinOuterEmptyLeft(t *testing.T) {
+	// Empty left, right has keys a, b.
+	// Full outer join should emit all right rows.
+	var leftRows []map[string]event.Value
+	rightRows := []map[string]event.Value{
+		{"key": event.StringValue("a"), "rval": event.IntValue(10)},
+		{"key": event.StringValue("b"), "rval": event.IntValue(20)},
+	}
+
+	left := NewRowScanIterator(leftRows, DefaultBatchSize)
+	right := NewRowScanIterator(rightRows, DefaultBatchSize)
+
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
+	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, nil)
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 rows (all right), got %d", len(result))
+	}
+}
+
+func TestJoinOuterEmptyRight(t *testing.T) {
+	// Left has keys a, b; right is empty.
+	// Full outer join should emit all left rows.
+	leftRows := []map[string]event.Value{
+		{"key": event.StringValue("a"), "lval": event.IntValue(1)},
+		{"key": event.StringValue("b"), "lval": event.IntValue(2)},
+	}
+	var rightRows []map[string]event.Value
+
+	left := NewRowScanIterator(leftRows, DefaultBatchSize)
+	right := NewRowScanIterator(rightRows, DefaultBatchSize)
+
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
+	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, nil)
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 rows (all left), got %d", len(result))
+	}
+}
+
+func TestJoinOuterMultipleRightPerKey(t *testing.T) {
+	// Left: key=a. Right: key=a (two rows), key=b.
+	// Expected: 2 merged rows for key=a, 1 right-only row for key=b.
+	leftRows := []map[string]event.Value{
+		{"key": event.StringValue("a"), "lval": event.IntValue(1)},
+	}
+	rightRows := []map[string]event.Value{
+		{"key": event.StringValue("a"), "rval": event.IntValue(10)},
+		{"key": event.StringValue("a"), "rval": event.IntValue(11)},
+		{"key": event.StringValue("b"), "rval": event.IntValue(20)},
+	}
+
+	left := NewRowScanIterator(leftRows, DefaultBatchSize)
+	right := NewRowScanIterator(rightRows, DefaultBatchSize)
+
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
+	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, nil)
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2 merged (key=a x2) + 1 right-only (key=b) = 3.
+	if len(result) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result))
+	}
+}
+
+func TestJoinOuterGraceHashJoin(t *testing.T) {
+	numKeys := 10
+	// Left rows have keys 0-9, right rows only have keys 0-4 plus keys 10-14.
+	leftRows := makeJoinRows(100, numKeys, "left")
+	// Right rows: keys k0..k4 (matched) and k10..k14 (unmatched).
+	rightRows := make([]map[string]event.Value, 0, 50)
+	for i := 0; i < 25; i++ {
+		rightRows = append(rightRows, map[string]event.Value{
+			"key":  event.StringValue(fmt.Sprintf("k%d", i%5)),
+			"side": event.StringValue("right"),
+			"idx":  event.IntValue(int64(i)),
+		})
+	}
+	for i := 0; i < 25; i++ {
+		rightRows = append(rightRows, map[string]event.Value{
+			"key":  event.StringValue(fmt.Sprintf("k%d", 10+i%5)),
+			"side": event.StringValue("right"),
+			"idx":  event.IntValue(int64(25 + i)),
+		})
+	}
+
+	left := NewRowScanIterator(leftRows, 32)
+	right := NewRowScanIterator(rightRows, 32)
+
+	mgr, err := NewSpillManager(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.CleanupAll()
+
+	// Budget: small enough to trigger grace on 50 right rows.
+	acct := memgov.NewTestBudget("test", 4*1024).NewAccount("join")
+	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, mgr)
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Left rows k0..k4 (50 rows) matched by right (5 right rows each) = 250 merged.
+	// Left rows k5..k9 (50 rows) have no match = 50 left-only.
+	// Right rows k10..k14 (25 rows) have no match = 25 right-only.
+	expected := 50*5 + 50 + 25
+	if len(result) != expected {
+		t.Fatalf("expected %d rows, got %d", expected, len(result))
+	}
+}
+
 func TestHashPartitionDistribution(t *testing.T) {
 	numPartitions := 64
 	numKeys := 10000

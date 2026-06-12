@@ -43,6 +43,12 @@ type Options struct {
 	// observability and testing (e.g., events scanned, events filtered,
 	// parts skipped by inverted index).
 	ScanStats *physical.ScanStats
+
+	// TeeEnabled allows tee sinks to write files. Per decision D32 this is
+	// only set by the operator-controlled CLI file/pipe mode; server-mode
+	// queries must leave it false so user-supplied queries cannot write
+	// arbitrary files on the server.
+	TeeEnabled bool
 }
 
 func (o *Options) defaultSource() string {
@@ -93,9 +99,10 @@ func Execute(ctx context.Context, query string, events map[string][]*event.Event
 	source := physical.NewStorageSourceFromMapWithStats(events, defaultSrc, opts.ScanStats)
 
 	iter, err := physical.Build(plan, physical.BuildOptions{
-		Source:    source,
-		BatchSize: opts.BatchSize,
-		Now:       now,
+		Source:     source,
+		BatchSize:  opts.BatchSize,
+		Now:        now,
+		TeeEnabled: opts.TeeEnabled,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("lynxflow.Execute: build: %w", err)
@@ -147,9 +154,10 @@ func ExecuteWithSource(ctx context.Context, query string, source func(*logical.S
 	}
 
 	iter, err := physical.Build(plan, physical.BuildOptions{
-		Source:    source,
-		BatchSize: opts.BatchSize,
-		Now:       now,
+		Source:     source,
+		BatchSize:  opts.BatchSize,
+		Now:        now,
+		TeeEnabled: opts.TeeEnabled,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("lynxflow.ExecuteWithSource: build: %w", err)
@@ -196,10 +204,11 @@ func ExecuteAnalyze(ctx context.Context, query string, events map[string][]*even
 	collect := make(map[logical.Node]*explain.NodeStats)
 
 	iter, err := physical.Build(plan, physical.BuildOptions{
-		Source:    source,
-		BatchSize: opts.BatchSize,
-		Now:       now,
-		Collect:   collect,
+		Source:     source,
+		BatchSize:  opts.BatchSize,
+		Now:        now,
+		Collect:    collect,
+		TeeEnabled: opts.TeeEnabled,
 	})
 	if err != nil {
 		return "", fmt.Errorf("lynxflow.ExecuteAnalyze: build: %w", err)

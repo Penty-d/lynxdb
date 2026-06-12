@@ -1397,7 +1397,9 @@ func runLynxFlowLocal(query string, events map[string][]*event.Event, outputFile
 
 	// 3. Execute via the full pipeline.
 	ctx := context.Background()
-	rows, err := run.Execute(ctx, query, events, run.Options{DefaultSource: "main"})
+	// TeeEnabled: CLI file/stdin mode is operator-controlled, so tee sinks
+	// may write files here (decision D32); server mode keeps them disabled.
+	rows, err := run.Execute(ctx, query, events, run.Options{DefaultSource: "main", TeeEnabled: true})
 	if err != nil {
 		return fmt.Errorf("%s", err)
 	}
