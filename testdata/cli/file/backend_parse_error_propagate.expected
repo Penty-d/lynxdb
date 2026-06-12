@@ -1,0 +1,5 @@
+{"_error":null,"name":"alice"}
+{"_error":"parse:json: no fields extracted","name":null}
+{"_error":null,"name":"bob"}
+{"_error":"parse:json: no fields extracted","name":null}
+{"_error":null,"name":"charlie"}

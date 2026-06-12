@@ -1,0 +1,5 @@
+{"name":"alice","age":30,"role":"admin"}
+this is a plain text log line that is not json
+{"name":"bob","age":25,"role":"user"}
+another plain text line with special chars: !@#$%
+{"name":"charlie","age":35,"role":"admin"}

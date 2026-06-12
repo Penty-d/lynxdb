@@ -745,6 +745,7 @@ func TestColumnarSpillMergerTwoRuns(t *testing.T) {
 	}
 	defer merger.Close()
 
+	const maxMergerRows = 1000 // cap: 10x expected (100)
 	var result []int64
 	for {
 		row, mergeErr := merger.Next()
@@ -755,6 +756,9 @@ func TestColumnarSpillMergerTwoRuns(t *testing.T) {
 			break
 		}
 		result = append(result, row["key"].AsInt())
+		if len(result) > maxMergerRows {
+			t.Fatalf("merger exceeded %d row cap -- possible re-emit-at-EOF regression", maxMergerRows)
+		}
 	}
 
 	if len(result) != 100 {
@@ -804,6 +808,7 @@ func TestColumnarSpillMergerManyRuns(t *testing.T) {
 	}
 	defer merger.Close()
 
+	const maxRows = 16000 // cap: 10x expected (numRuns*rowsPerRun = 1600)
 	var result []int64
 	for {
 		row, mergeErr := merger.Next()
@@ -814,6 +819,9 @@ func TestColumnarSpillMergerManyRuns(t *testing.T) {
 			break
 		}
 		result = append(result, row["key"].AsInt())
+		if len(result) > maxRows {
+			t.Fatalf("merger exceeded %d row cap -- possible re-emit-at-EOF regression", maxRows)
+		}
 	}
 
 	if len(result) != numRuns*rowsPerRun {
@@ -859,6 +867,7 @@ func TestColumnarSpillMergerNextBatch(t *testing.T) {
 	}
 	defer merger.Close()
 
+	const maxRows = 900 // cap: 10x expected (90)
 	var allVals []int64
 	for {
 		batch, batchErr := merger.NextBatch(16)
@@ -870,6 +879,9 @@ func TestColumnarSpillMergerNextBatch(t *testing.T) {
 		}
 		for i := 0; i < batch.Len; i++ {
 			allVals = append(allVals, batch.Row(i)["key"].AsInt())
+		}
+		if len(allVals) > maxRows {
+			t.Fatalf("merger exceeded %d row cap -- possible re-emit-at-EOF regression", maxRows)
 		}
 	}
 
@@ -917,6 +929,7 @@ func TestColumnarSpillMergerDescending(t *testing.T) {
 	}
 	defer merger.Close()
 
+	const maxDescRows = 1000 // cap: 10x expected (100)
 	var result []int64
 	for {
 		row, mergeErr := merger.Next()
@@ -927,6 +940,9 @@ func TestColumnarSpillMergerDescending(t *testing.T) {
 			break
 		}
 		result = append(result, row["key"].AsInt())
+		if len(result) > maxDescRows {
+			t.Fatalf("merger exceeded %d row cap -- possible re-emit-at-EOF regression", maxDescRows)
+		}
 	}
 
 	if len(result) != 100 {
@@ -976,6 +992,7 @@ func TestColumnarSpillMergerEmptyRuns(t *testing.T) {
 	}
 	defer merger.Close()
 
+	const maxEmptyRows = 50 // cap: 10x expected (5)
 	count := 0
 	for {
 		row, mergeErr := merger.Next()
@@ -986,6 +1003,9 @@ func TestColumnarSpillMergerEmptyRuns(t *testing.T) {
 			break
 		}
 		count++
+		if count > maxEmptyRows {
+			t.Fatalf("merger exceeded %d row cap -- possible re-emit-at-EOF regression", maxEmptyRows)
+		}
 	}
 	if count != 5 {
 		t.Fatalf("expected 5 rows, got %d", count)

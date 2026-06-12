@@ -42,18 +42,14 @@ func TestJoinInMemoryFastPath(t *testing.T) {
 	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, mgr)
 
+	// 100 left rows, each matching 5 right rows (50 right / 10 keys = 5 per key).
+	expected := 100 * 5
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, expected*10)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// 100 left rows, each matching 5 right rows (50 right / 10 keys = 5 per key).
-	expected := 100 * 5
 	if len(result) != expected {
 		t.Fatalf("expected %d joined rows, got %d", expected, len(result))
 	}
@@ -86,18 +82,14 @@ func TestJoinGraceHashJoinFallback(t *testing.T) {
 	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, mgr)
 
+	// Brute-force expected: each left row's key matches 5 right rows (100/20).
+	expected := 200 * 5
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, expected*10)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Brute-force expected: each left row's key matches 5 right rows (100/20).
-	expected := 200 * 5
 	if len(result) != expected {
 		t.Fatalf("expected %d joined rows, got %d", expected, len(result))
 	}
@@ -138,19 +130,15 @@ func TestJoinGraceHashJoinLeftOuter(t *testing.T) {
 	acct := memgov.NewTestBudget("test", 4*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "left", acct, mgr)
 
+	// Left rows k0..k4 (50 rows) match 5 right rows each = 250.
+	// Left rows k5..k9 (50 rows) have no match = 50 passed through.
+	expected := 50*5 + 50
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, expected*10)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Left rows k0..k4 (50 rows) match 5 right rows each = 250.
-	// Left rows k5..k9 (50 rows) have no match = 50 passed through.
-	expected := 50*5 + 50
 	if len(result) != expected {
 		t.Fatalf("expected %d joined rows, got %d", expected, len(result))
 	}
@@ -174,18 +162,14 @@ func TestJoinGraceHashJoinInner(t *testing.T) {
 	acct := memgov.NewTestBudget("test", 4*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, mgr)
 
+	// Only k0..k4 match: 50 left rows x 5 right rows each = 250.
+	expected := 50 * 5
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, expected*10)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Only k0..k4 match: 50 left rows × 5 right rows each = 250.
-	expected := 50 * 5
 	if len(result) != expected {
 		t.Fatalf("expected %d joined rows, got %d", expected, len(result))
 	}
@@ -208,13 +192,9 @@ func TestJoinSpillFileCleanup(t *testing.T) {
 	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, mgr)
 
+	// 100 left rows x 10 right rows per key = 1000 max.
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	// Drain the pipeline.
-	_, err = CollectAll(ctx, iter)
+	_, err = collectAllCapped(t, ctx, iter, 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,11 +217,7 @@ func TestJoinEmptyRightSide(t *testing.T) {
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, nil)
 
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, 500)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,11 +239,7 @@ func TestJoinEmptyRightSideLeftJoin(t *testing.T) {
 	iter := NewJoinIteratorWithSpill(left, right, "key", "left", acct, nil)
 
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, 500)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,11 +261,7 @@ func TestJoinEmptyLeftSide(t *testing.T) {
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, nil)
 
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, 500)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,11 +304,7 @@ func TestJoinOuterInMemory(t *testing.T) {
 	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, nil)
 
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,11 +375,7 @@ func TestJoinOuterEmptyLeft(t *testing.T) {
 	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, nil)
 
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,11 +401,7 @@ func TestJoinOuterEmptyRight(t *testing.T) {
 	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, nil)
 
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,11 +430,7 @@ func TestJoinOuterMultipleRightPerKey(t *testing.T) {
 	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, nil)
 
 	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
+	result, err := collectAllCapped(t, ctx, iter, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,20 +475,16 @@ func TestJoinOuterGraceHashJoin(t *testing.T) {
 	acct := memgov.NewTestBudget("test", 4*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "outer", acct, mgr)
 
-	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	// Left rows k0..k4 (50 rows) matched by right (5 right rows each) = 250 merged.
 	// Left rows k5..k9 (50 rows) have no match = 50 left-only.
 	// Right rows k10..k14 (25 rows) have no match = 25 right-only.
 	expected := 50*5 + 50 + 25
+	ctx := context.Background()
+	result, err := collectAllCapped(t, ctx, iter, expected*10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if len(result) != expected {
 		t.Fatalf("expected %d rows, got %d", expected, len(result))
 	}

@@ -2160,3 +2160,127 @@ func TestJobStream_NotFound(t *testing.T) {
 		t.Fatalf("status: got %d, want 404", resp.StatusCode)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Test: parse error columns round-trip through the REST JSON response.
+//
+// Verifies finding [22b]: _error and _error_detail columns produced by
+// `parse json` with malformed rows serialize correctly through the REST
+// query response envelope.
+// ---------------------------------------------------------------------------
+
+func TestServer_ParseErrorColumns_RoundTrip(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	// Ingest a mix of valid and invalid JSON as _raw.
+	now := time.Now()
+	rawLines := []string{
+		`{"name":"alice","age":30}`,
+		`this is not valid json`,
+		`{"name":"bob","age":25}`,
+	}
+	events := make([]*event.Event, len(rawLines))
+	for i, line := range rawLines {
+		ev := event.NewEvent(now.Add(time.Duration(i)*time.Second), line)
+		ev.Index = "main"
+		ev.Host = "web-01"
+		ev.Source = "test"
+		ev.SourceType = "raw"
+		ev.Fields = make(map[string]event.Value)
+		events[i] = ev
+	}
+	if err := srv.engine.Ingest(events); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	// Query with parse json (default on_error=propagate).
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": `from main | parse json | sort _time`,
+	})
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/api/v1/query", srv.Addr()),
+		"application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST query: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing 'data' in response")
+	}
+
+	eventsRaw, ok := data["events"].([]interface{})
+	if !ok {
+		t.Fatal("missing 'events' in data")
+	}
+
+	if len(eventsRaw) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(eventsRaw))
+	}
+
+	// Find the error row (the invalid JSON one). Columnar batches pad all
+	// columns to batch length, so even valid rows carry _error as JSON null.
+	// Distinguish by checking whether the value is a non-nil string.
+	var errorRow map[string]interface{}
+	var validRows []map[string]interface{}
+	for _, raw := range eventsRaw {
+		ev, _ := raw.(map[string]interface{})
+		if ev == nil {
+			continue
+		}
+		if errVal, ok := ev["_error"].(string); ok && errVal != "" {
+			errorRow = ev
+		} else {
+			validRows = append(validRows, ev)
+		}
+	}
+
+	// Verify the error row has _error and _error_detail.
+	if errorRow == nil {
+		t.Fatal("expected at least one event with _error column in response")
+	}
+
+	errStr, ok := errorRow["_error"].(string)
+	if !ok || errStr == "" {
+		t.Fatalf("_error should be a non-empty string, got %T: %v", errorRow["_error"], errorRow["_error"])
+	}
+	if !strings.Contains(errStr, "parse:json:") {
+		t.Errorf("_error should contain 'parse:json:', got %q", errStr)
+	}
+
+	// _error_detail should be a JSON object with stage, format, code, message.
+	detail, ok := errorRow["_error_detail"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("_error_detail should be a JSON object, got %T: %v", errorRow["_error_detail"], errorRow["_error_detail"])
+	}
+	for _, key := range []string{"stage", "format", "code", "message"} {
+		if _, exists := detail[key]; !exists {
+			t.Errorf("_error_detail missing key %q, got: %v", key, detail)
+		}
+	}
+	if fmt.Sprint(detail["format"]) != "json" {
+		t.Errorf("_error_detail.format: got %v, want %q", detail["format"], "json")
+	}
+
+	// Verify valid rows do NOT have a non-null _error.
+	if len(validRows) < 2 {
+		t.Fatalf("expected at least 2 valid rows, got %d", len(validRows))
+	}
+	for i, vr := range validRows {
+		if errVal, ok := vr["_error"].(string); ok && errVal != "" {
+			t.Errorf("valid row %d should not have non-null _error, got: %v", i, errVal)
+		}
+	}
+}

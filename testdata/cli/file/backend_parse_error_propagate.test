@@ -1,0 +1,7 @@
+# file: mixed_json.log
+# format: json
+# unordered: false
+from main
+| parse json
+| keep name, _error
+| head 5
