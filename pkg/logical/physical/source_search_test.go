@@ -78,7 +78,7 @@ func drainPartSource(t *testing.T, query string, parts []PartHandle) ([]map[stri
 	}
 	plan, _ = opt.Optimize(plan)
 
-	source := NewPartSource(parts, "main", ss)
+	source := NewPartSource(parts, "main", time.Now(), ss)
 	iter, err := Build(plan, BuildOptions{
 		Source:    source,
 		BatchSize: 1024,

@@ -14,8 +14,13 @@
 //     the absence of a bloom filter, we check _raw directly).
 //     - Columns: NOT mapped (ephemeral returns full events; ProjectIterator
 //     handles pruning). No segment-level column projection API.
-//     - TimeBounds: NOT mapped in ephemeral mode (all events are in memory;
-//     no time-partition pruning). The Filter handles time predicates.
+//     - TimeBounds: enforced in-memory by filterByTimeBounds. Both
+//     Scan.TimeRange (bracket syntax, e.g. from main[-1h]) and
+//     Scan.Pushdown.TimeBounds (optimizer-consumed _time predicates) are
+//     resolved to absolute time.Time using the now parameter and applied
+//     as an event filter. This is critical because the optimizer REMOVES
+//     _time conjuncts from the Filter node (consumed=true), and bracket
+//     ranges have no compensating Filter.
 //     - Reverse: NOT mapped (ephemeral has no sorted-timestamp guarantee).
 //
 //  2. PartStore (disk-backed parts with inverted index + bloom): events are
@@ -29,8 +34,10 @@
 //     reader's ReadEventsFiltered method, which applies per-column bloom,
 //     zone map, and dict-encoded filtering.
 //     - Columns -> column projection in ReadEventsFiltered/ReadEventsByBitmap.
-//     - TimeBounds -> NOT YET mapped (would need resolution to absolute
-//     time.Time, then time-based RG pruning via QueryHints.MinTime/MaxTime).
+//     - TimeBounds -> enforced via segment.QueryHints.MinTime/MaxTime for
+//     row-group-level pruning (NewPartSource resolves relative bounds using
+//     the now parameter). When ReadEventsFiltered or ReadEventsByBitmap is
+//     used (which lack native time hints), events are post-filtered.
 //     - Reverse -> NOT mapped (part reader does not support reverse scan).
 package physical
 
@@ -100,7 +107,13 @@ func (m *mapAdapter) AllEvents() []*event.Event {
 // NewStorageSource returns a Source callback that resolves Scan nodes against
 // the given EphemeralStore. The defaultIndex is used when the scan has no
 // explicit source (SourceStar or empty Sources list). The now parameter is used
-// to resolve relative time bounds (not yet wired in v1).
+// to resolve relative time bounds (e.g. -1h in bracket ranges or _time
+// predicates pushed down by the optimizer). The optimizer CONSUMES _time
+// comparisons from Filter nodes into Scan.Pushdown.TimeBounds (removing the
+// Filter conjunct entirely), and bracket ranges like from main[-1h] land in
+// Scan.TimeRange with no compensating Filter. Therefore this source MUST
+// enforce both TimeBounds and TimeRange — failure to do so produces
+// silently wrong results.
 //
 // When stats is non-nil, scan statistics are accumulated for observability.
 func NewStorageSource(store EphemeralStore, defaultIndex string, now time.Time, stats *ScanStats) func(*logical.Scan) (pipeline.Iterator, error) {
@@ -111,6 +124,11 @@ func NewStorageSource(store EphemeralStore, defaultIndex string, now time.Time, 
 		if stats != nil {
 			stats.TotalEvents.Add(total)
 		}
+
+		// Time bound enforcement: the optimizer consumes _time predicates
+		// out of Filter (consumed=true), and bracket ranges have no
+		// compensating Filter — so the source must apply them.
+		events = filterByTimeBounds(events, scan, now)
 
 		// Apply pushdown filters in-memory only when stats tracking is
 		// requested. When stats is nil (default/backward-compatible path),
@@ -128,8 +146,9 @@ func NewStorageSource(store EphemeralStore, defaultIndex string, now time.Time, 
 	}
 }
 
-// NewStorageSourceFromMap is a convenience for tests and the Execute helper:
-// wraps a raw event map into a Source callback.
+// NewStorageSourceFromMap is a convenience for tests and non-CLI callers:
+// wraps a raw event map into a Source callback. Uses time.Now() for resolving
+// relative time bounds. For test-injected time, use NewStorageSourceFromMapWithNow.
 func NewStorageSourceFromMap(events map[string][]*event.Event, defaultIndex string) func(*logical.Scan) (pipeline.Iterator, error) {
 	return NewStorageSource(&mapAdapter{events: events}, defaultIndex, time.Now(), nil)
 }
@@ -138,6 +157,14 @@ func NewStorageSourceFromMap(events map[string][]*event.Event, defaultIndex stri
 // collects scan statistics into the provided ScanStats.
 func NewStorageSourceFromMapWithStats(events map[string][]*event.Event, defaultIndex string, ss *ScanStats) func(*logical.Scan) (pipeline.Iterator, error) {
 	return NewStorageSource(&mapAdapter{events: events}, defaultIndex, time.Now(), ss)
+}
+
+// NewStorageSourceFromMapWithNow is like NewStorageSourceFromMapWithStats but
+// accepts an explicit now parameter for resolving relative time bounds. This is
+// the correct entry point for callers that need deterministic time resolution
+// (e.g. pkg/lynxflow/run.Execute, tests). The stats parameter may be nil.
+func NewStorageSourceFromMapWithNow(events map[string][]*event.Event, defaultIndex string, now time.Time, stats *ScanStats) func(*logical.Scan) (pipeline.Iterator, error) {
+	return NewStorageSource(&mapAdapter{events: events}, defaultIndex, now, stats)
 }
 
 // ---------------------------------------------------------------------------
@@ -445,14 +472,125 @@ func eventsToRows(events []*event.Event) []map[string]event.Value {
 	return rows
 }
 
+// ---------------------------------------------------------------------------
+// Time bound resolution and filtering
+// ---------------------------------------------------------------------------
+
+// resolveTimeBoundsToAbsolute converts a logical.TimeBounds (which may contain
+// relative duration expressions like -1h) into absolute time.Time values.
+// Returns (minTime, maxTime) where a nil pointer means the bound is open.
+func resolveTimeBoundsToAbsolute(tb *logical.TimeBounds, now time.Time) (minTime, maxTime *time.Time) {
+	if tb == nil {
+		return nil, nil
+	}
+	if tb.Start != nil {
+		if t, ok := resolveTimeExpr(tb.Start, now); ok {
+			minTime = &t
+		}
+	}
+	if tb.End != nil {
+		if t, ok := resolveTimeExpr(tb.End, now); ok {
+			maxTime = &t
+		}
+	}
+	return minTime, maxTime
+}
+
+// resolveTimeExpr resolves an AST expression to an absolute time.Time.
+// Handles:
+//   - Unary{OpNeg, Literal{LitDuration}} -> now - duration (e.g. -1h)
+//   - Literal{LitDuration} with negative Value -> now + duration (already negative)
+//   - Literal{LitDuration} with positive Value -> now + duration
+//   - Literal{LitInt} -> Unix epoch seconds
+//   - Literal{LitString} -> RFC3339 parse attempt
+func resolveTimeExpr(expr ast.Expr, now time.Time) (time.Time, bool) {
+	switch e := expr.(type) {
+	case *ast.Unary:
+		if e.Op == ast.OpNeg {
+			if lit, ok := e.Operand.(*ast.Literal); ok && lit.Kind == ast.LitDuration {
+				if d, ok := lit.Value.(time.Duration); ok {
+					return now.Add(-d), true
+				}
+			}
+		}
+	case *ast.Literal:
+		switch e.Kind {
+		case ast.LitDuration:
+			if d, ok := e.Value.(time.Duration); ok {
+				// A negative duration (e.g. from constant folding) is relative to now.
+				return now.Add(d), true
+			}
+		case ast.LitInt:
+			if v, ok := e.Value.(int64); ok {
+				return time.Unix(v, 0), true
+			}
+		case ast.LitString:
+			if s, ok := e.Value.(string); ok {
+				if t, err := time.Parse(time.RFC3339, s); err == nil {
+					return t, true
+				}
+				if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+					return t, true
+				}
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+// mergedTimeBounds returns the effective time bounds by combining
+// Scan.TimeRange (bracket syntax) and Scan.Pushdown.TimeBounds (optimizer
+// consumed predicates). The optimizer already merges bracket ranges into
+// Pushdown.TimeBounds when possible; for the case where only TimeRange is
+// set (no WHERE clause with _time), we fall back to TimeRange.
+func mergedTimeBounds(scan *logical.Scan) *logical.TimeBounds {
+	if scan.Pushdown.TimeBounds != nil {
+		return scan.Pushdown.TimeBounds
+	}
+	return scan.TimeRange
+}
+
+// filterByTimeBounds filters events by the resolved time bounds from both
+// Scan.TimeRange and Scan.Pushdown.TimeBounds. Events without a _time field
+// are conservatively kept (not filtered).
+func filterByTimeBounds(events []*event.Event, scan *logical.Scan, now time.Time) []*event.Event {
+	tb := mergedTimeBounds(scan)
+	if tb == nil {
+		return events
+	}
+
+	minTime, maxTime := resolveTimeBoundsToAbsolute(tb, now)
+	if minTime == nil && maxTime == nil {
+		return events
+	}
+
+	result := make([]*event.Event, 0, len(events))
+	for _, ev := range events {
+		if ev.Time.IsZero() {
+			// No timestamp — conservatively include.
+			result = append(result, ev)
+			continue
+		}
+		if minTime != nil && ev.Time.Before(*minTime) {
+			continue
+		}
+		if maxTime != nil && ev.Time.After(*maxTime) {
+			continue
+		}
+		result = append(result, ev)
+	}
+	return result
+}
+
 // StorageSourceInfo documents pushdown mapping status.
 var StorageSourceInfo = fmt.Sprintf(
 	"v2 pushdown mapping: raw_terms=YES(ephemeral:in-memory-hasToken), " +
 		"bloom_terms=YES(ephemeral:in-memory-substring), " +
 		"field_predicates=YES(ephemeral:in-memory-eval), " +
 		"columns=NO(ephemeral:full-events), " +
-		"time_bounds=NO(ephemeral:no-time-partition), " +
+		"time_bounds=YES(ephemeral:filterByTimeBounds, part:QueryHints.MinTime/MaxTime), " +
 		"reverse=NO(ephemeral:no-sorted-guarantee). " +
 		"Part-backed mapping via NewPartSource: raw_terms=inverted-index, " +
 		"bloom_terms=inverted-index, field_predicates=segment.Predicate, " +
-		"columns=projection, time_bounds=PLANNED, reverse=UNSUPPORTED.")
+		"columns=projection, time_bounds=YES(QueryHints.MinTime/MaxTime), " +
+		"reverse=UNSUPPORTED.")

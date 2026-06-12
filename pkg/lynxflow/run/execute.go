@@ -96,7 +96,7 @@ func Execute(ctx context.Context, query string, events map[string][]*event.Event
 		now = time.Now()
 	}
 
-	source := physical.NewStorageSourceFromMapWithStats(events, defaultSrc, opts.ScanStats)
+	source := physical.NewStorageSourceFromMapWithNow(events, defaultSrc, now, opts.ScanStats)
 
 	iter, err := physical.Build(plan, physical.BuildOptions{
 		Source:     source,
@@ -200,7 +200,7 @@ func ExecuteAnalyze(ctx context.Context, query string, events map[string][]*even
 		now = time.Now()
 	}
 
-	source := physical.NewStorageSourceFromMap(events, opts.defaultSource())
+	source := physical.NewStorageSourceFromMapWithNow(events, opts.defaultSource(), now, nil)
 	collect := make(map[logical.Node]*explain.NodeStats)
 
 	iter, err := physical.Build(plan, physical.BuildOptions{

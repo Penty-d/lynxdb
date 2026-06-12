@@ -25,14 +25,19 @@
 //   - Columns: passed as the columns []string parameter to
 //     ReadEventsFiltered/ReadEventsByBitmap for column projection.
 //
-//   - TimeBounds: NOT YET mapped (requires resolution to absolute time.Time;
-//     would be passed as QueryHints.MinTime/MaxTime for RG-level pruning).
+//   - TimeBounds: enforced via segment.QueryHints.MinTime/MaxTime. Both
+//     Scan.TimeRange (bracket syntax) and Scan.Pushdown.TimeBounds
+//     (optimizer-consumed _time predicates) are resolved to absolute
+//     time.Time using the now parameter and passed to ReadEventsWithHints,
+//     enabling row-group-level pruning. This is critical because the
+//     optimizer REMOVES _time conjuncts from the Filter node.
 //
 //   - Reverse: NOT mapped (segment reader does not support reverse scan).
 package physical
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/RoaringBitmap/roaring"
 
@@ -57,13 +62,23 @@ type PartHandle struct {
 // The parts slice contains all available parts; the callback selects parts
 // matching the scan's source and applies pushdown hints.
 //
+// The now parameter is used to resolve relative time bounds (e.g. -1h) to
+// absolute time.Time values. The resolved bounds are passed as
+// segment.QueryHints.MinTime/MaxTime for row-group-level time pruning.
+// This is critical because the optimizer REMOVES _time conjuncts from the
+// Filter node (consumed=true), and bracket ranges have no compensating Filter.
+//
 // When stats is non-nil, scan statistics are accumulated for observability.
-func NewPartSource(parts []PartHandle, defaultIndex string, stats *ScanStats) func(*logical.Scan) (pipeline.Iterator, error) {
+func NewPartSource(parts []PartHandle, defaultIndex string, now time.Time, stats *ScanStats) func(*logical.Scan) (pipeline.Iterator, error) {
 	return func(scan *logical.Scan) (pipeline.Iterator, error) {
 		// Resolve which indexes to scan.
 		targetIndexes := resolveTargetIndexes(scan, defaultIndex)
 
 		pd := scan.Pushdown
+
+		// Resolve time bounds for RG-level pruning.
+		tb := mergedTimeBounds(scan)
+		minTime, maxTime := resolveTimeBoundsToAbsolute(tb, now)
 
 		// Resolve columns for projection.
 		var columns []string
@@ -84,6 +99,8 @@ func NewPartSource(parts []PartHandle, defaultIndex string, stats *ScanStats) fu
 		var searchTerms []string
 		searchTerms = append(searchTerms, pd.RawTerms...)
 		searchTerms = append(searchTerms, pd.BloomTerms...)
+
+		hasTimeHints := minTime != nil || maxTime != nil
 
 		var allRows []map[string]event.Value
 
@@ -133,6 +150,9 @@ func NewPartSource(parts []PartHandle, defaultIndex string, stats *ScanStats) fu
 			}
 
 			// Read events with the best available method.
+			// When time bounds are available and we would otherwise fall back
+			// to the unfiltered ReadEvents path, use ReadEventsWithHints to
+			// enable row-group-level time pruning.
 			var events []*event.Event
 			var err error
 
@@ -140,11 +160,25 @@ func NewPartSource(parts []PartHandle, defaultIndex string, stats *ScanStats) fu
 				events, err = p.Reader.ReadEventsFiltered(segPreds, searchBitmap, columns)
 			} else if searchBitmap != nil {
 				events, err = p.Reader.ReadEventsByBitmap(searchBitmap, columns)
+			} else if hasTimeHints {
+				events, err = p.Reader.ReadEventsWithHints(segment.QueryHints{
+					MinTime: minTime,
+					MaxTime: maxTime,
+					Columns: columns,
+				})
 			} else {
 				events, err = p.Reader.ReadEvents()
 			}
 			if err != nil {
 				return nil, fmt.Errorf("physical.PartSource: read part %q: %w", p.Index, err)
+			}
+
+			// When time hints are set but we used a code path that does not
+			// natively apply them (ReadEventsFiltered, ReadEventsByBitmap),
+			// filter events post-read to ensure correctness. The optimizer
+			// REMOVES time conjuncts from the Filter, so we must enforce here.
+			if hasTimeHints && (len(segPreds) > 0 || searchBitmap != nil) {
+				events = filterEventsByAbsoluteTime(events, minTime, maxTime)
 			}
 
 			if stats != nil {
@@ -157,6 +191,29 @@ func NewPartSource(parts []PartHandle, defaultIndex string, stats *ScanStats) fu
 
 		return pipeline.NewRowScanIterator(allRows, pipeline.DefaultBatchSize), nil
 	}
+}
+
+// filterEventsByAbsoluteTime filters events by already-resolved absolute time
+// bounds. Events without a _time field are conservatively kept.
+func filterEventsByAbsoluteTime(events []*event.Event, minTime, maxTime *time.Time) []*event.Event {
+	if minTime == nil && maxTime == nil {
+		return events
+	}
+	result := make([]*event.Event, 0, len(events))
+	for _, ev := range events {
+		if ev.Time.IsZero() {
+			result = append(result, ev)
+			continue
+		}
+		if minTime != nil && ev.Time.Before(*minTime) {
+			continue
+		}
+		if maxTime != nil && ev.Time.After(*maxTime) {
+			continue
+		}
+		result = append(result, ev)
+	}
+	return result
 }
 
 // exprToSegmentPredicate converts a LynxFlow ast.Expr (field op literal) into
