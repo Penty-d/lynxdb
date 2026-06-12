@@ -12,10 +12,9 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/parser"
 )
 
-// MVAnalysis is a language-neutral description of a materialized view's query.
-// Both the SPL2 AnalyzeQuery and the LynxFlow AnalyzeLynxFlow produce this
-// same struct, so the dispatcher, backfill, and merge paths can operate
-// identically regardless of the query language.
+// MVAnalysis is the analysis result for a materialized view's LynxFlow query.
+// Produced by AnalyzeLynxFlow, consumed by the dispatcher, backfill, and merge
+// paths.
 //
 // Storage format compatibility: the dispatcher serializes partial aggregation
 // state via PartialGroupsToEvents using _pa_ prefixed columns keyed by
@@ -66,8 +65,8 @@ type MVAnalysis struct {
 // Dedup before Aggregate, window aggregates) are rejected with a clear error.
 //
 // The returned MVAnalysis.AggSpec uses the same PartialAggFunc format as the
-// SPL2 path, so storage format is identical. See MVAnalysis doc comment for
-// the storage compatibility argument.
+// the original SPL2 implementation, so storage format is identical. See
+// MVAnalysis doc comment for the storage compatibility argument.
 func AnalyzeLynxFlow(query string) (*MVAnalysis, error) {
 	// 1. Parse
 	q, diags := parser.Parse(query)
@@ -256,8 +255,8 @@ func validateNodeForMV(node logical.Node, isScan bool) error {
 }
 
 // buildAggSpecFromIR extracts a PartialAggSpec from a logical.Aggregate node.
-// The returned spec uses the same format as the SPL2 path, ensuring storage
-// compatibility.
+// The returned spec uses the same PartialAggFunc format as the original
+// SPL2 implementation, ensuring storage compatibility for migrated views.
 func buildAggSpecFromIR(agg *logical.Aggregate) (*pipeline.PartialAggSpec, []string, error) {
 	funcs := make([]pipeline.PartialAggFunc, 0, len(agg.Aggs))
 
@@ -302,7 +301,7 @@ func buildAggSpecFromIR(agg *logical.Aggregate) (*pipeline.PartialAggSpec, []str
 		})
 	}
 
-	// Auto-inject hidden count for avg (same logic as SPL2 convertAggExprs).
+	// Auto-inject hidden count for avg (required for weighted merge).
 	hasAvg, hasCount := false, false
 	for _, fn := range funcs {
 		if fn.Name == "avg" {

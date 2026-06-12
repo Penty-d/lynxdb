@@ -20,6 +20,7 @@ var (
 	ErrQueryEmpty    = errors.New("query is required")
 )
 
+// SavedQuery is a persisted query definition.
 type SavedQuery struct {
 	ID        string                 `json:"id"`
 	Name      string                 `json:"name"`
@@ -30,13 +31,32 @@ type SavedQuery struct {
 	CreatedAt time.Time              `json:"created_at"`
 	UpdatedAt time.Time              `json:"updated_at"`
 
-	// LanguageVersion identifies the query language ("spl2" or "lynxflow").
-	// Empty string is treated as "spl2" for backward compatibility.
+	// LanguageVersion identifies the query language ("lynxflow" or legacy "spl2").
+	// Empty string is treated as "spl2" for backward compatibility with
+	// definitions persisted before this field existed.
 	LanguageVersion string `json:"language_version,omitempty"`
 
 	// MigratedFrom holds the original query text before migration.
 	MigratedFrom string `json:"migrated_from,omitempty"`
 }
+
+// EffectiveLanguage returns the language for this saved query. Empty or absent
+// LanguageVersion is treated as "spl2" for backward compatibility.
+func (q *SavedQuery) EffectiveLanguage() string {
+	if q.LanguageVersion == "" {
+		return "spl2"
+	}
+	return q.LanguageVersion
+}
+
+// NeedsMigration reports whether this saved query uses a language that is no
+// longer supported and must be migrated to LynxFlow.
+func (q *SavedQuery) NeedsMigration() bool {
+	return q.EffectiveLanguage() != "lynxflow"
+}
+
+// ErrNeedsMigration is returned when a saved query uses a legacy language.
+var ErrNeedsMigration = errors.New("saved query uses legacy SPL2 language; update the query to LynxFlow and save it again")
 
 type SavedQueryInput struct {
 	Name     string                 `json:"name"`
@@ -74,14 +94,15 @@ func (i *SavedQueryInput) ToSavedQuery() *SavedQuery {
 	now := time.Now()
 
 	return &SavedQuery{
-		ID:        generateID(),
-		Name:      i.Name,
-		Q:         i.effectiveQuery(),
-		From:      i.From,
-		Source:    i.Source,
-		Metadata:  i.Metadata,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:              generateID(),
+		Name:            i.Name,
+		Q:               i.effectiveQuery(),
+		From:            i.From,
+		Source:          i.Source,
+		Metadata:        i.Metadata,
+		LanguageVersion: "lynxflow",
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 }
 

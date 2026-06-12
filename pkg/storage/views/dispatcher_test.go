@@ -563,36 +563,6 @@ func makeTestEvent(source, uri, status string) *event.Event {
 
 // Aggregation View Tests
 
-func createAggView(t *testing.T, reg *ViewRegistry, name, query string) ViewDefinition {
-	t.Helper()
-
-	analysis, err := AnalyzeQuery(query)
-	if err != nil {
-		t.Fatalf("AnalyzeQuery: %v", err)
-	}
-
-	def := ViewDefinition{
-		Name:        name,
-		Version:     1,
-		Type:        ViewTypeAggregation,
-		Query:       query,
-		SourceIndex: "", /* RFC-002 */
-		AggSpec:     analysis.AggSpec,
-		GroupBy:     nil, /* RFC-002 */
-		Columns: []ColumnDef{
-			{Name: "_time", Type: event.FieldTypeTimestamp},
-		},
-		Status:    ViewStatusActive,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	if err := reg.Create(def); err != nil {
-		t.Fatalf("Create view %s: %v", name, err)
-	}
-
-	return def
-}
-
 func TestDispatcher_AggregationView_CountByHost(t *testing.T) {
 	d, reg, _ := setupDispatcher(t)
 	def := createLynxFlowAggView(t, reg, "mv_count", `from main | stats count() as count by host`)
@@ -1045,5 +1015,176 @@ func TestDispatcher_FlushViewRequeuesOnError(t *testing.T) {
 	// Events must be retained for retry, not lost.
 	if got := d.ViewBufferedEvents("mv_block"); len(got) != 2 {
 		t.Fatalf("expected 2 events retained after failed flush, got %d", len(got))
+	}
+}
+
+// TestDispatcher_NeedsMigration_Persisted verifies that activating a legacy SPL2
+// view (empty LanguageVersion) persists the needs-migration status to the
+// registry so that `mv list` and `mv migrate --all` surface it after restart.
+func TestDispatcher_NeedsMigration_Persisted(t *testing.T) {
+	dir := t.TempDir()
+	viewsDir := filepath.Join(dir, "views")
+	os.MkdirAll(viewsDir, 0o755)
+
+	reg, err := Open(viewsDir)
+	if err != nil {
+		t.Fatalf("Open registry: %v", err)
+	}
+
+	layout := storage.NewLayout(dir)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	d := NewDispatcher(reg, layout, logger, 0, 0)
+
+	// Create a view with empty LanguageVersion (simulates pre-migration legacy view).
+	legacyDef := ViewDefinition{
+		Name:    "mv_legacy_spl2",
+		Version: 1,
+		Type:    ViewTypeAggregation,
+		Query:   "level=error | stats count by host",
+		Columns: []ColumnDef{
+			{Name: "_time", Type: event.FieldTypeTimestamp},
+		},
+		Status:          ViewStatusActive,
+		LanguageVersion: "", // empty = "spl2" via EffectiveLanguage()
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	if err := reg.Create(legacyDef); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Activate the view — should mark it as needs-migration and persist.
+	if err := d.activateView(legacyDef); err != nil {
+		t.Fatalf("activateView: %v", err)
+	}
+
+	// Verify the dispatcher's in-memory view has needs-migration.
+	d.mu.RLock()
+	av, ok := d.views["mv_legacy_spl2"]
+	d.mu.RUnlock()
+	if !ok {
+		t.Fatal("view not in dispatcher")
+	}
+	if av.def.Status != ViewStatusNeedsMigration {
+		t.Errorf("in-memory status: got %q, want %q", av.def.Status, ViewStatusNeedsMigration)
+	}
+
+	// Verify the registry was updated (persisted status).
+	regDef, err := reg.Get("mv_legacy_spl2")
+	if err != nil {
+		t.Fatalf("registry Get: %v", err)
+	}
+	if regDef.Status != ViewStatusNeedsMigration {
+		t.Errorf("registry status: got %q, want %q", regDef.Status, ViewStatusNeedsMigration)
+	}
+
+	// Reload the registry from disk and verify persistence.
+	reg2, err := Open(viewsDir)
+	if err != nil {
+		t.Fatalf("Reopen registry: %v", err)
+	}
+	reloaded, err := reg2.Get("mv_legacy_spl2")
+	if err != nil {
+		t.Fatalf("reloaded Get: %v", err)
+	}
+	if reloaded.Status != ViewStatusNeedsMigration {
+		t.Errorf("reloaded status: got %q, want %q", reloaded.Status, ViewStatusNeedsMigration)
+	}
+}
+
+// TestDispatcher_NeedsMigration_LynxFlowParseFailure verifies that a LynxFlow
+// view with an unparseable query also persists needs-migration status.
+func TestDispatcher_NeedsMigration_LynxFlowParseFailure(t *testing.T) {
+	dir := t.TempDir()
+	viewsDir := filepath.Join(dir, "views")
+	os.MkdirAll(viewsDir, 0o755)
+
+	reg, err := Open(viewsDir)
+	if err != nil {
+		t.Fatalf("Open registry: %v", err)
+	}
+
+	layout := storage.NewLayout(dir)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	d := NewDispatcher(reg, layout, logger, 0, 0)
+
+	def := ViewDefinition{
+		Name:            "mv_broken_lf",
+		Version:         1,
+		Type:            ViewTypeAggregation,
+		Query:           "this is not valid lynxflow at all !!!",
+		LanguageVersion: "lynxflow",
+		Columns: []ColumnDef{
+			{Name: "_time", Type: event.FieldTypeTimestamp},
+		},
+		Status:    ViewStatusActive,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := reg.Create(def); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := d.activateView(def); err != nil {
+		t.Fatalf("activateView: %v", err)
+	}
+
+	// Verify persistence.
+	regDef, err := reg.Get("mv_broken_lf")
+	if err != nil {
+		t.Fatalf("registry Get: %v", err)
+	}
+	if regDef.Status != ViewStatusNeedsMigration {
+		t.Errorf("registry status: got %q, want %q", regDef.Status, ViewStatusNeedsMigration)
+	}
+}
+
+// TestDispatcher_NeedsMigration_AlreadyMarked verifies that re-activating a
+// view that is already marked needs-migration does not redundantly persist.
+func TestDispatcher_NeedsMigration_AlreadyMarked(t *testing.T) {
+	dir := t.TempDir()
+	viewsDir := filepath.Join(dir, "views")
+	os.MkdirAll(viewsDir, 0o755)
+
+	reg, err := Open(viewsDir)
+	if err != nil {
+		t.Fatalf("Open registry: %v", err)
+	}
+
+	layout := storage.NewLayout(dir)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	d := NewDispatcher(reg, layout, logger, 0, 0)
+
+	// Create a view already marked needs-migration.
+	def := ViewDefinition{
+		Name:    "mv_already_migrated",
+		Version: 1,
+		Type:    ViewTypeAggregation,
+		Query:   "level=error | stats count by host",
+		Columns: []ColumnDef{
+			{Name: "_time", Type: event.FieldTypeTimestamp},
+		},
+		Status:    ViewStatusNeedsMigration,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := reg.Create(def); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// activateView should not re-persist (no error, no change).
+	if err := d.activateView(def); err != nil {
+		t.Fatalf("activateView: %v", err)
+	}
+
+	// Verify it's still needs-migration but no spurious update occurred.
+	d.mu.RLock()
+	av, ok := d.views["mv_already_migrated"]
+	d.mu.RUnlock()
+	if !ok {
+		t.Fatal("view not in dispatcher")
+	}
+	if av.def.Status != ViewStatusNeedsMigration {
+		t.Errorf("status: got %q, want %q", av.def.Status, ViewStatusNeedsMigration)
 	}
 }

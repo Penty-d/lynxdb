@@ -73,12 +73,13 @@ func (s *Server) handleListMV(w http.ResponseWriter, r *http.Request) {
 	result := make([]map[string]interface{}, len(defs))
 	for i, d := range defs {
 		result[i] = map[string]interface{}{
-			"name":       d.Name,
-			"status":     d.Status,
-			"query":      d.Query,
-			"type":       d.Type,
-			"created_at": d.CreatedAt,
-			"updated_at": d.UpdatedAt,
+			"name":             d.Name,
+			"status":           d.Status,
+			"query":            d.Query,
+			"type":             d.Type,
+			"language_version": d.LanguageVersion,
+			"created_at":       d.CreatedAt,
+			"updated_at":       d.UpdatedAt,
 		}
 	}
 	respondData(w, http.StatusOK, map[string]interface{}{
@@ -100,15 +101,16 @@ func (s *Server) handleGetMV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]interface{}{
-		"name":       detail.Name,
-		"status":     detail.Status,
-		"query":      detail.Query,
-		"type":       detail.Type,
-		"filter":     detail.Filter,
-		"columns":    detail.Columns,
-		"retention":  formatDuration(detail.Retention),
-		"created_at": detail.CreatedAt,
-		"updated_at": detail.UpdatedAt,
+		"name":             detail.Name,
+		"status":           detail.Status,
+		"query":            detail.Query,
+		"type":             detail.Type,
+		"language_version": detail.LanguageVersion,
+		"filter":           detail.Filter,
+		"columns":          detail.Columns,
+		"retention":        formatDuration(detail.Retention),
+		"created_at":       detail.CreatedAt,
+		"updated_at":       detail.UpdatedAt,
 	}
 	if detail.BackfillProgress != nil {
 		resp["backfill"] = detail.BackfillProgress

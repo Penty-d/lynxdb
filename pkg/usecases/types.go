@@ -267,12 +267,13 @@ type PatchViewRequest struct {
 
 // ViewSummary is a brief representation of a materialized view.
 type ViewSummary struct {
-	Name      string
-	Status    views.ViewStatus
-	Query     string
-	Type      views.ViewType
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Name            string
+	Status          views.ViewStatus
+	Query           string
+	Type            views.ViewType
+	LanguageVersion string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // ViewDetail is the full representation of a materialized view.

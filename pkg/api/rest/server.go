@@ -377,6 +377,7 @@ func NewServer(cfg Config) (*Server, error) {
 			existing.From = input.From
 			existing.Source = input.Source
 			existing.Metadata = input.Metadata
+			existing.LanguageVersion = "lynxflow"
 			existing.UpdatedAt = time.Now()
 
 			return existing

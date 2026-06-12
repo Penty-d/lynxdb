@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStore_CreateAndGet(t *testing.T) {
@@ -180,5 +181,142 @@ func TestGenerateID(t *testing.T) {
 	}
 	if len(id) != 19 { // "sq_" + 16 hex chars
 		t.Fatalf("id length: %d", len(id))
+	}
+}
+
+func TestToSavedQuery_SetsLanguageVersion(t *testing.T) {
+	input := &SavedQueryInput{Name: "test", Q: "from main | search error"}
+	sq := input.ToSavedQuery()
+	if sq.LanguageVersion != "lynxflow" {
+		t.Fatalf("LanguageVersion: got %q, want %q", sq.LanguageVersion, "lynxflow")
+	}
+}
+
+func TestSavedQuery_EffectiveLanguage(t *testing.T) {
+	tests := []struct {
+		name     string
+		langVer  string
+		expected string
+	}{
+		{"empty_is_spl2", "", "spl2"},
+		{"explicit_spl2", "spl2", "spl2"},
+		{"explicit_lynxflow", "lynxflow", "lynxflow"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sq := &SavedQuery{LanguageVersion: tt.langVer}
+			if got := sq.EffectiveLanguage(); got != tt.expected {
+				t.Errorf("EffectiveLanguage(): got %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSavedQuery_NeedsMigration(t *testing.T) {
+	tests := []struct {
+		name    string
+		langVer string
+		want    bool
+	}{
+		{"empty_needs_migration", "", true},
+		{"spl2_needs_migration", "spl2", true},
+		{"lynxflow_ok", "lynxflow", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sq := &SavedQuery{LanguageVersion: tt.langVer}
+			if got := sq.NeedsMigration(); got != tt.want {
+				t.Errorf("NeedsMigration(): got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStore_Persistence_LanguageVersion(t *testing.T) {
+	dir := t.TempDir()
+	s1, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sq := (&SavedQueryInput{Name: "persist_lang", Q: "from main"}).ToSavedQuery()
+	if err := s1.Create(sq); err != nil {
+		t.Fatal(err)
+	}
+	if sq.LanguageVersion != "lynxflow" {
+		t.Fatalf("created with LanguageVersion=%q, want lynxflow", sq.LanguageVersion)
+	}
+
+	// Reopen and verify.
+	s2, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s2.Get(sq.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LanguageVersion != "lynxflow" {
+		t.Fatalf("reloaded LanguageVersion: %q, want lynxflow", got.LanguageVersion)
+	}
+	if got.NeedsMigration() {
+		t.Fatal("new query should not need migration")
+	}
+}
+
+func TestStore_LegacyQueryNeedsMigration(t *testing.T) {
+	// Simulate a legacy saved query that was persisted without LanguageVersion.
+	s := OpenInMemory()
+	sq := &SavedQuery{
+		ID:        "sq_legacy_001",
+		Name:      "old query",
+		Q:         "level=error | stats count by host",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		// No LanguageVersion — legacy
+	}
+	if err := s.Create(sq); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(sq.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EffectiveLanguage() != "spl2" {
+		t.Fatalf("EffectiveLanguage: %q, want spl2", got.EffectiveLanguage())
+	}
+	if !got.NeedsMigration() {
+		t.Fatal("legacy query should need migration")
+	}
+}
+
+func TestStore_Update_SetsLanguageVersion(t *testing.T) {
+	s := OpenInMemory()
+	// Create a legacy query (no LanguageVersion).
+	sq := &SavedQuery{
+		ID:        "sq_update_test",
+		Name:      "update me",
+		Q:         "level=error",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := s.Create(sq); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate updating via the REST handler (which sets LanguageVersion="lynxflow").
+	sq.Q = "from main | where level == \"error\""
+	sq.LanguageVersion = "lynxflow"
+	sq.MigratedFrom = "level=error"
+	if err := s.Update(sq); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(sq.ID)
+	if got.LanguageVersion != "lynxflow" {
+		t.Fatalf("LanguageVersion after update: %q", got.LanguageVersion)
+	}
+	if got.NeedsMigration() {
+		t.Fatal("updated query should not need migration")
+	}
+	if got.MigratedFrom != "level=error" {
+		t.Fatalf("MigratedFrom: %q", got.MigratedFrom)
 	}
 }

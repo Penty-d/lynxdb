@@ -25,19 +25,15 @@ func NewViewService(engine ViewEngine) *ViewService {
 //
 // If the query contains a terminal aggregation (stats, timechart, top, rare),
 // the view is created as an aggregation view with a PartialAggSpec that drives
-// insert-time partial aggregation. Unsupported patterns (eventstats, stdev,
-// percentiles, etc.) are rejected with a descriptive error.
+// insert-time partial aggregation via processInsertBatchLynxFlow. Unsupported
+// patterns (eventstats, stdev, percentiles, etc.) are rejected with a
+// descriptive error.
 //
-// The query language is resolved via langdetect.Detect when req.Language is
-// empty, or used directly when explicitly provided. LynxFlow MVs are stored
-// with LanguageVersion="lynxflow" but currently return a not-yet-supported
-// error because the insert-time dispatch pipeline requires the SPL2 AST.
+// The query language is resolved via langdetect.Detect. The only supported
+// language is LynxFlow; legacy SPL2 views can only exist as pre-migration
+// artifacts loaded from the registry.
 func (s *ViewService) Create(req CreateViewRequest) error {
-	// Detect or validate the query language.
-	// For MV creation, use DetectStrict: ambiguous queries (those that parse
-	// as both SPL2 and LynxFlow) default to SPL2 because LynxFlow MVs are
-	// not yet supported for insert-time dispatch.
-	lang := langdetect.DetectStrict(req.Query, req.Language)
+	lang := langdetect.Detect(req.Query, req.Language)
 
 	def := views.ViewDefinition{
 		Name:            req.Name,
@@ -55,8 +51,6 @@ func (s *ViewService) Create(req CreateViewRequest) error {
 	if req.Query != "" {
 		switch lang.Language {
 		case langdetect.LangLynxFlow:
-			// LynxFlow path: parse, lower, optimize, validate plan shape,
-			// and extract AggSpec from the IR.
 			mvAn, err := views.AnalyzeLynxFlow(req.Query)
 			if err != nil {
 				return fmt.Errorf("usecases.CreateView: %w", err)
@@ -72,21 +66,7 @@ func (s *ViewService) Create(req CreateViewRequest) error {
 				def.GroupBy = mvAn.GroupBy
 			}
 		default:
-			// SPL2 path (existing behavior).
-			analysis, err := views.AnalyzeQuery(req.Query)
-			if err != nil {
-				return fmt.Errorf("usecases.CreateView: %w", err)
-			}
-
-			if "" /* RFC-002 */ != "" {
-				def.SourceIndex = "" /* RFC-002 */
-			}
-
-			if analysis.IsAggregation {
-				def.Type = views.ViewTypeAggregation
-				def.AggSpec = analysis.AggSpec
-				def.GroupBy = nil /* RFC-002 */
-			}
+			return fmt.Errorf("usecases.CreateView: unsupported language %q; only LynxFlow is supported for new views", lang.Language)
 		}
 	}
 
@@ -99,12 +79,13 @@ func (s *ViewService) List() []ViewSummary {
 	result := make([]ViewSummary, len(defs))
 	for i, d := range defs {
 		result[i] = ViewSummary{
-			Name:      d.Name,
-			Status:    d.Status,
-			Query:     d.Query,
-			Type:      d.Type,
-			CreatedAt: d.CreatedAt,
-			UpdatedAt: d.UpdatedAt,
+			Name:            d.Name,
+			Status:          d.Status,
+			Query:           d.Query,
+			Type:            d.Type,
+			LanguageVersion: d.EffectiveLanguage(),
+			CreatedAt:       d.CreatedAt,
+			UpdatedAt:       d.UpdatedAt,
 		}
 	}
 
@@ -120,12 +101,13 @@ func (s *ViewService) Get(name string) (*ViewDetail, error) {
 
 	detail := &ViewDetail{
 		ViewSummary: ViewSummary{
-			Name:      def.Name,
-			Status:    def.Status,
-			Query:     def.Query,
-			Type:      def.Type,
-			CreatedAt: def.CreatedAt,
-			UpdatedAt: def.UpdatedAt,
+			Name:            def.Name,
+			Status:          def.Status,
+			Query:           def.Query,
+			Type:            def.Type,
+			LanguageVersion: def.EffectiveLanguage(),
+			CreatedAt:       def.CreatedAt,
+			UpdatedAt:       def.UpdatedAt,
 		},
 		Filter:    def.Filter,
 		Columns:   def.Columns,
@@ -195,12 +177,13 @@ func (s *ViewService) Patch(name string, req PatchViewRequest) (*ViewDetail, err
 
 	return &ViewDetail{
 		ViewSummary: ViewSummary{
-			Name:      def.Name,
-			Status:    def.Status,
-			Query:     def.Query,
-			Type:      def.Type,
-			CreatedAt: def.CreatedAt,
-			UpdatedAt: def.UpdatedAt,
+			Name:            def.Name,
+			Status:          def.Status,
+			Query:           def.Query,
+			Type:            def.Type,
+			LanguageVersion: def.EffectiveLanguage(),
+			CreatedAt:       def.CreatedAt,
+			UpdatedAt:       def.UpdatedAt,
 		},
 		Filter:    def.Filter,
 		Columns:   def.Columns,
